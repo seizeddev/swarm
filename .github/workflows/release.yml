@@ -22,7 +22,7 @@ jobs:
             target: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'
