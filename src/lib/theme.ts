@@ -5,7 +5,7 @@
 export const TERM_FG = "#d6d6db";
 export const TERM_BG = "#161616";
 
-// 16 base colors — a calm, modern dark theme tuned to swarm's violet accent.
+// 16 base colors — a calm, modern dark theme for the terminal's ANSI palette.
 const BASE16 = [
   "#1b1b1f", "#ff6b81", "#46d39a", "#e8c474",
   "#7c9dff", "#b288ff", "#5ad4d4", "#c7c7cf",

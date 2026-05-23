@@ -74,7 +74,7 @@ export function CommitDetail({
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
         <span className="font-mono text-[12.5px] text-[var(--color-muted)]">{detail.short}</span>
         <button className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
-          <X size={15} />
+          <X size={14} />
         </button>
       </div>
 
@@ -100,7 +100,7 @@ export function CommitDetail({
                   <span className="font-mono text-[12.5px]">{f.file}</span>
                   {f.added && <span className="pill h-5 px-2 text-[10px]">added</span>}
                   {f.deleted && (
-                    <span className="pill h-5 px-2 text-[10px]" style={{ color: "#ff6b6b" }}>
+                    <span className="pill h-5 px-2 text-[10px]" style={{ color: "var(--color-danger)" }}>
                       deleted
                     </span>
                   )}
@@ -118,9 +118,9 @@ export function CommitDetail({
                           style={{
                             background:
                               l.kind === "add"
-                                ? "rgba(54,211,153,0.10)"
+                                ? "var(--color-success-soft)"
                                 : l.kind === "del"
-                                  ? "rgba(255,107,107,0.10)"
+                                  ? "var(--color-danger-soft)"
                                   : "transparent",
                           }}
                         >
@@ -131,7 +131,7 @@ export function CommitDetail({
                                 l.kind === "add"
                                   ? "var(--color-success)"
                                   : l.kind === "del"
-                                    ? "#ff6b6b"
+                                    ? "var(--color-danger)"
                                     : "var(--color-faint)",
                             }}
                           >

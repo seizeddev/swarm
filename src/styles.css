@@ -21,10 +21,16 @@
   --color-accent-2: #ffffff;
   --color-accent-soft: rgba(255, 255, 255, 0.07);
 
+  /* Semantic status colours — the only non-monochrome hues, each with one
+     canonical value + a soft (tinted-fill) variant. Used for diffs, git
+     status and PR checks, where colour carries meaning. */
   --color-success: #34d399;
   --color-success-soft: rgba(52, 211, 153, 0.13);
   --color-danger: #ff6b6b;
-  --color-info: #6b9bff;
+  --color-danger-soft: rgba(255, 107, 107, 0.12);
+  --color-warning: #e8c474;
+  --color-warning-soft: rgba(232, 196, 116, 0.12);
+  --color-info: var(--color-muted); /* diff hunk headers — monochrome, no accent colour */
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;

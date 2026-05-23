@@ -17,7 +17,7 @@ import {
 } from "./panels";
 import { GraphPanel } from "./GraphPanel";
 
-const ATTN = "#6b9bff";
+const ATTN = "var(--color-text)";
 
 function SwarmMark() {
   return (
@@ -79,20 +79,18 @@ function RailButton({
   panel,
   title,
   badge,
-  badgeColor,
   children,
 }: {
   panel: Panel;
   title: string;
   badge?: number;
-  badgeColor?: string;
   children: React.ReactNode;
 }) {
   const ws = useActiveWorkspace();
   const { setPanel } = useStore();
   return (
     <button
-      className="icon-btn relative"
+      className="icon-btn relative h-9 w-9"
       data-active={ws?.panel === panel}
       title={title}
       onClick={() => setPanel(panel)}
@@ -101,7 +99,7 @@ function RailButton({
       {!!badge && (
         <span
           className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold text-[var(--color-text)] ring-1 ring-white/10"
-          style={{ background: badgeColor ?? "rgba(255,255,255,0.15)" }}
+          style={{ background: "rgba(255,255,255,0.15)" }}
         >
           {badge > 99 ? "99+" : badge}
         </span>
@@ -127,7 +125,7 @@ export function Sidebar() {
           <WorkspaceSquare key={w.id} id={w.id} name={w.repo.name} />
         ))}
         <button
-          className="icon-btn"
+          className="icon-btn h-9 w-9"
           title="Add project"
           onClick={() => pickRepo(addWorkspace)}
         >
@@ -144,7 +142,6 @@ export function Sidebar() {
               panel="notifications"
               title="Notifications"
               badge={notifications.length}
-              badgeColor={ATTN}
             >
               <Bell size={18} />
             </RailButton>
@@ -162,7 +159,7 @@ export function Sidebar() {
         )}
 
         <div className="flex-1" />
-        <button className="icon-btn" title="Settings">
+        <button className="icon-btn h-9 w-9" title="Settings">
           <Settings size={18} />
         </button>
       </div>
@@ -202,7 +199,14 @@ export function Sidebar() {
         )}
 
         {error && (
-          <div className="m-3 rounded-xl border border-[#ff6b81]/30 bg-[#ff6b81]/10 p-3 text-[12px] text-[#ff9aa8]">
+          <div
+            className="m-3 rounded-xl border p-3 text-[12px]"
+            style={{
+              borderColor: "rgba(255, 107, 107, 0.30)",
+              background: "var(--color-danger-soft)",
+              color: "var(--color-danger)",
+            }}
+          >
             {error}
           </div>
         )}

@@ -51,7 +51,6 @@ const SHELL: AgentDef = {
   name: "Shell",
   command: "bash",
   args: [],
-  accent: "#8B8B8B",
   installed: true,
   resume: [],
 };
@@ -60,7 +59,6 @@ const CLAUDE: AgentDef = {
   name: "Claude Code",
   command: "claude",
   args: [],
-  accent: "#D77757",
   installed: true,
   resume: ["--continue"],
 };

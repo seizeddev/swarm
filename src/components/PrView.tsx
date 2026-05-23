@@ -6,9 +6,9 @@ function checkColor(checks: string | null) {
   return checks === "passing"
     ? "var(--color-success)"
     : checks === "failing"
-      ? "#ff6b81"
+      ? "var(--color-danger)"
       : checks === "pending"
-        ? "#e8c474"
+        ? "var(--color-warning)"
         : "var(--color-faint)";
 }
 
@@ -19,7 +19,7 @@ export function PrView({ pr, onClose }: { pr: PrSummary; onClose: () => void }) 
         <GitPullRequest size={15} style={{ color: checkColor(pr.checks) }} />
         <span className="text-[12.5px] text-[var(--color-muted)]">#{pr.number}</span>
         <button className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
-          <X size={15} />
+          <X size={14} />
         </button>
       </div>
 

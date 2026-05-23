@@ -104,7 +104,6 @@ export interface AgentDef {
   name: string;
   command: string;
   args: string[];
-  accent: string;
   installed: boolean;
   resume: string[];
 }

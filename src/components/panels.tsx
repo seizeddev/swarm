@@ -15,7 +15,7 @@ import { useActiveWorkspace, useStore } from "../store";
 import { leaves } from "../lib/layout";
 import type { AgentDef, ChangeStatus, FileChange } from "../lib/types";
 
-const ATTN = "#6b9bff"; // attention signal (blue), the one status colour we allow here
+const ATTN = "var(--color-text)"; // attention signal — monochrome, no accent colour
 
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
@@ -23,10 +23,10 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
   added: { letter: "A", color: "#c9c9cf" },
   untracked: { letter: "U", color: "#c9c9cf" },
   modified: { letter: "M", color: "var(--color-muted)" },
-  deleted: { letter: "D", color: "#ff6b6b" },
+  deleted: { letter: "D", color: "var(--color-danger)" },
   renamed: { letter: "R", color: "var(--color-muted)" },
   typechange: { letter: "T", color: "var(--color-muted)" },
-  conflicted: { letter: "!", color: "#e8c474" },
+  conflicted: { letter: "!", color: "var(--color-warning)" },
 };
 
 function AgentMenu() {
@@ -43,7 +43,7 @@ function AgentMenu() {
   return (
     <div ref={ref} className="relative">
       <button className="icon-btn h-7 w-7" title="New terminal" onClick={() => setOpen((v) => !v)}>
-        <Plus size={15} />
+        <Plus size={14} />
       </button>
       {open && (
         <div className="surface absolute right-0 top-9 z-50 w-52 p-1.5">
@@ -61,7 +61,7 @@ function AgentMenu() {
             >
               <span
                 className="h-2 w-2 flex-none rounded-full"
-                style={{ background: a.installed ? a.accent : "var(--color-faint)" }}
+                style={{ background: a.installed ? "var(--color-text)" : "var(--color-faint)" }}
               />
               <span className="flex-1">{a.name}</span>
               {!a.installed && <span className="text-[10px] text-[var(--color-faint)]">missing</span>}
@@ -119,9 +119,10 @@ export function TerminalsPanel() {
                   e.stopPropagation();
                   ids.forEach((id) => removePane(id));
                 }}
-                className="opacity-0 transition group-hover:opacity-100"
+                title="Close terminal"
+                className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
               >
-                <X size={13} className="text-[var(--color-muted)] hover:text-[var(--color-text)]" />
+                <X size={13} />
               </button>
             </div>
           );
@@ -154,14 +155,10 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
             e.stopPropagation();
             staged ? unstage(f.path) : stage(f.path);
           }}
-          className="opacity-0 transition group-hover:opacity-100"
+          className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
           title={staged ? "Unstage" : "Stage"}
         >
-          {staged ? (
-            <Minus size={14} className="text-[var(--color-muted)] hover:text-[var(--color-text)]" />
-          ) : (
-            <Plus size={14} className="text-[var(--color-muted)] hover:text-[var(--color-text)]" />
-          )}
+          {staged ? <Minus size={13} /> : <Plus size={13} />}
         </button>
         <span className="w-3 text-center font-mono text-[12px] font-bold" style={{ color: meta.color }}>
           {meta.letter}
@@ -248,9 +245,9 @@ export function SourceControlPanel() {
 
 function checkColor(checks: string | null) {
   return checks === "failing"
-    ? "#ff6b6b"
+    ? "var(--color-danger)"
     : checks === "pending"
-      ? "#e8c474"
+      ? "var(--color-warning)"
       : "var(--color-muted)"; // passing/none stay neutral — monochrome chrome
 }
 
@@ -343,7 +340,7 @@ export function NotificationsPanel() {
               className="row mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"
             >
               <div className="flex items-center gap-2">
-                <span className="h-2 w-2 flex-none rounded-full" style={{ background: ATTN }} />
+                <span className="h-2 w-2 flex-none rounded-full" style={{ background: "var(--color-text)" }} />
                 <span className="flex-1 truncate text-[13px] font-medium">{n.title}</span>
                 <span className="text-[11px] text-[var(--color-faint)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

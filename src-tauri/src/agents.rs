@@ -8,7 +8,6 @@ pub struct AgentDef {
     pub name: &'static str,
     pub command: &'static str,
     pub args: &'static [&'static str],
-    pub accent: &'static str,
     pub installed: bool,
     /// Args that resume the agent's most recent session in the cwd (for restore).
     pub resume: &'static [&'static str],
@@ -19,7 +18,6 @@ struct Reg {
     name: &'static str,
     command: &'static str,
     args: &'static [&'static str],
-    accent: &'static str,
     resume: &'static [&'static str],
 }
 
@@ -27,7 +25,6 @@ const fn reg(
     id: &'static str,
     name: &'static str,
     command: &'static str,
-    accent: &'static str,
     resume: &'static [&'static str],
 ) -> Reg {
     Reg {
@@ -35,26 +32,19 @@ const fn reg(
         name,
         command,
         args: &[],
-        accent,
         resume,
     }
 }
 
 const REGISTRY: &[Reg] = &[
-    reg(
-        "claude",
-        "Claude Code",
-        "claude",
-        "#D77757",
-        &["--continue"],
-    ),
-    reg("codex", "Codex", "codex", "#10A37F", &["resume", "--last"]),
-    reg("gemini", "Gemini", "gemini", "#4285F4", &[]),
-    reg("opencode", "OpenCode", "opencode", "#F2B705", &[]),
-    reg("amp", "Amp", "amp", "#9B6DFF", &[]),
-    reg("cursor", "Cursor CLI", "cursor-agent", "#7DD3FC", &[]),
-    reg("aider", "Aider", "aider", "#22C55E", &[]),
-    reg("shell", "Shell", default_shell(), "#8B8B8B", &[]),
+    reg("claude", "Claude Code", "claude", &["--continue"]),
+    reg("codex", "Codex", "codex", &["resume", "--last"]),
+    reg("gemini", "Gemini", "gemini", &[]),
+    reg("opencode", "OpenCode", "opencode", &[]),
+    reg("amp", "Amp", "amp", &[]),
+    reg("cursor", "Cursor CLI", "cursor-agent", &[]),
+    reg("aider", "Aider", "aider", &[]),
+    reg("shell", "Shell", default_shell(), &[]),
 ];
 
 const fn default_shell() -> &'static str {
@@ -98,7 +88,6 @@ pub fn list_agents() -> Vec<AgentDef> {
             name: r.name,
             command: r.command,
             args: r.args,
-            accent: r.accent,
             installed: on_path(r.command),
             resume: r.resume,
         })
@@ -165,10 +154,8 @@ mod tests {
     }
 
     #[test]
-    fn every_agent_has_a_hex_accent_and_command() {
+    fn every_agent_has_a_command() {
         for a in list_agents() {
-            assert!(a.accent.starts_with('#'), "{} accent", a.id);
-            assert_eq!(a.accent.len(), 7, "{} accent is #RRGGBB", a.id);
             assert!(!a.command.is_empty(), "{} command", a.id);
         }
     }

@@ -58,7 +58,7 @@ export function DiffEditor({
         <span className="font-mono text-[12.5px] text-[var(--color-text)]">{file}</span>
         {staged && <span className="pill h-5 px-2 text-[11px]">staged</span>}
         <button className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
-          <X size={15} />
+          <X size={14} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
@@ -82,9 +82,9 @@ export function DiffEditor({
                     style={{
                       background:
                         l.kind === "add"
-                          ? "rgba(45,212,167,0.10)"
+                          ? "var(--color-success-soft)"
                           : l.kind === "del"
-                            ? "rgba(255,107,129,0.10)"
+                            ? "var(--color-danger-soft)"
                             : "transparent",
                     }}
                   >
@@ -101,7 +101,7 @@ export function DiffEditor({
                           l.kind === "add"
                             ? "var(--color-success)"
                             : l.kind === "del"
-                              ? "#ff6b81"
+                              ? "var(--color-danger)"
                               : "var(--color-faint)",
                       }}
                     >

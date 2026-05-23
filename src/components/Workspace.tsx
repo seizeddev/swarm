@@ -14,7 +14,7 @@ import { DiffEditor } from "./DiffEditor";
 import { PrView } from "./PrView";
 import { CommitDetail } from "./CommitDetail";
 
-const ATTN = "#6b9bff";
+const ATTN = "var(--color-text)";
 
 export function Workspace() {
   const ws = useActiveWorkspace();
@@ -83,9 +83,10 @@ export function Workspace() {
                     e.stopPropagation();
                     ids.forEach((id) => removePane(id));
                   }}
-                  className="opacity-0 transition group-hover:opacity-100"
+                  title="Close terminal"
+                  className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
                 >
-                  <X size={12} className="text-[var(--color-muted)] hover:text-[var(--color-text)]" />
+                  <X size={13} />
                 </button>
               </div>
             );
@@ -94,22 +95,22 @@ export function Workspace() {
 
         {ws && (
           <div className="flex flex-none items-center gap-0.5">
-            <button className="icon-btn h-8 w-8" title="New terminal" onClick={() => addPane()}>
-              <Plus size={15} />
+            <button className="icon-btn h-7 w-7" title="New terminal" onClick={() => addPane()}>
+              <Plus size={14} />
             </button>
             <button
-              className="icon-btn h-8 w-8"
+              className="icon-btn h-7 w-7"
               title="Split right"
               onClick={() => splitActive("row")}
             >
-              <SplitSquareHorizontal size={15} />
+              <SplitSquareHorizontal size={14} />
             </button>
             <button
-              className="icon-btn h-8 w-8"
+              className="icon-btn h-7 w-7"
               title="Split down"
               onClick={() => splitActive("col")}
             >
-              <SplitSquareVertical size={15} />
+              <SplitSquareVertical size={14} />
             </button>
           </div>
         )}
@@ -154,7 +155,7 @@ export function Workspace() {
                     removePane(p.paneId);
                   }}
                   title="Close terminal"
-                  className="absolute right-1.5 top-1.5 z-20 grid h-6 w-6 place-items-center rounded-md bg-black/50 text-[var(--color-muted)] opacity-0 transition hover:text-[var(--color-text)] group-hover:opacity-100"
+                  className="icon-btn absolute right-1.5 top-1.5 z-20 h-6 w-6 bg-black/40 opacity-0 group-hover:opacity-100"
                 >
                   <X size={13} />
                 </button>
