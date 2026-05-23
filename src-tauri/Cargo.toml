@@ -25,7 +25,7 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Git: libgit2 bindings — worktrees, status, diffs, branches. No shelling out to `git`.
-git2 = { version = "0.20", default-features = false }
+git2 = { version = "0.21", default-features = false }
 # Cross-platform PTY for streaming agent terminals.
 portable-pty = "0.9"
 # Async runtime (Tauri uses it; we use it for spawning blocking PTY readers off-thread).
