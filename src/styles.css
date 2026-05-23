@@ -233,13 +233,32 @@ body {
   white-space: pre;
   background: var(--color-bg-deep);
 }
+/* The terminal pane is a self-contained, fixed-size, clipped surface, so its
+   layout/paint never affects (or is affected by) the rest of the app. NB: only
+   the wrapper carries this — the hidden measure <span> shares `.term` and must
+   size to its content. */
+.term-pane {
+  contain: strict;
+}
+/* Each row has an explicit height, so full (incl. size) containment is safe and
+   lets the engine skip a flooding line's neighbours during layout/paint. */
 .term-line {
   height: 17px;
   white-space: pre;
+  contain: strict;
 }
 .term-cursor {
   background: var(--color-text);
   border-radius: 1px;
+}
+
+/* Long, non-virtualized lists (the changed-files list can be huge in a big
+   repo): skip rendering rows scrolled out of view. The `auto` intrinsic size
+   remembers each row's real height after first paint, so the scrollbar stays
+   stable rather than jumping on a guessed size. */
+.cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
 }
 
 ::-webkit-scrollbar {

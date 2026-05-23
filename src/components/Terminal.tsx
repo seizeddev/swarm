@@ -172,7 +172,7 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
         wrapRef.current?.focus();
         useStore.getState().selectPane(pane.paneId);
       }}
-      className="term relative h-full w-full overflow-hidden outline-none p-2"
+      className="term term-pane relative h-full w-full overflow-hidden outline-none p-2"
     >
       <span
         ref={measureRef}

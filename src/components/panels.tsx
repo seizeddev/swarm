@@ -153,7 +153,7 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
     <div
       data-active={active}
       onClick={() => openDiff(f.path, staged)}
-      className="group row mb-1 flex cursor-pointer items-center gap-2 px-2.5 py-1.5"
+      className="group row cv-row mb-1 flex cursor-pointer items-center gap-2 px-2.5 py-1.5"
     >
       <span className="truncate text-[13px]">{f.path.split("/").pop()}</span>
       {dir && <span className="truncate text-[11px] text-[var(--color-faint)]">{dir}</span>}
