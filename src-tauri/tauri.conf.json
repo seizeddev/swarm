@@ -21,9 +21,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/seizeddev/swarm/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1MUE2RjU0Q0MxQTJCRDEKUldUUkt4ck1WRzhhdFR3NVNNN1p1T21tc0hLNmZZV1dpWFdOOHEvR2dZdDFWZTFLYmtnZzdrNEcK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

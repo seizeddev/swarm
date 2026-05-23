@@ -1,10 +1,14 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowUpCircle,
   Bell,
+  Download,
   GitBranch,
   GitPullRequest,
   History,
+  Loader2,
   Plus,
+  RotateCw,
   Settings,
   TerminalSquare,
 } from "lucide-react";
@@ -103,6 +107,88 @@ function RailButton({
         >
           {badge > 99 ? "99+" : badge}
         </span>
+      )}
+    </button>
+  );
+}
+
+// Self-update indicator pinned to the bottom of the panel. Monochrome by design
+// — brightness, never hue (status colours are reserved for git state). Idle =
+// renders nothing. Clicking it drives the lifecycle: available → download →
+// ready → relaunch.
+function UpdateBanner() {
+  // Stable per-field selectors: the banner re-renders only when `update`
+  // changes — never on unrelated store churn (panes, git status, …). Actions
+  // are stable refs in zustand, so selecting them costs no extra renders.
+  const update = useStore((s) => s.update);
+  const installUpdate = useStore((s) => s.installUpdate);
+  const restartForUpdate = useStore((s) => s.restartForUpdate);
+  const checkForUpdate = useStore((s) => s.checkForUpdate);
+  if (update.status === "idle") return null;
+
+  const pct = Math.round(update.progress * 100);
+  const busy = update.status === "downloading";
+
+  const config = {
+    available: {
+      icon: <Download size={15} />,
+      title: "Update available",
+      sub: update.version ? `v${update.version}` : "Click to install",
+      onClick: installUpdate,
+    },
+    downloading: {
+      icon: <Loader2 size={15} className="spin" />,
+      title: "Downloading update…",
+      sub: `${pct}%`,
+      onClick: undefined,
+    },
+    ready: {
+      icon: <RotateCw size={15} />,
+      title: "Restart to update",
+      sub: update.version ? `v${update.version} ready` : "Ready",
+      onClick: restartForUpdate,
+    },
+    error: {
+      icon: <ArrowUpCircle size={15} />,
+      title: "Update failed",
+      sub: "Click to retry",
+      onClick: checkForUpdate,
+    },
+  }[update.status];
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={config.onClick}
+      title={update.notes || config.title}
+      className="relative m-3 flex items-center gap-2.5 overflow-hidden rounded-xl px-3 py-2.5 text-left transition disabled:cursor-default"
+      style={{
+        background: "var(--color-surface-2)",
+        border: "0.5px solid rgba(255,255,255,0.12)",
+        boxShadow: "inset 0 0.5px 0 rgba(255,255,255,0.12)",
+      }}
+    >
+      <span
+        className="grid h-7 w-7 flex-none place-items-center rounded-full text-[var(--color-text)]"
+        style={{ background: "var(--color-accent-soft)" }}
+      >
+        {config.icon}
+        {update.status === "available" && (
+          <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text)]" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12.5px] font-semibold text-[var(--color-text)]">
+          {config.title}
+        </span>
+        <span className="block truncate text-[11px] text-[var(--color-muted)]">{config.sub}</span>
+      </span>
+      {busy && (
+        <span
+          className="absolute inset-x-0 bottom-0 h-0.5 transition-[width] duration-200"
+          style={{ width: `${pct}%`, background: "var(--color-text)" }}
+        />
       )}
     </button>
   );
@@ -210,6 +296,10 @@ export function Sidebar() {
             {error}
           </div>
         )}
+
+        <div className="flex-none">
+          <UpdateBanner />
+        </div>
       </div>
     </>
   );

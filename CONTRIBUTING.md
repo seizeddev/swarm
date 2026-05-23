@@ -54,6 +54,39 @@ Frontend tests live in `src/**/__tests__/*.test.ts`; Rust tests live in a
 (worktree creation) serialize through a `HOME_LOCK` mutex — keep new
 HOME-dependent tests behind it. Frontend type-check: `pnpm build` (runs `tsc`).
 
+## Releasing & auto-updates
+
+swarm ships signed self-updates via `tauri-plugin-updater`. The running app polls
+`latest.json` on the GitHub release (at launch, on window focus, and every 15
+min) and shows an **Update available** banner at the bottom of the sidebar;
+clicking it downloads, verifies, installs, and offers a restart.
+
+Updates must be **signed**, or clients reject them. The keypair was generated
+with `pnpm tauri signer generate`:
+
+- **Public key** lives in `tauri.conf.json` → `plugins.updater.pubkey`. Safe to commit.
+- **Private key** is `~/.tauri/swarm.key` — **never commit it.** Add it to GitHub:
+  - Repo → Settings → Secrets and variables → Actions → New repository secret
+  - `TAURI_SIGNING_PRIVATE_KEY` = full contents of `~/.tauri/swarm.key`
+  - This key has **no password**, so there is no password secret. The workflow
+    sets `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""` directly (GitHub rejects
+    empty-valued secrets, and an empty password isn't sensitive). If you
+    regenerate the key *with* a password, store it as a secret and reference it
+    there instead.
+
+To cut a release:
+
+1. Bump `version` in `tauri.conf.json` **and** `src-tauri/Cargo.toml` (must match).
+2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
+3. `.github/workflows/release.yml` builds every platform, signs the artifacts,
+   generates `latest.json`, and uploads everything to a **draft** release.
+4. **Publish** the draft release. The endpoint
+   `releases/latest/download/latest.json` only resolves once it's the published
+   latest release — that's the moment every running app starts offering the update.
+
+If you lose the private key, you must ship a new public key in an update signed
+with the *old* key first; otherwise existing installs can never update again.
+
 ## Commits & PRs
 
 - Keep PRs focused; describe the user-facing change.

@@ -11,6 +11,7 @@ import {
   splitId,
 } from "./lib/layout";
 import { loadSnap, saveSnap } from "./lib/persist";
+import { updater } from "./lib/updater";
 import type { AgentDef, DiffStatsInfo, FileChange, PrSummary, RepoInfo } from "./lib/types";
 
 export interface Pane {
@@ -65,6 +66,14 @@ export interface Notif {
   ts: number;
 }
 
+// Self-update lifecycle. `progress` is 0..1, meaningful only while downloading.
+export interface UpdateState {
+  status: "idle" | "available" | "downloading" | "ready" | "error";
+  version?: string;
+  notes?: string;
+  progress: number;
+}
+
 let seq = 0;
 const uid = (p: string) => `${p}-${Date.now()}-${seq++}`;
 
@@ -105,6 +114,7 @@ interface State {
   sidebarVisible: boolean;
   eventsDir: string | null;
   codexHome: string | null;
+  update: UpdateState;
 
   persist(): void;
   hydrate(): Promise<void>;
@@ -147,6 +157,10 @@ interface State {
   onTitle(ptyId: string, title: string): void;
   dismissNotification(id: string): void;
   clearNotifications(): void;
+
+  checkForUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
+  restartForUpdate(): Promise<void>;
 }
 
 export const useStore = create<State>((set, get) => {
@@ -219,6 +233,7 @@ export const useStore = create<State>((set, get) => {
     sidebarVisible: true,
     eventsDir: null,
     codexHome: null,
+    update: { status: "idle", progress: 0 },
 
     patchWorkspace: patch,
 
@@ -642,6 +657,51 @@ export const useStore = create<State>((set, get) => {
 
     clearNotifications() {
       set({ notifications: [] });
+    },
+
+    // Background check — fires on startup and on an interval. Stays silent on
+    // failure (no network, dev build with no bundle): an update check is never
+    // worth surfacing an error for. Won't disturb an in-flight download/ready.
+    async checkForUpdate() {
+      if (get().update.status === "downloading" || get().update.status === "ready") return;
+      try {
+        const meta = await updater.check();
+        if (meta) {
+          set({
+            update: {
+              status: "available",
+              version: meta.version,
+              notes: meta.notes,
+              progress: 0,
+            },
+          });
+        } else if (get().update.status !== "idle") {
+          set({ update: { status: "idle", progress: 0 } });
+        }
+      } catch {
+        /* offline / no updater in this build — ignore */
+      }
+    },
+
+    // User clicked "Update available": download + install, streaming progress.
+    // Stops at "ready" — the relaunch is a second, explicit click.
+    async installUpdate() {
+      if (get().update.status !== "available") return;
+      set((s) => ({ update: { ...s.update, status: "downloading", progress: 0 } }));
+      try {
+        await updater.downloadAndInstall((downloaded, total) => {
+          const progress = total ? Math.min(1, downloaded / total) : 0;
+          set((s) => ({ update: { ...s.update, progress } }));
+        });
+        set((s) => ({ update: { ...s.update, status: "ready", progress: 1 } }));
+      } catch (e: any) {
+        set((s) => ({ update: { ...s.update, status: "error" } }));
+      }
+    },
+
+    async restartForUpdate() {
+      if (get().update.status !== "ready") return;
+      await updater.relaunch();
     },
   };
 });

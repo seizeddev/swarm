@@ -48,6 +48,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts and generates latest.json. The private
+          # key (from ~/.tauri/swarm.key) is the repo secret; see CONTRIBUTING.
+          # The key has no password — set the literal empty string here rather
+          # than a secret (GitHub rejects empty-valued secrets), so the signer
+          # doesn't block on an interactive password prompt in CI.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "swarm ${{ github.ref_name }}"

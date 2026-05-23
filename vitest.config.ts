@@ -10,7 +10,7 @@ export default defineConfig({
       provider: "v8",
       include: ["src/lib/**/*.ts", "src/store.ts"],
       // Type-only / IPC-boundary files have no logic worth covering.
-      exclude: ["src/lib/types.ts", "src/lib/ipc.ts", "src/vite-env.d.ts"],
+      exclude: ["src/lib/types.ts", "src/lib/ipc.ts", "src/lib/updater.ts", "src/vite-env.d.ts"],
       reporter: ["text", "html"],
       thresholds: {
         statements: 85,

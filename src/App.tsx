@@ -58,6 +58,25 @@ export default function App() {
       });
     });
 
+    // Self-update: poll latest.json at launch, every 15 minutes, and whenever
+    // the window regains focus (throttled to 60s). A release published at 18:00
+    // surfaces in the banner within minutes of use — the on-focus check makes it
+    // feel instant when you return to the app. Standard production cadence.
+    let lastCheck = 0;
+    const checkUpdate = () => {
+      const now = Date.now();
+      if (now - lastCheck < 60 * 1000) return;
+      lastCheck = now;
+      useStore.getState().checkForUpdate();
+    };
+    checkUpdate();
+    const updateTimer = setInterval(checkUpdate, 15 * 60 * 1000);
+    const onFocus = () => {
+      if (document.visibilityState === "visible") checkUpdate();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     const events = Promise.all([
       listen<{ id: string }>("term:attention", (e) => useStore.getState().onAttention(e.payload.id)),
       listen<{ id: string; title: string; body: string }>("term:notify", (e) =>
@@ -74,6 +93,9 @@ export default function App() {
 
     return () => {
       unsub();
+      clearInterval(updateTimer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
       events.then((fns) => fns.forEach((f) => f()));
     };
   }, []);

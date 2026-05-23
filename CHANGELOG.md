@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Automatic updates** — signed self-updates via `tauri-plugin-updater`. The app polls the GitHub release at launch, on window focus, and every 15 min; a monochrome **Update available** banner at the bottom of the sidebar downloads, verifies, and installs on click, then offers a one-click restart.
 - **Multi-project workspaces** — open several repos at once and switch between them from the rail; each keeps its own terminals, source control, and PRs.
 - **Multi-terminal splits** — split a terminal right or down into a tiled layout with draggable dividers; sessions stay alive across tab and workspace switches.
 - **Notifications** — agents that emit OSC 9 / OSC 99 (kitty) / OSC 777 sequences (or ring the bell) light up their tab and workspace, with a notifications panel and focus-aware suppression + dedup.

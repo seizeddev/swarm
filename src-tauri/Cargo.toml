@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Self-update: checks the GitHub release endpoint, downloads + verifies the
+# signed artifact, and installs it. `process` provides relaunch() after install.
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Git: libgit2 bindings — worktrees, status, diffs, branches. No shelling out to `git`.
@@ -37,6 +40,10 @@ alacritty_terminal = "0.25.0"
 # only launchd's minimal PATH, so bare-name agent commands (`claude`, …) aren't found.
 # Pulls the login-shell PATH at startup. See tauri-apps/fix-path-env-rs.
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
+
+# Updater is desktop-only (no mobile install path); keep it off Android/iOS builds.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
 
 [profile.release]
 codegen-units = 1

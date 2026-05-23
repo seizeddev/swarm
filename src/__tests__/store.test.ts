@@ -41,10 +41,22 @@ vi.mock("../lib/ipc", () => ({
   },
 }));
 
+// Mock the self-update boundary the same way: the plugin calls are vi.fn()s,
+// the store's lifecycle logic runs for real.
+vi.mock("../lib/updater", () => ({
+  updater: {
+    check: vi.fn(),
+    downloadAndInstall: vi.fn(),
+    relaunch: vi.fn(),
+  },
+}));
+
 import { api } from "../lib/ipc";
+import { updater } from "../lib/updater";
 import { useActiveWorkspace, useStore } from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const SHELL: AgentDef = {
   id: "shell",
@@ -86,6 +98,7 @@ const INITIAL = {
   sidebarVisible: true,
   eventsDir: null,
   codexHome: null,
+  update: { status: "idle" as const, progress: 0 },
 };
 
 beforeEach(() => {
@@ -108,6 +121,9 @@ beforeEach(() => {
   }
   m.commit.mockResolvedValue("deadbee");
   m.commitAll.mockResolvedValue("deadbee");
+  upd.check.mockResolvedValue(null);
+  upd.downloadAndInstall.mockResolvedValue(undefined);
+  upd.relaunch.mockResolvedValue(undefined);
 });
 
 const s = () => useStore.getState();
@@ -736,5 +752,98 @@ describe("persist + hydrate", () => {
     await s().hydrate();
     expect(s().workspaces).toHaveLength(0);
     expect(s().hydrated).toBe(true);
+  });
+});
+
+describe("self-update", () => {
+  it("stays idle when the endpoint reports no update", async () => {
+    upd.check.mockResolvedValue(null);
+    await s().checkForUpdate();
+    expect(s().update).toEqual({ status: "idle", progress: 0 });
+  });
+
+  it("goes to 'available' with version + notes when an update exists", async () => {
+    upd.check.mockResolvedValue({
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      notes: "Bug fixes",
+    });
+    await s().checkForUpdate();
+    expect(s().update).toEqual({
+      status: "available",
+      version: "0.2.0",
+      notes: "Bug fixes",
+      progress: 0,
+    });
+  });
+
+  it("clears a stale 'available' back to idle when the update vanishes", async () => {
+    useStore.setState({ update: { status: "available", version: "0.2.0", progress: 0 } });
+    upd.check.mockResolvedValue(null);
+    await s().checkForUpdate();
+    expect(s().update.status).toBe("idle");
+  });
+
+  it("never disturbs an in-flight download or a ready update", async () => {
+    useStore.setState({ update: { status: "downloading", progress: 0.4 } });
+    await s().checkForUpdate();
+    expect(s().update).toEqual({ status: "downloading", progress: 0.4 });
+    expect(upd.check).not.toHaveBeenCalled();
+
+    useStore.setState({ update: { status: "ready", version: "0.2.0", progress: 1 } });
+    await s().checkForUpdate();
+    expect(s().update.status).toBe("ready");
+    expect(upd.check).not.toHaveBeenCalled();
+  });
+
+  it("swallows check errors silently (offline / no updater in build)", async () => {
+    upd.check.mockRejectedValue(new Error("network down"));
+    await s().checkForUpdate();
+    expect(s().update.status).toBe("idle");
+  });
+
+  it("installUpdate streams progress and ends at 'ready' without relaunching", async () => {
+    useStore.setState({ update: { status: "available", version: "0.2.0", progress: 0 } });
+    upd.downloadAndInstall.mockImplementation(async (onProgress: any) => {
+      onProgress(0, 100);
+      onProgress(50, 100);
+      onProgress(100, 100);
+    });
+    await s().installUpdate();
+    expect(s().update.status).toBe("ready");
+    expect(s().update.progress).toBe(1);
+    expect(upd.relaunch).not.toHaveBeenCalled();
+  });
+
+  it("installUpdate reports 0 progress when content length is unknown", async () => {
+    useStore.setState({ update: { status: "available", version: "0.2.0", progress: 0 } });
+    upd.downloadAndInstall.mockImplementation(async (onProgress: any) => {
+      onProgress(42, null);
+    });
+    await s().installUpdate();
+    expect(s().update.status).toBe("ready");
+  });
+
+  it("installUpdate goes to 'error' when the download fails", async () => {
+    useStore.setState({ update: { status: "available", version: "0.2.0", progress: 0 } });
+    upd.downloadAndInstall.mockRejectedValue(new Error("boom"));
+    await s().installUpdate();
+    expect(s().update.status).toBe("error");
+  });
+
+  it("installUpdate is a no-op unless an update is available", async () => {
+    useStore.setState({ update: { status: "idle", progress: 0 } });
+    await s().installUpdate();
+    expect(upd.downloadAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("restartForUpdate relaunches only when ready", async () => {
+    useStore.setState({ update: { status: "available", version: "0.2.0", progress: 0 } });
+    await s().restartForUpdate();
+    expect(upd.relaunch).not.toHaveBeenCalled();
+
+    useStore.setState({ update: { status: "ready", version: "0.2.0", progress: 1 } });
+    await s().restartForUpdate();
+    expect(upd.relaunch).toHaveBeenCalledOnce();
   });
 });
