@@ -261,6 +261,21 @@ describe("editor + panel switching", () => {
     expect(s().sidebarVisible).toBe(true);
   });
 
+  it("leaves the editor untouched when switching to a non-terminal panel", () => {
+    s().openDiff("a.txt", false);
+    s().setPanel("prs");
+    expect(s().workspaces[0].editor).toEqual({ type: "diff", file: "a.txt", staged: false });
+  });
+
+  it("restores the terminal editor when selecting the terminals panel", () => {
+    s().openCommit("abc123");
+    s().setPanel("scm");
+    expect(s().workspaces[0].editor).toEqual({ type: "commit", oid: "abc123" });
+    s().setPanel("terminals");
+    expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
+    expect(s().workspaces[0].panel).toBe("terminals");
+  });
+
   it("toggles the sidebar", () => {
     const before = s().sidebarVisible;
     s().toggleSidebar();
@@ -498,6 +513,25 @@ describe("misc workspace actions", () => {
     s().selectTab(tabId);
     expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
     expect(s().workspaces[0].activeTab).toBe(tabId);
+  });
+
+  it("selecting a tab from another panel returns the sidebar to terminals", () => {
+    const tabId = s().workspaces[0].activeTab!;
+    s().setPanel("notifications");
+    s().openCommit("abc123");
+    expect(s().workspaces[0].panel).toBe("notifications");
+    s().selectTab(tabId);
+    expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
+    expect(s().workspaces[0].panel).toBe("terminals");
+  });
+
+  it("selecting a pane from another panel returns the sidebar to terminals", () => {
+    const paneId = s().panes[0].paneId;
+    s().setPanel("scm");
+    s().openDiff("a.txt", false);
+    s().selectPane(paneId);
+    expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
+    expect(s().workspaces[0].panel).toBe("terminals");
   });
 
   it("adjusts a split ratio", () => {

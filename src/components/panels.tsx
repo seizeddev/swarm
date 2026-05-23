@@ -316,8 +316,7 @@ export function PullRequestsPanel() {
 
 export function NotificationsPanel() {
   const notifications = useStore((s) => s.notifications);
-  const { selectPane, setActiveWorkspace, clearNotifications, dismissNotification, setPanel } =
-    useStore();
+  const { selectPane, setActiveWorkspace, clearNotifications, dismissNotification } = useStore();
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Notifications">
@@ -338,8 +337,7 @@ export function NotificationsPanel() {
               key={n.id}
               onClick={() => {
                 setActiveWorkspace(n.workspaceId);
-                selectPane(n.paneId);
-                setPanel("terminals");
+                selectPane(n.paneId); // also restores the terminals panel
                 dismissNotification(n.id);
               }}
               className="row mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"

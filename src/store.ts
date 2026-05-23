@@ -409,7 +409,11 @@ export const useStore = create<State>((set, get) => {
 
     setPanel(panel) {
       const ws = active();
-      if (ws) patch(ws.id, { panel });
+      // The terminals "panel" really lives in the editor area, so selecting it
+      // must also restore the terminal view — otherwise a diff/pr/commit would
+      // stay in the main area while the rail highlights Terminals. The other
+      // panels are self-contained in the sidebar and leave the editor alone.
+      if (ws) patch(ws.id, panel === "terminals" ? { panel, editor: { type: "terminal" } } : { panel });
       set({ sidebarVisible: true });
     },
 
@@ -443,7 +447,7 @@ export const useStore = create<State>((set, get) => {
       });
       set((s) => ({ panes: [...s.panes, pane] }));
       patchTab(ws.id, tab.id, (t) => ({ ...t, layout: newLayout, activeLeaf: pane.paneId }));
-      patch(ws.id, { editor: { type: "terminal" } });
+      patch(ws.id, { editor: { type: "terminal" }, panel: "terminals" });
     },
 
     removePane(paneId) {
@@ -474,14 +478,20 @@ export const useStore = create<State>((set, get) => {
       if (!pane) return;
       clearAttn((p) => p.paneId === paneId);
       patchTab(pane.workspaceId, pane.tabId, (t) => ({ ...t, activeLeaf: paneId }));
-      patch(pane.workspaceId, { activeTab: pane.tabId, editor: { type: "terminal" } });
+      // Focusing a terminal returns the whole workspace to the terminal view:
+      // surface it in the editor *and* the sidebar so the two stay in sync.
+      patch(pane.workspaceId, {
+        activeTab: pane.tabId,
+        editor: { type: "terminal" },
+        panel: "terminals",
+      });
     },
 
     selectTab(tabId) {
       const ws = active();
       if (!ws) return;
       clearAttn((p) => p.tabId === tabId);
-      patch(ws.id, { activeTab: tabId, editor: { type: "terminal" } });
+      patch(ws.id, { activeTab: tabId, editor: { type: "terminal" }, panel: "terminals" });
     },
 
     setRatio(splitNodeId, ratio) {
