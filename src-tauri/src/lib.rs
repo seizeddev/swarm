@@ -238,6 +238,15 @@ fn pty_spawn(
 }
 
 #[tauri::command]
+fn pty_attach(
+    state: State<TerminalManager>,
+    id: String,
+    on_update: Channel<WireUpdate>,
+) -> AppResult<()> {
+    state.attach(&id, on_update)
+}
+
+#[tauri::command]
 fn pty_write(state: State<TerminalManager>, id: String, data: String) -> AppResult<()> {
     state.write(&id, &data)
 }
@@ -461,6 +470,7 @@ pub fn run() {
             commit_file_diff,
             commit_diff,
             pty_spawn,
+            pty_attach,
             pty_write,
             pty_resize,
             pty_set_visible,

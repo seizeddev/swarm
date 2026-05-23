@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { memo, useEffect, useReducer, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { encodeKey } from "../lib/keys";
 import { applyUpdate, runStyle } from "../lib/term";
@@ -26,21 +26,24 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
   const measureRef = useRef<HTMLSpanElement>(null);
   const ptyIdRef = useRef<string | null>(null);
   // The source of truth: one runs-array per visible row, patched in place by
-  // deltas. Rendering reads straight from it; React re-renders are driven by the
-  // `frame` reducer below (only while the pane is visible).
+  // deltas (so untouched rows keep their reference). A frame publishes a shallow
+  // copy into `lines` state; `<TermLine>` memoization then re-renders only the
+  // rows whose reference changed.
   const linesRef = useRef<WireRun[][]>([]);
   const cursorRef = useRef({ x: 0, y: 0, visible: false });
   const visibleRef = useRef(visible);
   const raf = useRef<number | undefined>(undefined);
   const cell = useRef({ w: 7.5, h: 16.5 });
-  const [, drawFrame] = useReducer((n: number) => n + 1, 0);
-  const [exited, dispatchExit] = useReducer(() => true, false);
+  const [lines, setLines] = useState<WireRun[][]>([]);
+  const [cursor, setCursor] = useState({ x: 0, y: 0, visible: false });
+  const [exited, setExited] = useState(false);
 
   const scheduleRender = () => {
     if (raf.current != null) return;
     raf.current = requestAnimationFrame(() => {
       raf.current = undefined;
-      drawFrame();
+      setLines(linesRef.current.slice());
+      setCursor(cursorRef.current);
     });
   };
 
@@ -67,36 +70,48 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
   };
 
   useEffect(() => {
-    let disposed = false;
-    const { cols, rows } = measure();
-    api
-      .ptySpawn(
-        {
-          cwd: pane.cwd,
-          command: pane.command,
-          args: pane.args,
-          env: pane.env,
-          cols,
-          rows,
-        },
-        apply,
-      )
-      .then((id) => {
-        if (disposed) {
+    let cancelled = false;
+    (async () => {
+      // Reattach to a still-running PTY if this pane already has one (it survived
+      // a previous unmount, e.g. a workspace switch); otherwise spawn fresh.
+      const existing = useStore.getState().panes.find((p) => p.paneId === pane.paneId)?.ptyId;
+      if (existing && (await api.ptyAlive(existing))) {
+        if (cancelled) return;
+        ptyIdRef.current = existing;
+        try {
+          await api.ptyAttach(existing, apply);
+          api.ptySetVisible(existing, visibleRef.current).catch(() => {});
+          return;
+        } catch {
+          /* session vanished between the alive check and attach → spawn below */
+        }
+      }
+      const { cols, rows } = measure();
+      try {
+        const id = await api.ptySpawn(
+          { cwd: pane.cwd, command: pane.command, args: pane.args, env: pane.env, cols, rows },
+          apply,
+        );
+        // If the pane was removed while spawning, the PTY is orphaned — kill it.
+        if (!useStore.getState().panes.some((p) => p.paneId === pane.paneId)) {
           api.ptyKill(id);
           return;
         }
         ptyIdRef.current = id;
-        // Tell the core our current visibility so a backgrounded pane starts
-        // gated from the first frame.
-        api.ptySetVisible(id, visibleRef.current).catch(() => {});
         useStore.getState().bindPty(pane.paneId, id);
-      })
-      .catch(() => dispatchExit());
+        // If the component unmounted mid-spawn (e.g. a workspace switch), start
+        // the PTY hidden; a later remount reattaches and makes it visible.
+        api.ptySetVisible(id, cancelled ? false : visibleRef.current).catch(() => {});
+      } catch {
+        if (!cancelled) setExited(true);
+      }
+    })();
 
     return () => {
-      disposed = true;
-      if (ptyIdRef.current) api.ptyKill(ptyIdRef.current);
+      cancelled = true;
+      // Keep the PTY alive across remounts; just gate it so the render thread
+      // stops sending. The PTY is killed explicitly on pane/workspace removal.
+      if (ptyIdRef.current) api.ptySetVisible(ptyIdRef.current, false).catch(() => {});
       if (raf.current) cancelAnimationFrame(raf.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,7 +163,6 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     }
   };
 
-  const cursor = cursorRef.current;
   return (
     <div
       ref={wrapRef}
@@ -169,7 +183,7 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
         MMMMMMMMMM
       </span>
 
-      {linesRef.current.map((runs, y) => (
+      {lines.map((runs, y) => (
         <TermLine key={y} runs={runs} />
       ))}
 

@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useActiveWorkspace, useStore } from "../store";
 import { leaves } from "../lib/layout";
 import type { AgentDef, ChangeStatus, FileChange } from "../lib/types";
@@ -31,7 +32,9 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
 };
 
 function AgentMenu() {
-  const { agents, addPane } = useStore();
+  const { agents, addPane } = useStore(
+    useShallow((s) => ({ agents: s.agents, addPane: s.addPane })),
+  );
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -88,7 +91,9 @@ function PanelHeader({ title, children }: { title: string; children?: React.Reac
 export function TerminalsPanel() {
   const ws = useActiveWorkspace();
   const allPanes = useStore((s) => s.panes);
-  const { selectTab, removePane } = useStore();
+  const { selectTab, removePane } = useStore(
+    useShallow((s) => ({ selectTab: s.selectTab, removePane: s.removePane })),
+  );
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Terminals">
@@ -138,7 +143,9 @@ export function TerminalsPanel() {
 
 function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
   const ws = useActiveWorkspace();
-  const { openDiff, stage, unstage } = useStore();
+  const { openDiff, stage, unstage } = useStore(
+    useShallow((s) => ({ openDiff: s.openDiff, stage: s.stage, unstage: s.unstage })),
+  );
   const meta = statusMeta[f.status];
   const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
   const active = ws?.editor.type === "diff" && ws.editor.file === f.path && ws.editor.staged === staged;
@@ -171,7 +178,16 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
 
 export function SourceControlPanel() {
   const ws = useActiveWorkspace();
-  const { setCommitMsg, commit, stageAll, unstageAll, refreshStatus, busy } = useStore();
+  const { setCommitMsg, commit, stageAll, unstageAll, refreshStatus, busy } = useStore(
+    useShallow((s) => ({
+      setCommitMsg: s.setCommitMsg,
+      commit: s.commit,
+      stageAll: s.stageAll,
+      unstageAll: s.unstageAll,
+      refreshStatus: s.refreshStatus,
+      busy: s.busy,
+    })),
+  );
   if (!ws) return null;
   const staged = ws.changes.filter((c) => c.staged);
   const unstaged = ws.changes.filter((c) => c.unstaged);
@@ -254,7 +270,9 @@ function checkColor(checks: string | null) {
 
 export function PullRequestsPanel() {
   const ws = useActiveWorkspace();
-  const { ghAvailable, openPr, loadPrs } = useStore();
+  const { ghAvailable, openPr, loadPrs } = useStore(
+    useShallow((s) => ({ ghAvailable: s.ghAvailable, openPr: s.openPr, loadPrs: s.loadPrs })),
+  );
   if (!ws) return null;
   const mine = ws.prs.filter((p) => ws.ghLogin && p.author === ws.ghLogin);
   const others = ws.prs.filter((p) => !ws.ghLogin || p.author !== ws.ghLogin);
@@ -314,7 +332,14 @@ export function PullRequestsPanel() {
 
 export function NotificationsPanel() {
   const notifications = useStore((s) => s.notifications);
-  const { selectPane, setActiveWorkspace, clearNotifications, dismissNotification } = useStore();
+  const { selectPane, setActiveWorkspace, clearNotifications, dismissNotification } = useStore(
+    useShallow((s) => ({
+      selectPane: s.selectPane,
+      setActiveWorkspace: s.setActiveWorkspace,
+      clearNotifications: s.clearNotifications,
+      dismissNotification: s.dismissNotification,
+    })),
+  );
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Notifications">

@@ -6,7 +6,12 @@ import tailwindcss from "@tailwindcss/vite";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+  // React Compiler auto-memoizes components/hooks — a systematic backstop for
+  // re-render hygiene on top of the explicit selectors and memoized rows.
+  plugins: [
+    react({ babel: { plugins: [["babel-plugin-react-compiler", {}]] } }),
+    tailwindcss(),
+  ],
   clearScreen: false,
   server: {
     port: 1420,

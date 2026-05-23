@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   FolderGit2,
   Plus,
@@ -19,9 +20,22 @@ const ATTN = "var(--color-text)";
 
 export function Workspace() {
   const ws = useActiveWorkspace();
-  const allPanes = useStore((s) => s.panes);
+  // Only the active workspace's panes are mounted; other workspaces' panes
+  // unmount, but their PTYs keep running in Rust and reattach on return.
+  const wsId = ws?.id;
+  const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
   const { selectTab, selectPane, removePane, addPane, splitActive, setRatio, showTerminal } =
-    useStore();
+    useStore(
+      useShallow((s) => ({
+        selectTab: s.selectTab,
+        selectPane: s.selectPane,
+        removePane: s.removePane,
+        addPane: s.addPane,
+        splitActive: s.splitActive,
+        setRatio: s.setRatio,
+        showTerminal: s.showTerminal,
+      })),
+    );
   const areaRef = useRef<HTMLDivElement>(null);
 
   const tab = ws?.tabs.find((t) => t.id === ws.activeTab) ?? null;

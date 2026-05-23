@@ -241,8 +241,10 @@ struct Session {
     /// When false, the render thread keeps parsing (state stays correct) but skips
     /// snapshotting and sending — a hidden pane costs no IPC or serialization.
     visible: Arc<AtomicBool>,
-    /// Kept so `resize`/`set_visible` can push a full frame outside the render loop.
-    on_update: Channel<WireUpdate>,
+    /// The current frontend channel, shared with the render thread and swappable:
+    /// when a pane's component unmounts and later remounts (e.g. switching back to
+    /// a workspace) it re-`attach`es a fresh channel here while the PTY lives on.
+    chan: Arc<Mutex<Channel<WireUpdate>>>,
 }
 
 #[derive(Clone, Default)]
@@ -427,6 +429,7 @@ impl TerminalManager {
             proxy,
         )));
         let visible = Arc::new(AtomicBool::new(true));
+        let chan = Arc::new(Mutex::new(on_update));
 
         self.sessions.lock().insert(
             id.clone(),
@@ -437,7 +440,7 @@ impl TerminalManager {
                 child,
                 size: size.clone(),
                 visible: visible.clone(),
-                on_update: on_update.clone(),
+                chan: chan.clone(),
             },
         );
 
@@ -538,9 +541,9 @@ impl TerminalManager {
                 }
 
                 if let Some(update) = update {
-                    if on_update.send(update).is_err() {
-                        break;
-                    }
+                    // Ignore send errors: a detached (unmounted) channel just means
+                    // the pane is hidden; the loop ends only when the PTY closes.
+                    let _ = chan.lock().send(update);
                 }
             }
         });
@@ -589,7 +592,7 @@ impl TerminalManager {
             upd
         };
         if session.visible.load(Ordering::Acquire) {
-            let _ = session.on_update.send(update);
+            let _ = session.chan.lock().send(update);
         }
         Ok(())
     }
@@ -611,8 +614,28 @@ impl TerminalManager {
                 t.reset_damage();
                 upd
             };
-            let _ = session.on_update.send(update);
+            let _ = session.chan.lock().send(update);
         }
+        Ok(())
+    }
+
+    /// Re-bind a live session to a fresh frontend channel — used when a pane's
+    /// component remounts (the PTY kept running while it was unmounted). Becomes
+    /// visible and pushes a full frame so the remounted view paints immediately.
+    pub fn attach(&self, id: &str, on_update: Channel<WireUpdate>) -> AppResult<()> {
+        let guard = self.sessions.lock();
+        let session = guard
+            .get(id)
+            .ok_or_else(|| AppError::NotFound(format!("terminal '{id}' not found")))?;
+        *session.chan.lock() = on_update;
+        session.visible.store(true, Ordering::Release);
+        let update = {
+            let mut t = session.term.lock();
+            let upd = snapshot_full(&t);
+            t.reset_damage();
+            upd
+        };
+        let _ = session.chan.lock().send(update);
         Ok(())
     }
 

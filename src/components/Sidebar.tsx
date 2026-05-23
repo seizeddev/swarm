@@ -21,6 +21,7 @@ import {
   TerminalsPanel,
 } from "./panels";
 import { GraphPanel } from "./GraphPanel";
+import { useShallow } from "zustand/react/shallow";
 
 const ATTN = "var(--color-text)";
 
@@ -53,7 +54,12 @@ async function pickRepo(addWorkspace: (p: string) => void) {
 }
 
 function WorkspaceSquare({ id, name }: { id: string; name: string }) {
-  const { activeWorkspaceId, setActiveWorkspace } = useStore();
+  const { activeWorkspaceId, setActiveWorkspace } = useStore(
+    useShallow((s) => ({
+      activeWorkspaceId: s.activeWorkspaceId,
+      setActiveWorkspace: s.setActiveWorkspace,
+    })),
+  );
   const attention = useStore((s) => s.panes.some((p) => p.workspaceId === id && p.attention));
   const active = activeWorkspaceId === id;
   const initials = name.slice(0, 2).toUpperCase();
@@ -92,7 +98,7 @@ function RailButton({
   children: React.ReactNode;
 }) {
   const ws = useActiveWorkspace();
-  const { setPanel } = useStore();
+  const setPanel = useStore((s) => s.setPanel);
   return (
     <button
       className="icon-btn relative h-9 w-9"
@@ -197,7 +203,15 @@ function UpdateBanner() {
 
 export function Sidebar() {
   const ws = useActiveWorkspace();
-  const { workspaces, addWorkspace, notifications, error, sidebarVisible } = useStore();
+  const { workspaces, addWorkspace, notifications, error, sidebarVisible } = useStore(
+    useShallow((s) => ({
+      workspaces: s.workspaces,
+      addWorkspace: s.addWorkspace,
+      notifications: s.notifications,
+      error: s.error,
+      sidebarVisible: s.sidebarVisible,
+    })),
+  );
 
   return (
     <>

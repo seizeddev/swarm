@@ -428,6 +428,11 @@ export const useStore = create<State>((set, get) => {
 
     closeWorkspace(id) {
       api.unwatchWorktree(id).catch(() => {});
+      // Kill the workspace's PTYs explicitly — their components unmount without
+      // killing, so closing the workspace is where they're reaped.
+      for (const p of get().panes) {
+        if (p.workspaceId === id && p.ptyId) api.ptyKill(p.ptyId).catch(() => {});
+      }
       set((s) => {
         const workspaces = s.workspaces.filter((w) => w.id !== id);
         return {
@@ -498,6 +503,9 @@ export const useStore = create<State>((set, get) => {
 
     removePane(paneId) {
       const pane = get().panes.find((p) => p.paneId === paneId);
+      // The Terminal no longer kills on unmount (PTYs survive workspace switches),
+      // so removal is the explicit kill point.
+      if (pane?.ptyId) api.ptyKill(pane.ptyId).catch(() => {});
       set((s) => ({ panes: s.panes.filter((p) => p.paneId !== paneId) }));
       if (!pane) return;
       const ws = get().workspaces.find((w) => w.id === pane.workspaceId);

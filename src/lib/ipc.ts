@@ -81,6 +81,13 @@ export const api = {
     channel.onmessage = onUpdate;
     return invoke<string>("pty_spawn", { opts, onUpdate: channel });
   },
+  // Re-bind a still-running PTY to a fresh channel after the pane's component
+  // remounts (e.g. switching back to a workspace). The core pushes a full frame.
+  ptyAttach: (id: string, onUpdate: (u: WireUpdate) => void) => {
+    const channel = new Channel<WireUpdate>();
+    channel.onmessage = onUpdate;
+    return invoke<void>("pty_attach", { id, onUpdate: channel });
+  },
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
   ptyResize: (id: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { id, cols, rows }),
