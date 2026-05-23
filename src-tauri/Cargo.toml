@@ -1,0 +1,42 @@
+[package]
+name = "swarm"
+version = "0.1.0"
+description = "Parallel terminals for AI coding agents, with a built-in GitHub view."
+authors = ["swarm contributors"]
+license = "MIT"
+repository = "https://github.com/seizeddev/swarm"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "swarm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Git: libgit2 bindings — worktrees, status, diffs, branches. No shelling out to `git`.
+git2 = { version = "0.20", default-features = false }
+# Cross-platform PTY for streaming agent terminals.
+portable-pty = "0.9"
+# Async runtime (Tauri uses it; we use it for spawning blocking PTY readers off-thread).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+parking_lot = "0.12"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+dirs = "6"
+alacritty_terminal = "0.25.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"   # optimize for size — lightweight binary
+panic = "abort"
+strip = true

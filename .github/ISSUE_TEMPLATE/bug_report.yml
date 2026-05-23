@@ -1,0 +1,33 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project
+        2. Spawn a Claude terminal
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / version
+      placeholder: macOS 15.4 (Apple Silicon) · swarm 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Output from `pnpm tauri dev`, console errors, or a screenshot.

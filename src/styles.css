@@ -1,0 +1,260 @@
+@import "tailwindcss";
+
+/* Surface scale sampled 1:1 from the reference (opaque hex). */
+@theme {
+  /* Eyedropped 1:1 from the reference: background #161616 (subtle gradient to
+     #1a1a1a), cards a touch lighter, the Move button #4e4e4e. */
+  --color-bg: #161616;
+  --color-bg-deep: #161616;
+  --color-panel: #161616;
+  --color-surface-1: #1c1c1c;
+  --color-surface-2: #242424;
+  --color-surface-3: #2a2a2a;
+  --color-recessed: #121212;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+  --color-text: #f4f4f5;
+  --color-muted: #8a8a8e;
+  --color-faint: #5a5a5e;
+
+  --color-accent: #f4f4f5;
+  --color-accent-2: #ffffff;
+  --color-accent-soft: rgba(255, 255, 255, 0.07);
+
+  --color-success: #34d399;
+  --color-success-soft: rgba(52, 211, 153, 0.13);
+  --color-danger: #ff6b6b;
+  --color-info: #6b9bff;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: linear-gradient(180deg, #1a1a1a 0%, #161616 60%, #151515 100%);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────
+   Opaque fills (exact reference hex) + a real 0.5px hairline rim
+   (1 device px on retina) + a thin bright top sheen = the glassy edge.
+   No outer glow, no blur. */
+
+.surface {
+  background: var(--color-surface-1);
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+}
+
+.row {
+  background: #161617;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+  transition: background 0.13s ease, border-color 0.13s ease;
+}
+.row:hover {
+  background: #1f1f20;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.row[data-active="true"],
+.row[data-active="true"]:hover {
+  background: #232325;
+  border-color: var(--color-border-strong);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────
+   .btn-accent = the "Move" graphite button: #424242 fill, lighter top,
+   thin bright top edge, light-gray text. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 0.5px solid rgba(255, 255, 255, 0.11);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.04s ease;
+}
+.btn:hover {
+  background: #2e2e2f;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn.btn-accent {
+  color: #e6e6e8;
+  background: #4e4e4e;
+  border: 0.5px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22);
+}
+.btn.btn-accent:hover {
+  background: #585858;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--color-muted);
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--color-text);
+}
+.icon-btn[data-active="true"] {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--color-text);
+}
+
+/* ── Pills, chips, badges ─────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+}
+.pill-muted {
+  background: #232324;
+  color: var(--color-muted);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+}
+
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
+  color: var(--color-text);
+  flex: none;
+}
+
+/* ── Inputs (the #222 amount field) ──────────────────────────────── */
+.field {
+  width: 100%;
+  background: var(--color-recessed);
+  border: 0.5px solid rgba(255, 255, 255, 0.09);
+  border-radius: 11px;
+  padding: 10px 12px;
+  color: var(--color-text);
+  font-size: 14px;
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
+  outline: none;
+}
+.field::placeholder {
+  color: var(--color-faint);
+}
+.field:focus {
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+}
+
+.divider {
+  height: 0.5px;
+  background: var(--color-border);
+}
+
+/* ── Terminal grid ───────────────────────────────────────────────── */
+.term {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  /* Integer line-height: avoids sub-pixel accumulation that clipped the last row. */
+  line-height: 17px;
+  white-space: pre;
+  background: var(--color-bg-deep);
+}
+.term-line {
+  height: 17px;
+  white-space: pre;
+}
+.term-cursor {
+  background: var(--color-text);
+  border-radius: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: content-box;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.8s linear infinite;
+}
