@@ -104,3 +104,68 @@ pub fn list_agents() -> Vec<AgentDef> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn list_agents_exposes_the_full_registry() {
+        let agents = list_agents();
+        assert_eq!(agents.len(), REGISTRY.len());
+        let ids: HashSet<_> = agents.iter().map(|a| a.id).collect();
+        for expected in [
+            "claude", "codex", "gemini", "opencode", "amp", "cursor", "aider", "shell",
+        ] {
+            assert!(ids.contains(expected), "missing agent {expected}");
+        }
+        // ids are unique.
+        assert_eq!(ids.len(), agents.len());
+    }
+
+    #[test]
+    fn every_agent_has_a_hex_accent_and_command() {
+        for a in list_agents() {
+            assert!(a.accent.starts_with('#'), "{} accent", a.id);
+            assert_eq!(a.accent.len(), 7, "{} accent is #RRGGBB", a.id);
+            assert!(!a.command.is_empty(), "{} command", a.id);
+        }
+    }
+
+    #[test]
+    fn resume_args_match_the_known_agents() {
+        let agents = list_agents();
+        let claude = agents.iter().find(|a| a.id == "claude").unwrap();
+        assert_eq!(claude.resume, ["--continue"]);
+        let codex = agents.iter().find(|a| a.id == "codex").unwrap();
+        assert_eq!(codex.resume, ["resume", "--last"]);
+        let gemini = agents.iter().find(|a| a.id == "gemini").unwrap();
+        assert!(gemini.resume.is_empty());
+    }
+
+    #[test]
+    fn default_shell_is_platform_appropriate() {
+        let sh = default_shell();
+        if cfg!(windows) {
+            assert_eq!(sh, "powershell");
+        } else {
+            assert_eq!(sh, "bash");
+        }
+    }
+
+    #[test]
+    fn on_path_resolves_absolute_paths_by_existence() {
+        // The running test binary is an absolute path that definitely exists.
+        let exe = std::env::current_exe().unwrap();
+        assert!(on_path(exe.to_str().unwrap()));
+
+        let missing = exe.with_file_name("surely-not-here-xyz-123");
+        assert!(!on_path(missing.to_str().unwrap()));
+    }
+
+    #[test]
+    fn on_path_rejects_a_bare_command_that_cannot_exist() {
+        assert!(!on_path("swarm-nonexistent-binary-zzz"));
+    }
+}

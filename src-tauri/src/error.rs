@@ -53,3 +53,42 @@ impl Serialize for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_to_kind_and_message() {
+        let err = AppError::NotFound("worktree 'x' not found".into());
+        let v: serde_json::Value = serde_json::to_value(&err).unwrap();
+        assert_eq!(v["kind"], "not_found");
+        assert_eq!(v["message"], "worktree 'x' not found");
+    }
+
+    #[test]
+    fn kind_strings_are_stable_for_the_frontend() {
+        assert_eq!(AppError::Invalid("x".into()).kind(), "invalid");
+        assert_eq!(AppError::Pty("x".into()).kind(), "pty");
+        assert_eq!(AppError::Other("x".into()).kind(), "other");
+        assert_eq!(AppError::NotFound("x".into()).kind(), "not_found");
+    }
+
+    #[test]
+    fn io_errors_convert_and_serialize() {
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "nope");
+        let err: AppError = io.into();
+        assert_eq!(err.kind(), "io");
+        let v = serde_json::to_value(&err).unwrap();
+        assert!(v["message"].as_str().unwrap().contains("io error"));
+    }
+
+    #[test]
+    fn git_errors_convert_to_git_kind() {
+        let bad = git2::Oid::from_str("not-a-valid-oid").unwrap_err();
+        let err: AppError = bad.into();
+        assert_eq!(err.kind(), "git");
+        let v = serde_json::to_value(&err).unwrap();
+        assert!(v["message"].as_str().unwrap().starts_with("git error:"));
+    }
+}

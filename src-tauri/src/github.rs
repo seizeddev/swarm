@@ -202,3 +202,76 @@ pub fn pr_for_branch(repo_path: &str, branch: &str) -> AppResult<Option<PrInfo>>
         checks,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rollup_passing_when_all_checks_succeed() {
+        let v = json!({
+            "statusCheckRollup": [
+                { "conclusion": "SUCCESS" },
+                { "conclusion": "NEUTRAL" },
+                { "conclusion": "SKIPPED" },
+            ]
+        });
+        assert_eq!(rollup_status(&v).as_deref(), Some("passing"));
+    }
+
+    #[test]
+    fn rollup_failing_dominates_pending() {
+        let v = json!({
+            "statusCheckRollup": [
+                { "conclusion": "SUCCESS" },
+                { "conclusion": "" },          // pending
+                { "conclusion": "FAILURE" },   // failing
+            ]
+        });
+        assert_eq!(rollup_status(&v).as_deref(), Some("failing"));
+    }
+
+    #[test]
+    fn rollup_pending_when_any_check_is_unfinished() {
+        let v = json!({
+            "statusCheckRollup": [
+                { "conclusion": "SUCCESS" },
+                { "conclusion": "" },
+            ]
+        });
+        assert_eq!(rollup_status(&v).as_deref(), Some("pending"));
+    }
+
+    #[test]
+    fn rollup_missing_conclusion_field_is_pending() {
+        // A check object with no `conclusion` key counts as pending.
+        let v = json!({ "statusCheckRollup": [ { "name": "build" } ] });
+        assert_eq!(rollup_status(&v).as_deref(), Some("pending"));
+    }
+
+    #[test]
+    fn rollup_empty_array_is_passing() {
+        let v = json!({ "statusCheckRollup": [] });
+        assert_eq!(rollup_status(&v).as_deref(), Some("passing"));
+    }
+
+    #[test]
+    fn rollup_absent_field_yields_none() {
+        assert_eq!(rollup_status(&json!({})), None);
+        assert_eq!(rollup_status(&json!({ "statusCheckRollup": null })), None);
+    }
+
+    #[test]
+    fn pr_list_returns_empty_when_gh_unavailable() {
+        // A non-repo path with gh likely uninstalled in CI: must degrade to [].
+        let out = pr_list("/nonexistent-path-xyz").unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn pr_for_branch_returns_none_when_gh_unavailable() {
+        let out = pr_for_branch("/nonexistent-path-xyz", "main").unwrap();
+        assert!(out.is_none());
+    }
+}

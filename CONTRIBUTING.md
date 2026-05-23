@@ -30,16 +30,32 @@ src-tauri/src/  Rust core
 ```bash
 pnpm install
 pnpm tauri dev
-
-cd src-tauri
-cargo test       # unit + integration tests
-cargo clippy     # lints
 ```
 
-Frontend type-check: `pnpm build` (runs `tsc`).
+## Tests
+
+Both halves of the app are unit-tested and gated in CI.
+
+```bash
+# Frontend (Vitest) — pure logic + the zustand store with a mocked IPC layer.
+pnpm test              # run once
+pnpm test:watch        # watch mode
+pnpm test:coverage     # enforces coverage thresholds (85%+)
+
+# Rust core (cargo) — git, terminal VT/OSC parsing, agents, github, errors.
+cd src-tauri
+cargo test             # unit + integration tests
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+```
+
+Frontend tests live in `src/**/__tests__/*.test.ts`; Rust tests live in a
+`#[cfg(test)] mod tests` at the bottom of each module. Tests that touch `$HOME`
+(worktree creation) serialize through a `HOME_LOCK` mutex — keep new
+HOME-dependent tests behind it. Frontend type-check: `pnpm build` (runs `tsc`).
 
 ## Commits & PRs
 
 - Keep PRs focused; describe the user-facing change.
-- Add or update a test when you touch `git.rs` or `terminal.rs`.
-- Run `cargo test` and `pnpm build` before pushing.
+- Add or update a test when you touch `git.rs`, `terminal.rs`, or `store.ts`.
+- Run `pnpm test:coverage`, `cargo test`, and `pnpm build` before pushing.

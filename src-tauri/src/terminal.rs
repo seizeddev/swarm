@@ -540,4 +540,127 @@ mod tests {
             vec![("Hi".to_string(), "There".to_string())]
         );
     }
+
+    #[test]
+    fn osc9_simple_via_bel_and_st_terminators() {
+        let mut st = NotifState::default();
+        // BEL terminator
+        assert_eq!(
+            parse_notifications(b"\x1b]9;bel\x07", &mut st),
+            vec![(String::new(), "bel".to_string())]
+        );
+        // ESC-backslash (ST) terminator
+        assert_eq!(
+            parse_notifications(b"\x1b]9;st\x1b\\", &mut st),
+            vec![(String::new(), "st".to_string())]
+        );
+    }
+
+    #[test]
+    fn osc99_base64_encoded_payload_is_decoded() {
+        let mut st = NotifState::default();
+        // "Done" base64 = "RG9uZQ==", single-shot (d defaults to done) title.
+        let out = parse_notifications(b"\x1b]99;e=1:p=title;RG9uZQ==\x07", &mut st);
+        assert_eq!(out, vec![("Done".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn osc99_close_and_alive_are_ignored() {
+        let mut st = NotifState::default();
+        assert!(parse_notifications(b"\x1b]99;p=close;\x07", &mut st).is_empty());
+        assert!(parse_notifications(b"\x1b]99;p=alive;\x07", &mut st).is_empty());
+    }
+
+    #[test]
+    fn osc99_new_id_resets_buffered_chunks() {
+        let mut st = NotifState::default();
+        // Start an incomplete notification id=1…
+        assert!(parse_notifications(b"\x1b]99;i=1:d=0:p=title;Part\x1b\\", &mut st).is_empty());
+        // …then a different id arrives complete: the stale "Part" must be dropped.
+        let out = parse_notifications(b"\x1b]99;i=2;Fresh\x1b\\", &mut st);
+        assert_eq!(out, vec![("Fresh".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn multiple_sequences_in_one_chunk() {
+        let mut st = NotifState::default();
+        let out = parse_notifications(b"\x1b]9;one\x07junk\x1b]9;two\x07", &mut st);
+        assert_eq!(
+            out,
+            vec![
+                (String::new(), "one".to_string()),
+                (String::new(), "two".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn non_osc_bytes_yield_no_notifications() {
+        let mut st = NotifState::default();
+        assert!(parse_notifications(b"plain text \x1b[31m colored", &mut st).is_empty());
+    }
+
+    #[test]
+    fn wflags_packs_each_attribute_bit() {
+        assert_eq!(wflags(Flags::BOLD), 1);
+        assert_eq!(wflags(Flags::ITALIC), 1 << 1);
+        assert_eq!(wflags(Flags::UNDERLINE), 1 << 2);
+        assert_eq!(wflags(Flags::INVERSE), 1 << 3);
+        assert_eq!(wflags(Flags::DIM), 1 << 4);
+        assert_eq!(wflags(Flags::STRIKEOUT), 1 << 5);
+        assert_eq!(wflags(Flags::HIDDEN), 1 << 6);
+        assert_eq!(wflags(Flags::empty()), 0);
+        // Combined flags OR together.
+        assert_eq!(wflags(Flags::BOLD | Flags::ITALIC), 0b11);
+    }
+
+    #[test]
+    fn enc_named_and_indexed_colors() {
+        assert_eq!(
+            enc(Color::Named(alacritty_terminal::vte::ansi::NamedColor::Red)),
+            1
+        );
+        assert_eq!(enc(Color::Indexed(42)), 42);
+    }
+
+    #[test]
+    fn snapshot_coalesces_same_style_runs() {
+        let size = TermSize { cols: 10, lines: 1 };
+        let mut term = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser = Processor::<StdSyncHandler>::new();
+        parser.advance(&mut term, b"abc");
+        let grid = snapshot(&term, size);
+        // "abc" + 7 trailing spaces share one style → a single run for the text
+        // plus (at most) one run for the default-styled blanks.
+        let texts: Vec<String> = grid.lines[0].iter().map(|r| r.text.clone()).collect();
+        let joined: String = texts.concat();
+        assert!(joined.starts_with("abc"));
+        assert_eq!(joined.len(), 10, "row padded to column count");
+        // Same-style "abc" is not split into three runs.
+        assert!(grid.lines[0].len() <= 2, "runs: {:?}", grid.lines[0]);
+    }
+
+    #[test]
+    fn snapshot_clamps_to_grid_dimensions() {
+        let size = TermSize { cols: 4, lines: 2 };
+        let mut term = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser = Processor::<StdSyncHandler>::new();
+        // Write more than fits on a line; emulator wraps, snapshot stays in bounds.
+        parser.advance(&mut term, b"abcdefgh");
+        let grid = snapshot(&term, size);
+        assert_eq!(grid.rows, 2);
+        assert_eq!(grid.cols, 4);
+        assert!(grid
+            .lines
+            .iter()
+            .all(|l| l.iter().map(|r| r.text.chars().count()).sum::<usize>() == 4));
+    }
 }

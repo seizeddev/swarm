@@ -741,11 +741,31 @@ pub fn commit(worktree_path: &str, message: &str) -> AppResult<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+
+    /// `worktrees_root`/`swarm_dir` resolve against `$HOME`, and tests mutate it
+    /// process-wide. Serialize every test that touches HOME so the parallel test
+    /// runner can't interleave two `set_var("HOME", …)` calls.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn scratch() -> PathBuf {
         let p = std::env::temp_dir().join(format!("swarm-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    fn commit_file(repo: &Repository, name: &str, body: &str, msg: &str) -> git2::Oid {
+        let wd = repo.workdir().unwrap();
+        fs::write(wd.join(name), body).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+        let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents)
+            .unwrap()
     }
 
     fn init_repo(dir: &Path) -> Repository {
@@ -755,21 +775,18 @@ mod tests {
             cfg.set_str("user.name", "swarm-test").unwrap();
             cfg.set_str("user.email", "test@swarm.local").unwrap();
         }
-        fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
-        {
-            let mut idx = repo.index().unwrap();
-            idx.add_path(Path::new("a.txt")).unwrap();
-            idx.write().unwrap();
-            let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
-            let sig = repo.signature().unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
+        commit_file(&repo, "a.txt", "hello\nworld\n", "init");
         repo
+    }
+
+    /// Init a repo *without* configured identity to exercise the signature fallback.
+    fn init_bare_identity(dir: &Path) -> Repository {
+        Repository::init(dir).unwrap()
     }
 
     #[test]
     fn worktree_lifecycle_and_diff() {
+        let _guard = HOME_LOCK.lock().unwrap();
         // Redirect ~/.swarm into a scratch dir for isolation.
         let home = scratch();
         std::env::set_var("HOME", &home);
@@ -816,5 +833,264 @@ mod tests {
         // Remove it.
         remove_worktree(repo_path, "feat-x", false).unwrap();
         assert_eq!(list_worktrees(repo_path).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn repo_info_reports_branch_dirty_and_name() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+
+        let info = repo_info(path).unwrap();
+        assert_eq!(info.name, dir.file_name().unwrap().to_string_lossy());
+        assert!(info.head_branch.is_some());
+        assert!(!info.is_detached);
+        assert!(!info.dirty, "fresh checkout should be clean");
+        assert_eq!(info.head_short.as_ref().map(|s| s.len()), Some(8));
+
+        fs::write(dir.join("a.txt"), "dirty now\n").unwrap();
+        assert!(repo_info(path).unwrap().dirty, "edit makes it dirty");
+    }
+
+    #[test]
+    fn changes_distinguish_staged_unstaged_and_untracked() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+
+        fs::write(dir.join("a.txt"), "hello\nCHANGED\n").unwrap(); // modify tracked
+        fs::write(dir.join("new.txt"), "fresh\n").unwrap(); // untracked
+
+        let ch = changes(path).unwrap();
+        let a = ch.iter().find(|c| c.path == "a.txt").unwrap();
+        assert_eq!(a.status, "modified");
+        assert!(a.unstaged && !a.staged);
+        let n = ch.iter().find(|c| c.path == "new.txt").unwrap();
+        assert_eq!(n.status, "untracked");
+
+        // Stage the modification → now it reads as staged.
+        stage_paths(path, vec!["a.txt".into()]).unwrap();
+        let staged = changes(path).unwrap();
+        let a2 = staged.iter().find(|c| c.path == "a.txt").unwrap();
+        assert!(a2.staged, "a.txt should be staged after stage_paths");
+
+        // Output is sorted by path.
+        let paths: Vec<_> = staged.iter().map(|c| c.path.clone()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(paths, sorted);
+        let _ = repo;
+    }
+
+    #[test]
+    fn stage_unstage_roundtrip() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "v2\n").unwrap();
+
+        stage_paths(path, vec!["a.txt".into()]).unwrap();
+        assert!(changes(path).unwrap().iter().any(|c| c.staged));
+        unstage_paths(path, vec!["a.txt".into()]).unwrap();
+        assert!(changes(path).unwrap().iter().all(|c| !c.staged));
+
+        stage_all(path).unwrap();
+        assert!(changes(path).unwrap().iter().all(|c| c.staged));
+        unstage_all(path).unwrap();
+        assert!(changes(path).unwrap().iter().all(|c| !c.staged));
+    }
+
+    #[test]
+    fn commit_only_commits_the_staged_index() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+
+        fs::write(dir.join("a.txt"), "staged change\n").unwrap();
+        fs::write(dir.join("b.txt"), "unstaged new\n").unwrap();
+        stage_paths(path, vec!["a.txt".into()]).unwrap();
+
+        let oid = commit(path, "partial").unwrap();
+        assert_eq!(oid.len(), 8);
+
+        // a.txt is committed; b.txt remains untracked/unstaged.
+        let after = changes(path).unwrap();
+        assert!(!after.iter().any(|c| c.path == "a.txt"));
+        assert!(after.iter().any(|c| c.path == "b.txt"));
+    }
+
+    #[test]
+    fn commit_all_stages_then_commits_everything() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "x\n").unwrap();
+        fs::write(dir.join("b.txt"), "y\n").unwrap();
+
+        commit_all(path, "everything").unwrap();
+        assert!(changes(path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn commit_on_empty_repo_creates_root_and_uses_signature_fallback() {
+        let dir = scratch();
+        let repo = init_bare_identity(&dir); // no user.name/email configured
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "first\n").unwrap();
+
+        // No HEAD yet, no signature → must fall back to the swarm identity.
+        let oid = commit_all(path, "root").unwrap();
+        assert_eq!(oid.len(), 8);
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 0, "root commit has no parents");
+    }
+
+    #[test]
+    fn git_log_orders_newest_first_and_marks_head() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        commit_file(&repo, "a.txt", "v2\n", "second");
+        let third = commit_file(&repo, "a.txt", "v3\n", "third");
+
+        let log = git_log(path, 100).unwrap();
+        assert_eq!(log.len(), 3);
+        assert_eq!(log[0].summary, "third");
+        assert_eq!(log[2].summary, "init");
+        assert!(log[0].is_head);
+        assert_eq!(log[0].oid, third.to_string());
+        assert_eq!(log[1].oid, log[0].parents[0]);
+        assert!(log.iter().all(|c| c.short.len() == 8));
+
+        // Limit is honoured.
+        assert_eq!(git_log(path, 2).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn commit_detail_and_diffs() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let oid = commit_file(&repo, "a.txt", "hello\nNEWLINE\n", "edit a");
+
+        let detail = commit_detail(path, &oid.to_string()).unwrap();
+        assert_eq!(detail.message.trim(), "edit a");
+        assert_eq!(detail.author, "swarm-test");
+        assert_eq!(detail.email, "test@swarm.local");
+        assert!(detail.files.iter().any(|f| f.path == "a.txt"));
+
+        let fd = commit_file_diff(path, &oid.to_string(), "a.txt").unwrap();
+        assert!(fd.contains("NEWLINE"));
+        let full = commit_diff(path, &oid.to_string()).unwrap();
+        assert!(full.contains("NEWLINE"));
+    }
+
+    #[test]
+    fn commit_detail_rejects_bad_oid() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let err = commit_detail(dir.to_str().unwrap(), "not-an-oid").unwrap_err();
+        assert!(matches!(err, AppError::Git(_)));
+    }
+
+    #[test]
+    fn list_branches_marks_head_and_sorts() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("aaa-feature", &head, false).unwrap();
+        repo.branch("zzz-feature", &head, false).unwrap();
+
+        let branches = list_branches(path).unwrap();
+        let names: Vec<_> = branches.iter().map(|b| b.name.clone()).collect();
+        assert!(names.contains(&"aaa-feature".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "branches are sorted by name");
+        assert_eq!(branches.iter().filter(|b| b.is_head).count(), 1);
+    }
+
+    #[test]
+    fn diff_stats_aggregates_insertions_and_deletions() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        // Original: "hello\nworld\n". Replace with extra lines.
+        fs::write(dir.join("a.txt"), "hello\nthere\nworld\nmore\n").unwrap();
+        let stats = diff_stats(path).unwrap();
+        assert!(stats.insertions >= 2);
+        assert!(stats.files_changed >= 1);
+    }
+
+    #[test]
+    fn remove_worktree_errors_when_missing() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        std::env::set_var("HOME", scratch());
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let err = remove_worktree(dir.to_str().unwrap(), "ghost", false).unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    #[test]
+    fn create_worktree_rejects_empty_branch() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        std::env::set_var("HOME", scratch());
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let err = create_worktree(dir.to_str().unwrap(), "  ", None).unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)));
+    }
+
+    #[test]
+    fn open_main_resolves_from_a_linked_worktree() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        std::env::set_var("HOME", scratch());
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let main_path = dir.to_str().unwrap();
+
+        let wt = create_worktree(main_path, "side", Some("HEAD")).unwrap();
+        // repo_info on the *worktree* path must report the main checkout's path.
+        let info = repo_info(&wt.path).unwrap();
+        let canon_main = std::fs::canonicalize(main_path).unwrap();
+        let canon_info = std::fs::canonicalize(&info.path).unwrap();
+        assert_eq!(canon_info, canon_main);
+
+        // git_log via the worktree path sees the shared history.
+        assert!(!git_log(&wt.path, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sanitize_replaces_unsafe_characters() {
+        assert_eq!(sanitize("feat/x"), "feat-x");
+        assert_eq!(sanitize("a b@c#d"), "a-b-c-d");
+        assert_eq!(sanitize("keep.dots_and-dashes"), "keep.dots_and-dashes");
+        // Non-ascii scalars become dashes; embedded ascii (n, c, d) survives.
+        assert_eq!(sanitize("Ünïcödé"), "-n-c-d-");
+    }
+
+    #[test]
+    fn status_label_maps_every_state() {
+        assert_eq!(status_label(Status::WT_NEW), "untracked");
+        assert_eq!(status_label(Status::INDEX_NEW), "added");
+        assert_eq!(status_label(Status::WT_MODIFIED), "modified");
+        assert_eq!(status_label(Status::INDEX_MODIFIED), "modified");
+        assert_eq!(status_label(Status::WT_DELETED), "deleted");
+        assert_eq!(status_label(Status::INDEX_RENAMED), "renamed");
+        assert_eq!(status_label(Status::WT_TYPECHANGE), "typechange");
+        assert_eq!(status_label(Status::CONFLICTED), "conflicted");
+    }
+
+    #[test]
+    fn delta_label_maps_every_delta() {
+        assert_eq!(delta_label(Delta::Added), "added");
+        assert_eq!(delta_label(Delta::Deleted), "deleted");
+        assert_eq!(delta_label(Delta::Renamed), "renamed");
+        assert_eq!(delta_label(Delta::Copied), "renamed");
+        assert_eq!(delta_label(Delta::Typechange), "typechange");
+        assert_eq!(delta_label(Delta::Modified), "modified");
+        assert_eq!(delta_label(Delta::Unmodified), "modified");
     }
 }
