@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef } from "react";
 import {
   FolderGit2,
@@ -59,7 +60,7 @@ export function Workspace() {
     <div className="flex min-w-0 flex-1 flex-col">
       {/* Tab strip + split toolbar */}
       <div className="flex h-11 flex-none items-center gap-1 border-b border-[var(--color-border)] px-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
           {ws?.tabs.map((t) => {
             const active = ws.activeTab === t.id && ws.editor.type === "terminal";
             const ids = leaves(t.layout);
@@ -155,7 +156,7 @@ export function Workspace() {
                     removePane(p.paneId);
                   }}
                   title="Close terminal"
-                  className="icon-btn absolute right-1.5 top-1.5 z-20 h-6 w-6 bg-black/40 opacity-0 group-hover:opacity-100"
+                  className="icon-btn absolute right-1.5 top-1.5 z-20 h-6 w-6 opacity-0 group-hover:opacity-100"
                 >
                   <X size={13} />
                 </button>
