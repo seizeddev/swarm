@@ -12,10 +12,6 @@ A lightweight, cross-platform desktop app. Rust core, native webview, no Electro
 
 <br />
 
-<img src="docs/banner.png" alt="swarm — parallel terminals for your AI coding agents, with a built-in GitHub view" width="820" />
-
-<br />
-
 <img src="docs/demo.gif" alt="swarm in action — parallel Claude Code terminals, then the built-in Source Control view with per-file diffs" width="860" />
 
 </div>
