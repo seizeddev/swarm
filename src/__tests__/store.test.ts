@@ -33,6 +33,8 @@ vi.mock("../lib/ipc", () => ({
     prList: vi.fn(),
     ghLogin: vi.fn(),
     ghAvailable: vi.fn(),
+    watchWorktree: vi.fn(),
+    unwatchWorktree: vi.fn(),
     listAgents: vi.fn(),
     claudeSessionExists: vi.fn(),
     ptySpawn: vi.fn(),
@@ -123,7 +125,15 @@ beforeEach(() => {
   m.ghLogin.mockResolvedValue("octocat");
   m.prList.mockResolvedValue([]);
   m.loadSession.mockResolvedValue(null);
-  for (const fn of ["stage", "unstage", "stageAll", "unstageAll", "saveSession"]) {
+  for (const fn of [
+    "stage",
+    "unstage",
+    "stageAll",
+    "unstageAll",
+    "saveSession",
+    "watchWorktree",
+    "unwatchWorktree",
+  ]) {
     m[fn].mockResolvedValue(undefined);
   }
   m.commit.mockResolvedValue("deadbee");
@@ -158,6 +168,12 @@ describe("addWorkspace", () => {
     const ws = s().workspaces[0];
     expect(ws.changes).toHaveLength(1);
     expect(ws.diffStats).toEqual({ filesChanged: 1, insertions: 2, deletions: 1 });
+  });
+
+  it("starts a worktree watcher for the new workspace", async () => {
+    await s().addWorkspace("/repo");
+    const ws = s().workspaces[0];
+    expect(m.watchWorktree).toHaveBeenCalledWith(ws.id, ws.repo.path);
   });
 
   it("records an error and clears busy when the repo cannot be opened", async () => {
@@ -427,6 +443,8 @@ describe("workspace navigation", () => {
     expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
     expect(s().activeWorkspaceId).toBe(ids[0]);
     expect(s().panes.some((p) => p.workspaceId === ids[1])).toBe(false);
+    // The worktree watcher for the closed workspace is torn down.
+    expect(m.unwatchWorktree).toHaveBeenCalledWith(ids[1]);
   });
 });
 

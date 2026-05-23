@@ -4,12 +4,14 @@ mod error;
 mod git;
 mod github;
 mod terminal;
+mod watcher;
 
 use error::AppResult;
 use tauri::ipc::Channel;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use terminal::{SpawnOpts, TerminalManager, WireUpdate};
+use watcher::WatcherManager;
 
 /// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
 /// run on the main thread and would freeze the UI on a slow libgit2 walk or a `gh`
@@ -242,6 +244,21 @@ fn pty_set_visible(state: State<TerminalManager>, id: String, visible: bool) -> 
 }
 
 #[tauri::command]
+fn watch_worktree(
+    app: AppHandle,
+    state: State<WatcherManager>,
+    workspace_id: String,
+    path: String,
+) -> AppResult<()> {
+    state.watch_worktree(app, workspace_id, path)
+}
+
+#[tauri::command]
+fn unwatch_worktree(state: State<WatcherManager>, workspace_id: String) {
+    state.unwatch_worktree(&workspace_id);
+}
+
+#[tauri::command]
 fn pty_kill(state: State<TerminalManager>, id: String) -> AppResult<()> {
     state.kill(&id)
 }
@@ -272,6 +289,7 @@ pub fn run() {
     }
     builder
         .manage(TerminalManager::default())
+        .manage(WatcherManager::default())
         .menu(|app| {
             let app_menu = SubmenuBuilder::new(app, "swarm")
                 .about(None)
@@ -393,47 +411,13 @@ pub fn run() {
             let _ = app.emit("menu", event.id().0.clone());
         })
         .setup(|app| {
-            // Watch ~/.swarm/events for agent notification files (one per pane).
-            // Any agent that appends a line to its file triggers a notification.
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let dir = match dirs::home_dir() {
-                    Some(h) => h.join(".swarm").join("events"),
-                    None => return,
-                };
-                let _ = std::fs::create_dir_all(&dir);
-                let mut seen: std::collections::HashMap<String, (std::time::SystemTime, u64)> =
-                    std::collections::HashMap::new();
-                let mut first = true;
-                loop {
-                    if let Ok(rd) = std::fs::read_dir(&dir) {
-                        for e in rd.flatten() {
-                            let name = e.file_name().to_string_lossy().into_owned();
-                            if let Ok(meta) = e.metadata() {
-                                let key = (
-                                    meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-                                    meta.len(),
-                                );
-                                if seen.get(&name).map(|v| *v != key).unwrap_or(true) {
-                                    seen.insert(name.clone(), key);
-                                    if !first {
-                                        let body = std::fs::read_to_string(e.path())
-                                            .ok()
-                                            .and_then(|c| c.lines().last().map(str::to_string))
-                                            .unwrap_or_default();
-                                        let _ = handle.emit(
-                                            "pane:notify",
-                                            serde_json::json!({ "paneId": name, "body": body }),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    first = false;
-                    std::thread::sleep(std::time::Duration::from_millis(700));
-                }
-            });
+            // Watch ~/.swarm/events (one file per pane) event-driven: an agent
+            // appending a line fires `pane:notify` with no interval polling.
+            if let Some(home) = dirs::home_dir() {
+                let watchers = app.state::<WatcherManager>();
+                let dir = home.join(".swarm").join("events");
+                let _ = watchers.start_events(app.handle().clone(), dir);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -472,6 +456,8 @@ pub fn run() {
             pty_set_visible,
             pty_kill,
             pty_alive,
+            watch_worktree,
+            unwatch_worktree,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

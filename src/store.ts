@@ -377,6 +377,7 @@ export const useStore = create<State>((set, get) => {
             workspaces.find((w) => w.id === snap.activeWorkspaceId)?.id ?? workspaces[0]?.id ?? null;
           set({ workspaces, panes, activeWorkspaceId });
           for (const w of workspaces) {
+            api.watchWorktree(w.id, w.repo.path).catch(() => {});
             get().refreshStatus(w.id);
             if (gh) {
               ghLoginOnce().then((l) => patch(w.id, { ghLogin: l }));
@@ -411,6 +412,7 @@ export const useStore = create<State>((set, get) => {
           ghLogin: null,
         };
         set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: id, ghAvailable: gh }));
+        api.watchWorktree(id, repo.path).catch(() => {});
         get().addPane(undefined, id);
         await get().refreshStatus(id);
         if (gh) {
@@ -425,6 +427,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     closeWorkspace(id) {
+      api.unwatchWorktree(id).catch(() => {});
       set((s) => {
         const workspaces = s.workspaces.filter((w) => w.id !== id);
         return {

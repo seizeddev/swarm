@@ -78,6 +78,9 @@ export default function App() {
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
 
+    // Live git status: the backend's per-worktree notify watcher fires
+    // `fs:changed`; coalesce bursts per workspace before refreshing.
+    const fsTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const events = Promise.all([
       listen<{ id: string }>("term:attention", (e) => useStore.getState().onAttention(e.payload.id)),
       listen<{ id: string; title: string; body: string }>("term:notify", (e) =>
@@ -90,6 +93,17 @@ export default function App() {
       listen<{ paneId: string; body: string }>("pane:notify", (e) =>
         useStore.getState().onPaneNotify(e.payload.paneId, e.payload.body),
       ),
+      listen<{ workspaceId: string }>("fs:changed", (e) => {
+        const id = e.payload.workspaceId;
+        clearTimeout(fsTimers.get(id));
+        fsTimers.set(
+          id,
+          setTimeout(() => {
+            fsTimers.delete(id);
+            useStore.getState().refreshStatus(id);
+          }, 200),
+        );
+      }),
     ]);
 
     return () => {
@@ -97,6 +111,7 @@ export default function App() {
       clearInterval(updateTimer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
+      fsTimers.forEach((t) => clearTimeout(t));
       events.then((fns) => fns.forEach((f) => f()));
     };
   }, []);

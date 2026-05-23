@@ -56,6 +56,10 @@ export const api = {
   prList: (repoPath: string) => invoke<PrSummary[]>("pr_list", { repoPath }),
   ghLogin: () => invoke<string | null>("gh_login"),
   ghAvailable: () => invoke<boolean>("gh_available"),
+  watchWorktree: (workspaceId: string, path: string) =>
+    invoke<void>("watch_worktree", { workspaceId, path }),
+  unwatchWorktree: (workspaceId: string) =>
+    invoke<void>("unwatch_worktree", { workspaceId }),
   listAgents: () => invoke<AgentDef[]>("list_agents"),
   claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
 

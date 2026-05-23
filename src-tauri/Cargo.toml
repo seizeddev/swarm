@@ -36,6 +36,9 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 dirs = "6"
 alacritty_terminal = "0.26.0"
+# Event-driven filesystem watching (FSEvents/inotify/kqueue) — replaces interval
+# polling for agent notifications and live git-status refresh.
+notify = "8"
 # Repairs $PATH for GUI launches: a bundled .app started from Finder/Dock inherits
 # only launchd's minimal PATH, so bare-name agent commands (`claude`, …) aren't found.
 # Pulls the login-shell PATH at startup. See tauri-apps/fix-path-env-rs.
