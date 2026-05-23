@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-23
+
+First public release.
+
 ### Added
 
 - **Automatic updates** — signed self-updates via `tauri-plugin-updater`. The app polls the GitHub release at launch, on window focus, and every 15 min; a monochrome **Update available** banner at the bottom of the sidebar downloads, verifies, and installs on click, then offers a one-click restart.
@@ -20,3 +24,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Notes
 
 - Pre-1.0: interfaces and persisted snapshot format may change.
+- Licensed under **GPL-3.0-or-later**.
+
+[Unreleased]: https://github.com/seizeddev/swarm/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/seizeddev/swarm/releases/tag/v0.1.0

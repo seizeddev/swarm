@@ -7,8 +7,16 @@
 A lightweight, cross-platform desktop app. Rust core, native webview, no Electron.
 
 [![CI](https://github.com/seizeddev/swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/seizeddev/swarm/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](./LICENSE)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-informational.svg)](./LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555)
+
+<br />
+
+<img src="docs/banner.png" alt="swarm — parallel terminals for your AI coding agents, with a built-in GitHub view" width="820" />
+
+<br />
+
+<img src="docs/demo.gif" alt="swarm in action — parallel Claude Code terminals, then the built-in Source Control view with per-file diffs" width="860" />
 
 </div>
 
@@ -95,4 +103,8 @@ cd src-tauri && cargo test
 
 ## License
 
-[MIT](./LICENSE) © swarm contributors
+[GNU General Public License v3.0 or later](./LICENSE) © swarm contributors.
+
+swarm is **copyleft**: you may use, study, share, and modify it freely, but any
+distributed derivative must also be released under the GPLv3. This keeps swarm
+and its forks open — no one can ship a closed-source commercial version.
