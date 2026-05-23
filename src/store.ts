@@ -307,10 +307,19 @@ export const useStore = create<State>((set, get) => {
               ghLogin: null,
             });
             for (const sp of sw.panes) {
-              // Relaunch resuming the same session: Claude via `--resume <uuid>`
-              // (exact), others via their resume command (`codex resume --last`).
+              // Relaunch resuming the same session. Claude only persists a
+              // transcript after the first turn, so a session that was opened but
+              // never used cannot be `--resume`d ("No conversation found with
+              // session ID"). Check persistence first: resume when it exists,
+              // otherwise start fresh reusing the same id (`--session-id`).
               const agent = agents.find((a) => a.id === sp.agentId);
-              const args = agent ? launchArgs(agent, sp.sessionId, true) : sp.args;
+              let resume = true;
+              if (agent?.id === "claude") {
+                resume = sp.sessionId
+                  ? await api.claudeSessionExists(sp.sessionId)
+                  : false;
+              }
+              const args = agent ? launchArgs(agent, sp.sessionId, resume) : sp.args;
               panes.push({
                 paneId: sp.paneId,
                 workspaceId: sw.id,

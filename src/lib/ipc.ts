@@ -53,6 +53,7 @@ export const api = {
   ghLogin: () => invoke<string | null>("gh_login"),
   ghAvailable: () => invoke<boolean>("gh_available"),
   listAgents: () => invoke<AgentDef[]>("list_agents"),
+  claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
 
   ptySpawn: (
     opts: {

@@ -33,6 +33,10 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 dirs = "6"
 alacritty_terminal = "0.25.0"
+# Repairs $PATH for GUI launches: a bundled .app started from Finder/Dock inherits
+# only launchd's minimal PATH, so bare-name agent commands (`claude`, …) aren't found.
+# Pulls the login-shell PATH at startup. See tauri-apps/fix-path-env-rs.
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
 
 [profile.release]
 codegen-units = 1

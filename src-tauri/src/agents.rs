@@ -105,10 +105,50 @@ pub fn list_agents() -> Vec<AgentDef> {
         .collect()
 }
 
+/// True if Claude Code has a persisted transcript for `session_id`. Claude writes
+/// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` only after the first turn,
+/// so a session that was opened but never used has no transcript and cannot be
+/// `--resume`d (it errors with "No conversation found"). Session IDs are UUIDs and
+/// globally unique, so we scan every project dir for `<id>.jsonl` rather than
+/// reconstructing Claude's cwd→dirname encoding (which is undocumented and brittle).
+pub fn claude_session_exists(session_id: &str) -> bool {
+    // Defensive: a persisted id must be a bare token, never a path component.
+    if session_id.is_empty()
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains("..")
+    {
+        return false;
+    }
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    let projects = home.join(".claude").join("projects");
+    let file = format!("{session_id}.jsonl");
+    match std::fs::read_dir(&projects) {
+        Ok(entries) => entries.flatten().any(|e| e.path().join(&file).is_file()),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn claude_session_exists_rejects_non_uuid_path_tokens() {
+        // Defensive guard: a stored id must never be treated as a path component,
+        // so anything path-like returns false without touching the filesystem.
+        assert!(!claude_session_exists(""));
+        assert!(!claude_session_exists("../../etc/passwd"));
+        assert!(!claude_session_exists("a/b"));
+        assert!(!claude_session_exists("a\\b"));
+        // A well-formed UUID that does not exist on disk is simply not found.
+        assert!(!claude_session_exists(
+            "00000000-0000-4000-8000-000000000000"
+        ));
+    }
 
     #[test]
     fn list_agents_exposes_the_full_registry() {

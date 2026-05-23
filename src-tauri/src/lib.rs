@@ -187,6 +187,11 @@ fn list_agents() -> Vec<agents::AgentDef> {
 }
 
 #[tauri::command]
+fn claude_session_exists(id: String) -> bool {
+    agents::claude_session_exists(&id)
+}
+
+#[tauri::command]
 fn pty_spawn(
     app: AppHandle,
     state: State<TerminalManager>,
@@ -225,6 +230,13 @@ fn pty_alive(state: State<TerminalManager>, id: String) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Repair $PATH before anything spawns. A bundled .app launched from Finder/Dock
+    // inherits only launchd's minimal PATH, so agent CLIs (claude, codex, …) resolved
+    // by bare name in agents::on_path and the PTY CommandBuilder would not be found.
+    // This pulls the login-shell PATH into the process env; harmless when run from a
+    // terminal (PATH already correct).
+    let _ = fix_path_env::fix();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -414,6 +426,7 @@ pub fn run() {
             gh_login,
             gh_available,
             list_agents,
+            claude_session_exists,
             save_session,
             load_session,
             events_dir,

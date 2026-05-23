@@ -32,6 +32,7 @@ vi.mock("../lib/ipc", () => ({
     ghLogin: vi.fn(),
     ghAvailable: vi.fn(),
     listAgents: vi.fn(),
+    claudeSessionExists: vi.fn(),
     ptySpawn: vi.fn(),
     ptyWrite: vi.fn(),
     ptyResize: vi.fn(),
@@ -96,6 +97,7 @@ beforeEach(() => {
   m.repoInfo.mockResolvedValue(repo());
   m.ghAvailable.mockResolvedValue(false);
   m.listAgents.mockResolvedValue([SHELL, CLAUDE]);
+  m.claudeSessionExists.mockResolvedValue(true);
   m.changes.mockResolvedValue([]);
   m.diffStats.mockResolvedValue({ filesChanged: 0, insertions: 0, deletions: 0 });
   m.eventsDir.mockResolvedValue("/events");
@@ -651,6 +653,46 @@ describe("persist + hydrate", () => {
     // Claude restores via --resume <sessionId>
     expect(pane.args).toContain("--resume");
     expect(pane.args).toContain("uuid-1");
+  });
+
+  it("restores an unpersisted Claude session via --session-id, not --resume", async () => {
+    // A session opened but never used has no transcript on disk, so `--resume`
+    // would fail with "No conversation found". Restore must start it fresh,
+    // reusing the same id via --session-id.
+    m.claudeSessionExists.mockResolvedValue(false);
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/repo",
+            panel: "scm",
+            activeTab: "tab-1",
+            tabs: [{ id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" }],
+            panes: [
+              {
+                paneId: "pane-1",
+                tabId: "tab-1",
+                agentId: "claude",
+                command: "claude",
+                args: [],
+                cwd: "/repo",
+                title: "Claude Code",
+                sessionId: "uuid-1",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await s().hydrate();
+    expect(m.claudeSessionExists).toHaveBeenCalledWith("uuid-1");
+    const pane = s().panes[0];
+    expect(pane.args).toContain("--session-id");
+    expect(pane.args).toContain("uuid-1");
+    expect(pane.args).not.toContain("--resume");
   });
 
   it("loads gh login + PRs for each restored workspace when gh is available", async () => {
