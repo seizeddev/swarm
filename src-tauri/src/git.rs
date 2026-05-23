@@ -419,7 +419,69 @@ fn build_diff<'a>(repo: &'a Repository, file: Option<&str>, staged: bool) -> App
     Ok(diff)
 }
 
-/// Unified-diff patch text for one file (parsed into hunks by the frontend).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffLine {
+    pub kind: &'static str, // "add" | "del" | "ctx"
+    pub text: String,
+    pub old_no: Option<u32>,
+    pub new_no: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffHunk {
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+/// Structured hunks for one file — line numbers come straight from libgit2, so
+/// the frontend never parses a patch on the main thread (the old `parsePatch`).
+pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResult<Vec<DiffHunk>> {
+    let repo = Repository::open(worktree_path)?;
+    let diff = build_diff(&repo, Some(file), staged)?;
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
+        match line.origin() {
+            'H' => {
+                let header = String::from_utf8_lossy(line.content())
+                    .trim_end()
+                    .to_string();
+                hunks.push(DiffHunk {
+                    header,
+                    lines: Vec::new(),
+                });
+            }
+            c @ (' ' | '+' | '-') => {
+                if let Some(h) = hunks.last_mut() {
+                    let mut text = String::from_utf8_lossy(line.content()).into_owned();
+                    if text.ends_with('\n') {
+                        text.pop();
+                        if text.ends_with('\r') {
+                            text.pop();
+                        }
+                    }
+                    let kind = match c {
+                        '+' => "add",
+                        '-' => "del",
+                        _ => "ctx",
+                    };
+                    h.lines.push(DiffLine {
+                        kind,
+                        text,
+                        old_no: line.old_lineno(),
+                        new_no: line.new_lineno(),
+                    });
+                }
+            }
+            _ => {}
+        }
+        true
+    })?;
+    Ok(hunks)
+}
+
+/// Unified-diff patch text for one file (raw patch; see also `file_diff_hunks`).
 pub fn file_diff(worktree_path: &str, file: &str, staged: bool) -> AppResult<String> {
     let repo = Repository::open(worktree_path)?;
     let diff = build_diff(&repo, Some(file), staged)?;
@@ -1041,6 +1103,32 @@ mod tests {
         sorted.sort();
         assert_eq!(names, sorted, "branches are sorted by name");
         assert_eq!(branches.iter().filter(|b| b.is_head).count(), 1);
+    }
+
+    #[test]
+    fn file_diff_hunks_yields_structured_lines_with_numbers() {
+        let dir = scratch();
+        let _repo = init_repo(&dir); // a.txt = "hello\nworld\n"
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "hello\nthere\nworld\n").unwrap();
+
+        let hunks = file_diff_hunks(path, "a.txt", false).unwrap();
+        assert_eq!(hunks.len(), 1);
+        assert!(hunks[0].header.starts_with("@@"));
+        // The inserted "there" line is an addition with a new line number, no old.
+        let add = hunks[0]
+            .lines
+            .iter()
+            .find(|l| l.kind == "add")
+            .expect("an added line");
+        assert_eq!(add.text, "there");
+        assert!(add.new_no.is_some());
+        assert!(add.old_no.is_none());
+        // Context lines carry both numbers.
+        assert!(hunks[0]
+            .lines
+            .iter()
+            .any(|l| l.kind == "ctx" && l.old_no.is_some() && l.new_no.is_some()));
     }
 
     #[test]

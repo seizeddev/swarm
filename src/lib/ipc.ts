@@ -5,6 +5,7 @@ import type {
   BranchInfo,
   CommitDetail,
   CommitInfo,
+  DiffHunk,
   DiffStatsInfo,
   FileChange,
   PrInfo,
@@ -25,6 +26,8 @@ export const api = {
   changes: (worktreePath: string) => invoke<FileChange[]>("changes", { worktreePath }),
   fileDiff: (worktreePath: string, file: string, staged: boolean) =>
     invoke<string>("file_diff", { worktreePath, file, staged }),
+  fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>
+    invoke<DiffHunk[]>("file_diff_hunks", { worktreePath, file, staged }),
   diffStats: (worktreePath: string) => invoke<DiffStatsInfo>("diff_stats", { worktreePath }),
   statusAndStats: (worktreePath: string) =>
     invoke<StatusAndStats>("status_and_stats", { worktreePath }),

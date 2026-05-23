@@ -52,6 +52,18 @@ export interface StatusAndStats {
   stats: DiffStatsInfo;
 }
 
+export interface DiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldNo: number | null;
+  newNo: number | null;
+}
+
+export interface DiffHunk {
+  header: string;
+  lines: DiffLine[];
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;

@@ -61,6 +61,15 @@ async fn file_diff(worktree_path: String, file: String, staged: bool) -> AppResu
 }
 
 #[tauri::command]
+async fn file_diff_hunks(
+    worktree_path: String,
+    file: String,
+    staged: bool,
+) -> AppResult<Vec<git::DiffHunk>> {
+    off_thread(move || git::file_diff_hunks(&worktree_path, &file, staged)).await
+}
+
+#[tauri::command]
 async fn diff_stats(worktree_path: String) -> AppResult<git::DiffStatsInfo> {
     off_thread(move || git::diff_stats(&worktree_path)).await
 }
@@ -427,6 +436,7 @@ pub fn run() {
             remove_worktree,
             changes,
             file_diff,
+            file_diff_hunks,
             diff_stats,
             status_and_stats,
             list_branches,

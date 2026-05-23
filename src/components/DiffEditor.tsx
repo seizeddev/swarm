@@ -1,32 +1,50 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "../lib/ipc";
+import type { DiffHunk, DiffLine } from "../lib/types";
 
-type DLine = { kind: "add" | "del" | "ctx"; text: string; oldNo?: number; newNo?: number };
-type Hunk = { header: string; lines: DLine[] };
+// One flat scroll row: a hunk header or a single diff line. Flattening lets the
+// virtualizer treat the whole file as one list regardless of hunk boundaries.
+type Row = { type: "header"; text: string } | { type: "line"; line: DiffLine };
 
-function parsePatch(patch: string): Hunk[] {
-  const hunks: Hunk[] = [];
-  let cur: Hunk | null = null;
-  let oldNo = 0;
-  let newNo = 0;
-  for (const raw of patch.split("\n")) {
-    if (raw.startsWith("@@")) {
-      const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      oldNo = m ? parseInt(m[1], 10) : 0;
-      newNo = m ? parseInt(m[2], 10) : 0;
-      cur = { header: raw, lines: [] };
-      hunks.push(cur);
-      continue;
-    }
-    if (!cur) continue;
-    const c = raw[0];
-    if (c === "+" && !raw.startsWith("+++")) cur.lines.push({ kind: "add", text: raw.slice(1), newNo: newNo++ });
-    else if (c === "-" && !raw.startsWith("---")) cur.lines.push({ kind: "del", text: raw.slice(1), oldNo: oldNo++ });
-    else if (c === " ") cur.lines.push({ kind: "ctx", text: raw.slice(1), oldNo: oldNo++, newNo: newNo++ });
+function flatten(hunks: DiffHunk[]): Row[] {
+  const rows: Row[] = [];
+  for (const h of hunks) {
+    rows.push({ type: "header", text: h.header });
+    for (const line of h.lines) rows.push({ type: "line", line });
   }
-  return hunks;
+  return rows;
+}
+
+function LineRow({ line }: { line: DiffLine }) {
+  const bg =
+    line.kind === "add"
+      ? "var(--color-success-soft)"
+      : line.kind === "del"
+        ? "var(--color-danger-soft)"
+        : "transparent";
+  const symColor =
+    line.kind === "add"
+      ? "var(--color-success)"
+      : line.kind === "del"
+        ? "var(--color-danger)"
+        : "var(--color-faint)";
+  return (
+    <div className="flex" style={{ background: bg }}>
+      <span className="w-12 flex-none select-none px-1 text-right text-[var(--color-faint)]">
+        {line.oldNo ?? ""}
+      </span>
+      <span className="w-12 flex-none select-none px-1 text-right text-[var(--color-faint)]">
+        {line.newNo ?? ""}
+      </span>
+      <span className="w-4 flex-none select-none text-center" style={{ color: symColor }}>
+        {line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}
+      </span>
+      <span className="whitespace-pre-wrap break-all pr-4 text-[var(--color-text)]">{line.text}</span>
+    </div>
+  );
 }
 
 export function DiffEditor({
@@ -40,18 +58,31 @@ export function DiffEditor({
   staged: boolean;
   onClose: () => void;
 }) {
-  const [patch, setPatch] = useState("");
+  // Hunks are parsed in Rust (libgit2 gives line numbers directly), so even a
+  // 10k-line patch never blocks the JS main thread with a string parse.
+  const [hunks, setHunks] = useState<DiffHunk[]>([]);
   const [loading, setLoading] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoading(true);
     api
-      .fileDiff(repoPath, file, staged)
-      .then(setPatch)
+      .fileDiffHunks(repoPath, file, staged)
+      .then(setHunks)
+      .catch(() => setHunks([]))
       .finally(() => setLoading(false));
   }, [repoPath, file, staged]);
 
-  const hunks = useMemo(() => parsePatch(patch), [patch]);
+  const rows = useMemo(() => flatten(hunks), [hunks]);
+
+  // Only the visible window is in the DOM; rows are measured for real (lines
+  // wrap with whitespace-pre-wrap, so heights vary).
+  const virt = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 19,
+    overscan: 24,
+  });
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
@@ -62,59 +93,43 @@ export function DiffEditor({
           <X size={14} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="p-4 text-sm text-[var(--color-muted)]">Loading diff…</div>
-        ) : hunks.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="p-4 text-sm text-[var(--color-muted)]">
             No textual diff (binary or unchanged).
           </div>
         ) : (
-          <div className="font-mono text-[12.5px] leading-[1.5]">
-            {hunks.map((h, hi) => (
-              <div key={hi}>
-                <div className="bg-[var(--color-surface-1)] px-4 py-1 text-[var(--color-info)]">
-                  {h.header}
+          <div
+            className="relative font-mono text-[12.5px] leading-[1.5]"
+            style={{ height: virt.getTotalSize() }}
+          >
+            {virt.getVirtualItems().map((vi) => {
+              const row = rows[vi.index];
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={virt.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${vi.start}px)`,
+                  }}
+                >
+                  {row.type === "header" ? (
+                    <div className="bg-[var(--color-surface-1)] px-4 py-1 text-[var(--color-info)]">
+                      {row.text}
+                    </div>
+                  ) : (
+                    <LineRow line={row.line} />
+                  )}
                 </div>
-                {h.lines.map((l, li) => (
-                  <div
-                    key={li}
-                    className="flex"
-                    style={{
-                      background:
-                        l.kind === "add"
-                          ? "var(--color-success-soft)"
-                          : l.kind === "del"
-                            ? "var(--color-danger-soft)"
-                            : "transparent",
-                    }}
-                  >
-                    <span className="w-12 flex-none select-none px-1 text-right text-[var(--color-faint)]">
-                      {l.oldNo ?? ""}
-                    </span>
-                    <span className="w-12 flex-none select-none px-1 text-right text-[var(--color-faint)]">
-                      {l.newNo ?? ""}
-                    </span>
-                    <span
-                      className="w-4 flex-none select-none text-center"
-                      style={{
-                        color:
-                          l.kind === "add"
-                            ? "var(--color-success)"
-                            : l.kind === "del"
-                              ? "var(--color-danger)"
-                              : "var(--color-faint)",
-                      }}
-                    >
-                      {l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}
-                    </span>
-                    <span className="whitespace-pre-wrap break-all pr-4 text-[var(--color-text)]">
-                      {l.text}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

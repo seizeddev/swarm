@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "../lib/ipc";
 import { buildGraph, laneColor } from "../lib/graph";
 import { useActiveWorkspace, useStore } from "../store";
@@ -39,7 +40,18 @@ export function GraphPanel() {
   const g = useMemo(() => buildGraph(commits), [commits]);
   const x = (c: number) => XPAD + c * COLW;
   const gw = g.cols * COLW + XPAD;
-  const h = g.rows.length * ROW;
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Fixed-height rows, so only the visible window (+overscan) is in the DOM —
+  // both the commit rows and the SVG nodes/edges anchored to them.
+  const virt = useVirtualizer({
+    count: g.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW,
+    overscan: 16,
+  });
+  const items = virt.getVirtualItems();
+  const cy = (row: number) => row * ROW + ROW / 2;
 
   return (
     <div className="flex h-full flex-col">
@@ -52,18 +64,24 @@ export function GraphPanel() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className="relative" style={{ height: h, minWidth: "100%" }}>
-          {/* graph edges + nodes */}
-          <svg width={gw} height={h} className="absolute left-0 top-0" style={{ overflow: "visible" }}>
-            {g.rows.map((r) =>
-              r.commit.parents.map((p) => {
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        <div className="relative" style={{ height: virt.getTotalSize(), minWidth: "100%" }}>
+          {/* graph edges + nodes — only for rows in the visible window */}
+          <svg
+            width={gw}
+            height={virt.getTotalSize()}
+            className="absolute left-0 top-0"
+            style={{ overflow: "visible" }}
+          >
+            {items.map((vi) => {
+              const r = g.rows[vi.index];
+              return r.commit.parents.map((p) => {
                 const pi = g.index.get(p);
                 if (!pi) return null;
                 const x1 = x(r.col);
-                const y1 = g.index.get(r.commit.oid)!.row * ROW + ROW / 2;
+                const y1 = cy(vi.index);
                 const x2 = x(pi.col);
-                const y2 = pi.row * ROW + ROW / 2;
+                const y2 = cy(pi.row);
                 const d =
                   x1 === x2
                     ? `M${x1},${y1} L${x2},${y2}`
@@ -78,24 +96,26 @@ export function GraphPanel() {
                     strokeWidth={1.5}
                   />
                 );
-              }),
-            )}
-            {g.rows.map((r) => {
-              const cx = x(r.col);
-              const cy = r.commit && g.index.get(r.commit.oid)!.row * ROW + ROW / 2;
+              });
+            })}
+            {items.map((vi) => {
+              const r = g.rows[vi.index];
+              const px = x(r.col);
+              const py = cy(vi.index);
               return r.commit.isHead ? (
                 <g key={r.commit.oid}>
-                  <circle cx={cx} cy={cy} r={DOT + 2} fill="none" stroke="#fff" strokeWidth={1.5} />
-                  <circle cx={cx} cy={cy} r={DOT - 1} fill="#fff" />
+                  <circle cx={px} cy={py} r={DOT + 2} fill="none" stroke="#fff" strokeWidth={1.5} />
+                  <circle cx={px} cy={py} r={DOT - 1} fill="#fff" />
                 </g>
               ) : (
-                <circle key={r.commit.oid} cx={cx} cy={cy} r={DOT} fill={laneColor(r.col)} />
+                <circle key={r.commit.oid} cx={px} cy={py} r={DOT} fill={laneColor(r.col)} />
               );
             })}
           </svg>
 
           {/* commit rows */}
-          {g.rows.map((r, i) => {
+          {items.map((vi) => {
+            const r = g.rows[vi.index];
             const activeCommit = ws?.editor.type === "commit" && ws.editor.oid === r.commit.oid;
             return (
               <div
@@ -104,7 +124,7 @@ export function GraphPanel() {
                 onClick={() => openCommit(r.commit.oid)}
                 title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
                 className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
-                style={{ top: i * ROW + 3, left: gw, right: 8, height: ROW - 6 }}
+                style={{ top: vi.start + 3, left: gw, right: 8, height: ROW - 6 }}
               >
                 {r.commit.refs.map((ref) => (
                   <span
