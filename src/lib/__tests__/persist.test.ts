@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { leaf } from "../layout";
 import { loadSnap, type Snap, saveSnap } from "../persist";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { create } from "zustand";
 import { api } from "./lib/ipc";
 import {

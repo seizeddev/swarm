@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../lib/ipc";

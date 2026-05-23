@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Session snapshot persisted to a file by the Rust core (~/.swarm/session.json).
 // Like cmux, we restore the *layout* + working dirs and re-spawn terminals
 // (resuming agent sessions) — live process state is not checkpointed.

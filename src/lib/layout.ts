@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A binary split tree of terminal panes. Leaves reference a pane id; splits
 // arrange two children left/right ("row") or top/bottom ("col") at a ratio.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
   AgentDef,

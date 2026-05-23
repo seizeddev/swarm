@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Thin wrapper over tauri-plugin-updater + tauri-plugin-process. The live
 // `Update` handle (a class instance with download/install methods) is kept in
 // module scope so the store only ever holds serializable status — never a

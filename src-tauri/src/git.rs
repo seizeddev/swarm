@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Git operations via libgit2 (no shelling out to the `git` binary).
 //!
 //! This module is swarm's wedge against cmux: first-class *worktree* listing and

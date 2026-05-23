@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Terminal core: real VT emulation via the Alacritty engine, one `Term` per
 //! session. PTY bytes are parsed in Rust; the frontend only paints the cell
 //! grid we stream over a Tauri `Channel` — no xterm.js, no TUI scraping.

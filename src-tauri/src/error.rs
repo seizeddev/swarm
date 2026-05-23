@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! A single error type for every Tauri command.
 //!
 //! Tauri requires command errors to be `serde::Serialize`. We map the handful of

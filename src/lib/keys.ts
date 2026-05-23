@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Translate a browser KeyboardEvent into the bytes a PTY expects.
 // Returns null when the event should be ignored.
 export function encodeKey(e: KeyboardEvent): string | null {

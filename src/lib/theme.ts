@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Resolves the compact color ints sent by the Rust core into CSS colors.
 // Encoding: (v & 0x01000000) => truecolor in low 24 bits; 256 => fg; 257 => bg;
 // 0..255 => the xterm palette below; anything else falls back to fg.

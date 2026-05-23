@@ -92,3 +92,13 @@ with the *old* key first; otherwise existing installs can never update again.
 - Keep PRs focused; describe the user-facing change.
 - Add or update a test when you touch `git.rs`, `terminal.rs`, or `store.ts`.
 - Run `pnpm test:coverage`, `cargo test`, and `pnpm build` before pushing.
+
+## License of contributions
+
+swarm is licensed under **GPL-3.0-or-later** (see [LICENSE](./LICENSE)). By
+submitting a contribution you agree it is licensed under the same terms
+(inbound = outbound). New source files should carry the SPDX header:
+
+```
+// SPDX-License-Identifier: GPL-3.0-or-later
+```

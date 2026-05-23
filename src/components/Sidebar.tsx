@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowUpCircle,

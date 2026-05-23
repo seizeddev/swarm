@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { ExternalLink, GitPullRequest, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { PrSummary } from "../lib/types";
