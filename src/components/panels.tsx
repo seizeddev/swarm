@@ -280,7 +280,7 @@ export function PullRequestsPanel() {
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Pull Requests">
-        <button className="icon-btn h-7 w-7" title="Refresh" onClick={() => loadPrs()}>
+        <button className="icon-btn h-7 w-7" title="Refresh" onClick={() => loadPrs(undefined, true)}>
           <RefreshCw size={14} />
         </button>
       </PanelHeader>

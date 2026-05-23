@@ -46,6 +46,12 @@ export interface DiffStatsInfo {
   deletions: number;
 }
 
+// Per-file changes + aggregate diff stats, computed in one backend pass.
+export interface StatusAndStats {
+  changes: FileChange[];
+  stats: DiffStatsInfo;
+}
+
 export interface BranchInfo {
   name: string;
   isHead: boolean;

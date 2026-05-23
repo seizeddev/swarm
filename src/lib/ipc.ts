@@ -10,6 +10,7 @@ import type {
   PrInfo,
   PrSummary,
   RepoInfo,
+  StatusAndStats,
   WireUpdate,
   WorktreeInfo,
 } from "./types";
@@ -25,6 +26,8 @@ export const api = {
   fileDiff: (worktreePath: string, file: string, staged: boolean) =>
     invoke<string>("file_diff", { worktreePath, file, staged }),
   diffStats: (worktreePath: string) => invoke<DiffStatsInfo>("diff_stats", { worktreePath }),
+  statusAndStats: (worktreePath: string) =>
+    invoke<StatusAndStats>("status_and_stats", { worktreePath }),
   listBranches: (repoPath: string) => invoke<BranchInfo[]>("list_branches", { repoPath }),
   gitLog: (repoPath: string, limit = 200) =>
     invoke<CommitInfo[]>("git_log", { repoPath, limit }),

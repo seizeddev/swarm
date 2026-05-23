@@ -78,6 +78,27 @@ export interface UpdateState {
 let seq = 0;
 const uid = (p: string) => `${p}-${Date.now()}-${seq++}`;
 
+// `gh` availability and the logged-in user are global (one CLI, one account), so
+// resolve each once and share across every workspace instead of spawning `gh`
+// per workspace on hydrate/add.
+let ghAvailableCache: Promise<boolean> | null = null;
+const ghAvailableOnce = () => (ghAvailableCache ??= api.ghAvailable());
+let ghLoginCache: Promise<string | null> | null = null;
+const ghLoginOnce = () => (ghLoginCache ??= api.ghLogin());
+
+// Short-lived PR-list cache keyed by repo path: a `gh pr list` is slow, and the
+// list rarely changes between a workspace switch and a panel open.
+const PR_TTL_MS = 15_000;
+const prCache = new Map<string, { ts: number; prs: PrSummary[] }>();
+
+/// Test-only: drop the process-lifetime gh/PR caches so each test sees its own
+/// mocked backend responses. Not used by the app.
+export function __resetNetworkCaches() {
+  ghAvailableCache = null;
+  ghLoginCache = null;
+  prCache.clear();
+}
+
 // Redirect Claude Code's notifications into our terminal: disable its built-in
 // (desktop) channel, and make the Stop hook emit an OSC 777 our parser catches.
 // So notifications fire on turn-completion only — never on startup or the bell.
@@ -150,7 +171,7 @@ interface State {
   stageAll(): Promise<void>;
   unstageAll(): Promise<void>;
   commit(): Promise<void>;
-  loadPrs(wsId?: string): Promise<void>;
+  loadPrs(wsId?: string, force?: boolean): Promise<void>;
 
   onAttention(ptyId: string): void;
   onNotify(ptyId: string, title: string, body: string): void;
@@ -293,7 +314,7 @@ export const useStore = create<State>((set, get) => {
       try {
         const [agents, gh, eventsDir] = await Promise.all([
           api.listAgents(),
-          api.ghAvailable(),
+          ghAvailableOnce(),
           api.eventsDir().catch(() => null),
         ]);
         set({ agents, ghAvailable: gh, eventsDir });
@@ -358,7 +379,7 @@ export const useStore = create<State>((set, get) => {
           for (const w of workspaces) {
             get().refreshStatus(w.id);
             if (gh) {
-              api.ghLogin().then((l) => patch(w.id, { ghLogin: l }));
+              ghLoginOnce().then((l) => patch(w.id, { ghLogin: l }));
               get().loadPrs(w.id);
             }
           }
@@ -374,7 +395,7 @@ export const useStore = create<State>((set, get) => {
       set({ busy: true, error: null });
       try {
         if (!get().agents.length) set({ agents: await api.listAgents() });
-        const [repo, gh] = await Promise.all([api.repoInfo(path), api.ghAvailable()]);
+        const [repo, gh] = await Promise.all([api.repoInfo(path), ghAvailableOnce()]);
         const id = uid("ws");
         const ws: Workspace = {
           id,
@@ -393,7 +414,7 @@ export const useStore = create<State>((set, get) => {
         get().addPane(undefined, id);
         await get().refreshStatus(id);
         if (gh) {
-          api.ghLogin().then((l) => patch(id, { ghLogin: l }));
+          ghLoginOnce().then((l) => patch(id, { ghLogin: l }));
           get().loadPrs(id);
         }
       } catch (e: any) {
@@ -425,11 +446,8 @@ export const useStore = create<State>((set, get) => {
     async refreshStatus(wsId) {
       const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
       if (!ws) return;
-      const [changes, diffStats] = await Promise.all([
-        api.changes(ws.repo.path),
-        api.diffStats(ws.repo.path),
-      ]);
-      patch(ws.id, { changes, diffStats });
+      const { changes, stats } = await api.statusAndStats(ws.repo.path);
+      patch(ws.id, { changes, diffStats: stats });
     },
 
     setPanel(panel) {
@@ -592,11 +610,17 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
-    async loadPrs(wsId) {
+    async loadPrs(wsId, force = false) {
       const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
       if (!ws) return;
+      const cached = prCache.get(ws.repo.path);
+      if (!force && cached && Date.now() - cached.ts < PR_TTL_MS) {
+        patch(ws.id, { prs: cached.prs });
+        return;
+      }
       try {
         const prs = await api.prList(ws.repo.path);
+        prCache.set(ws.repo.path, { ts: Date.now(), prs });
         patch(ws.id, { prs });
       } catch {
         /* gh missing/unauthed */

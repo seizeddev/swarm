@@ -11,118 +11,140 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, State};
 use terminal::{SpawnOpts, TerminalManager, WireUpdate};
 
-#[tauri::command]
-fn repo_info(path: String) -> AppResult<git::RepoInfo> {
-    git::repo_info(&path)
+/// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
+/// run on the main thread and would freeze the UI on a slow libgit2 walk or a `gh`
+/// subprocess; this keeps the command `async` while the work happens off-thread.
+async fn off_thread<T, F>(f: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| error::AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
-fn list_worktrees(path: String) -> AppResult<Vec<git::WorktreeInfo>> {
-    git::list_worktrees(&path)
+async fn repo_info(path: String) -> AppResult<git::RepoInfo> {
+    off_thread(move || git::repo_info(&path)).await
 }
 
 #[tauri::command]
-fn create_worktree(
+async fn list_worktrees(path: String) -> AppResult<Vec<git::WorktreeInfo>> {
+    off_thread(move || git::list_worktrees(&path)).await
+}
+
+#[tauri::command]
+async fn create_worktree(
     repo_path: String,
     branch_name: String,
     base_ref: Option<String>,
 ) -> AppResult<git::WorktreeInfo> {
-    git::create_worktree(&repo_path, &branch_name, base_ref.as_deref())
+    off_thread(move || git::create_worktree(&repo_path, &branch_name, base_ref.as_deref())).await
 }
 
 #[tauri::command]
-fn remove_worktree(repo_path: String, name: String, force: bool) -> AppResult<()> {
-    git::remove_worktree(&repo_path, &name, force)
+async fn remove_worktree(repo_path: String, name: String, force: bool) -> AppResult<()> {
+    off_thread(move || git::remove_worktree(&repo_path, &name, force)).await
 }
 
 #[tauri::command]
-fn changes(worktree_path: String) -> AppResult<Vec<git::FileChange>> {
-    git::changes(&worktree_path)
+async fn changes(worktree_path: String) -> AppResult<Vec<git::FileChange>> {
+    off_thread(move || git::changes(&worktree_path)).await
 }
 
 #[tauri::command]
-fn file_diff(worktree_path: String, file: String, staged: bool) -> AppResult<String> {
-    git::file_diff(&worktree_path, &file, staged)
+async fn file_diff(worktree_path: String, file: String, staged: bool) -> AppResult<String> {
+    off_thread(move || git::file_diff(&worktree_path, &file, staged)).await
 }
 
 #[tauri::command]
-fn diff_stats(worktree_path: String) -> AppResult<git::DiffStatsInfo> {
-    git::diff_stats(&worktree_path)
+async fn diff_stats(worktree_path: String) -> AppResult<git::DiffStatsInfo> {
+    off_thread(move || git::diff_stats(&worktree_path)).await
 }
 
 #[tauri::command]
-fn list_branches(repo_path: String) -> AppResult<Vec<git::BranchInfo>> {
-    git::list_branches(&repo_path)
+async fn status_and_stats(worktree_path: String) -> AppResult<git::StatusAndStats> {
+    off_thread(move || git::status_and_stats(&worktree_path)).await
 }
 
 #[tauri::command]
-fn git_log(repo_path: String, limit: usize) -> AppResult<Vec<git::CommitInfo>> {
-    git::git_log(&repo_path, limit)
+async fn list_branches(repo_path: String) -> AppResult<Vec<git::BranchInfo>> {
+    off_thread(move || git::list_branches(&repo_path)).await
 }
 
 #[tauri::command]
-fn commit_detail(repo_path: String, oid: String) -> AppResult<git::CommitDetail> {
-    git::commit_detail(&repo_path, &oid)
+async fn git_log(repo_path: String, limit: usize) -> AppResult<Vec<git::CommitInfo>> {
+    off_thread(move || git::git_log(&repo_path, limit)).await
 }
 
 #[tauri::command]
-fn commit_file_diff(repo_path: String, oid: String, file: String) -> AppResult<String> {
-    git::commit_file_diff(&repo_path, &oid, &file)
+async fn commit_detail(repo_path: String, oid: String) -> AppResult<git::CommitDetail> {
+    off_thread(move || git::commit_detail(&repo_path, &oid)).await
 }
 
 #[tauri::command]
-fn commit_diff(repo_path: String, oid: String) -> AppResult<String> {
-    git::commit_diff(&repo_path, &oid)
+async fn commit_file_diff(repo_path: String, oid: String, file: String) -> AppResult<String> {
+    off_thread(move || git::commit_file_diff(&repo_path, &oid, &file)).await
 }
 
 #[tauri::command]
-fn commit_all(worktree_path: String, message: String) -> AppResult<String> {
-    git::commit_all(&worktree_path, &message)
+async fn commit_diff(repo_path: String, oid: String) -> AppResult<String> {
+    off_thread(move || git::commit_diff(&repo_path, &oid)).await
 }
 
 #[tauri::command]
-fn stage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
-    git::stage_paths(&worktree_path, paths)
+async fn commit_all(worktree_path: String, message: String) -> AppResult<String> {
+    off_thread(move || git::commit_all(&worktree_path, &message)).await
 }
 
 #[tauri::command]
-fn unstage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
-    git::unstage_paths(&worktree_path, paths)
+async fn stage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
+    off_thread(move || git::stage_paths(&worktree_path, paths)).await
 }
 
 #[tauri::command]
-fn stage_all(worktree_path: String) -> AppResult<()> {
-    git::stage_all(&worktree_path)
+async fn unstage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
+    off_thread(move || git::unstage_paths(&worktree_path, paths)).await
 }
 
 #[tauri::command]
-fn unstage_all(worktree_path: String) -> AppResult<()> {
-    git::unstage_all(&worktree_path)
+async fn stage_all(worktree_path: String) -> AppResult<()> {
+    off_thread(move || git::stage_all(&worktree_path)).await
 }
 
 #[tauri::command]
-fn commit(worktree_path: String, message: String) -> AppResult<String> {
-    git::commit(&worktree_path, &message)
+async fn unstage_all(worktree_path: String) -> AppResult<()> {
+    off_thread(move || git::unstage_all(&worktree_path)).await
 }
 
 #[tauri::command]
-fn pr_for_branch(repo_path: String, branch: String) -> AppResult<Option<github::PrInfo>> {
-    github::pr_for_branch(&repo_path, &branch)
+async fn commit(worktree_path: String, message: String) -> AppResult<String> {
+    off_thread(move || git::commit(&worktree_path, &message)).await
 }
 
 #[tauri::command]
-fn gh_available() -> bool {
-    github::gh_available()
+async fn pr_for_branch(repo_path: String, branch: String) -> AppResult<Option<github::PrInfo>> {
+    off_thread(move || github::pr_for_branch(&repo_path, &branch)).await
 }
 
 #[tauri::command]
-fn pr_list(repo_path: String) -> AppResult<Vec<github::PrSummary>> {
-    github::pr_list(&repo_path)
+async fn gh_available() -> bool {
+    tauri::async_runtime::spawn_blocking(github::gh_available)
+        .await
+        .unwrap_or(false)
 }
 
 #[tauri::command]
-fn gh_login() -> Option<String> {
-    github::gh_login()
+async fn pr_list(repo_path: String) -> AppResult<Vec<github::PrSummary>> {
+    off_thread(move || github::pr_list(&repo_path)).await
+}
+
+#[tauri::command]
+async fn gh_login() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(github::gh_login)
+        .await
+        .unwrap_or(None)
 }
 
 fn swarm_dir() -> AppResult<std::path::PathBuf> {
@@ -422,6 +444,7 @@ pub fn run() {
             changes,
             file_diff,
             diff_stats,
+            status_and_stats,
             list_branches,
             git_log,
             commit_all,

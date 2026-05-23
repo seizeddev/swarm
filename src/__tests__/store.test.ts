@@ -13,6 +13,7 @@ vi.mock("../lib/ipc", () => ({
     changes: vi.fn(),
     fileDiff: vi.fn(),
     diffStats: vi.fn(),
+    statusAndStats: vi.fn(),
     listBranches: vi.fn(),
     gitLog: vi.fn(),
     commitDetail: vi.fn(),
@@ -54,7 +55,7 @@ vi.mock("../lib/updater", () => ({
 
 import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
-import { useActiveWorkspace, useStore } from "../store";
+import { __resetNetworkCaches, useActiveWorkspace, useStore } from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -104,6 +105,7 @@ const INITIAL = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetNetworkCaches();
   useStore.setState({ ...INITIAL });
   // Sensible resolved defaults; tests override as needed.
   m.repoInfo.mockResolvedValue(repo());
@@ -112,6 +114,10 @@ beforeEach(() => {
   m.claudeSessionExists.mockResolvedValue(true);
   m.changes.mockResolvedValue([]);
   m.diffStats.mockResolvedValue({ filesChanged: 0, insertions: 0, deletions: 0 });
+  m.statusAndStats.mockResolvedValue({
+    changes: [],
+    stats: { filesChanged: 0, insertions: 0, deletions: 0 },
+  });
   m.eventsDir.mockResolvedValue("/events");
   m.prepareCodexHome.mockResolvedValue("/codex-home");
   m.ghLogin.mockResolvedValue("octocat");
@@ -142,10 +148,12 @@ describe("addWorkspace", () => {
   });
 
   it("refreshes git status for the new workspace", async () => {
-    m.changes.mockResolvedValue([
-      { path: "a.txt", oldPath: null, status: "modified", staged: false, unstaged: true },
-    ]);
-    m.diffStats.mockResolvedValue({ filesChanged: 1, insertions: 2, deletions: 1 });
+    m.statusAndStats.mockResolvedValue({
+      changes: [
+        { path: "a.txt", oldPath: null, status: "modified", staged: false, unstaged: true },
+      ],
+      stats: { filesChanged: 1, insertions: 2, deletions: 1 },
+    });
     await s().addWorkspace("/repo");
     const ws = s().workspaces[0];
     expect(ws.changes).toHaveLength(1);
@@ -430,7 +438,7 @@ describe("staging + commit", () => {
   it("stages a path then refreshes status", async () => {
     await s().stage("a.txt");
     expect(m.stage).toHaveBeenCalledWith("/repo", ["a.txt"]);
-    expect(m.changes).toHaveBeenCalledTimes(2); // once on add, once after stage
+    expect(m.statusAndStats).toHaveBeenCalledTimes(2); // once on add, once after stage
   });
 
   it("auto-stages everything when nothing is staged before committing", async () => {
@@ -580,9 +588,9 @@ describe("misc workspace actions", () => {
   });
 
   it("no-ops refreshStatus when the workspace id is unknown", async () => {
-    m.changes.mockClear();
+    m.statusAndStats.mockClear();
     await s().refreshStatus("does-not-exist");
-    expect(m.changes).not.toHaveBeenCalled();
+    expect(m.statusAndStats).not.toHaveBeenCalled();
   });
 
   it("clears pane attention when switching to a workspace's active tab", () => {

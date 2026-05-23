@@ -337,6 +337,10 @@ fn status_label(s: Status) -> &'static str {
 /// Per-file change list for a worktree (staged + unstaged + untracked).
 pub fn changes(worktree_path: &str) -> AppResult<Vec<FileChange>> {
     let repo = Repository::open(worktree_path)?;
+    changes_in(&repo)
+}
+
+fn changes_in(repo: &Repository) -> AppResult<Vec<FileChange>> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
@@ -434,11 +438,15 @@ pub fn file_diff(worktree_path: &str, file: &str, staged: bool) -> AppResult<Str
 /// Aggregate insertions/deletions across the whole worktree (unstaged + staged).
 pub fn diff_stats(worktree_path: &str) -> AppResult<DiffStatsInfo> {
     let repo = Repository::open(worktree_path)?;
+    diff_stats_in(&repo)
+}
+
+fn diff_stats_in(repo: &Repository) -> AppResult<DiffStatsInfo> {
     let mut files = 0usize;
     let mut ins = 0usize;
     let mut del = 0usize;
     for staged in [false, true] {
-        if let Ok(diff) = build_diff(&repo, None, staged) {
+        if let Ok(diff) = build_diff(repo, None, staged) {
             if let Ok(stats) = diff.stats() {
                 files += stats.files_changed();
                 ins += stats.insertions();
@@ -450,6 +458,24 @@ pub fn diff_stats(worktree_path: &str) -> AppResult<DiffStatsInfo> {
         files_changed: files,
         insertions: ins,
         deletions: del,
+    })
+}
+
+/// Combined per-file changes *and* aggregate diff stats from a single repo open.
+/// The status panel needs both on every refresh; computing them together halves
+/// the repo opens and collapses two IPC round-trips into one.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusAndStats {
+    pub changes: Vec<FileChange>,
+    pub stats: DiffStatsInfo,
+}
+
+pub fn status_and_stats(worktree_path: &str) -> AppResult<StatusAndStats> {
+    let repo = Repository::open(worktree_path)?;
+    Ok(StatusAndStats {
+        changes: changes_in(&repo)?,
+        stats: diff_stats_in(&repo)?,
     })
 }
 
@@ -1015,6 +1041,24 @@ mod tests {
         sorted.sort();
         assert_eq!(names, sorted, "branches are sorted by name");
         assert_eq!(branches.iter().filter(|b| b.is_head).count(), 1);
+    }
+
+    #[test]
+    fn status_and_stats_matches_separate_calls_in_one_pass() {
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "hello\nthere\nworld\n").unwrap();
+        fs::write(dir.join("new.txt"), "fresh\n").unwrap();
+
+        let combined = status_and_stats(path).unwrap();
+        let separate_changes = changes(path).unwrap();
+        let separate_stats = diff_stats(path).unwrap();
+
+        assert_eq!(combined.changes.len(), separate_changes.len());
+        assert!(combined.changes.iter().any(|c| c.path == "new.txt"));
+        assert_eq!(combined.stats.insertions, separate_stats.insertions);
+        assert_eq!(combined.stats.files_changed, separate_stats.files_changed);
     }
 
     #[test]
