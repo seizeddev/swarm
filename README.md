@@ -25,6 +25,20 @@ Running several Claude Code / Codex sessions at once is the new normal. The term
 - **Cross-platform & tiny.** Tauri 2 + a Rust core in a system webview. No Electron, no bundled Chromium.
 - **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine; the UI just paints the cell grid. No xterm.js, so TUI agents like Claude Code render correctly.
 
+## Install
+
+**Download a ready-to-run build — no toolchain required.** Grab the file for your OS from the [latest release](https://github.com/seizeddev/swarm/releases/latest):
+
+| OS | Download | Then |
+| --- | --- | --- |
+| **macOS** | `swarm_*_aarch64.dmg` (Apple Silicon) or `_x64.dmg` (Intel) | Open the `.dmg`, drag **swarm** to Applications. First launch: right-click → **Open** (the build is unsigned, so a normal double-click is blocked once). |
+| **Linux** | `swarm_*_amd64.AppImage` | `chmod +x swarm_*.AppImage && ./swarm_*.AppImage` — or install the `.deb` with `sudo apt install ./swarm_*.deb`. |
+| **Windows** | `swarm_*_x64-setup.exe` | Run the installer. On the SmartScreen prompt: **More info → Run anyway** (unsigned build). |
+
+Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enable the Pull Requests panel. That's it — swarm stores no credentials and needs no further setup.
+
+> No release yet? Build it yourself in two commands — see [Development](#development).
+
 ## Features
 
 - **Multi-project workspaces** — open several repos at once; switch from the rail, each keeps its own terminals, source control, and PRs.
@@ -65,9 +79,12 @@ Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resultin
 
 ## Development
 
-Prerequisites: [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), [pnpm](https://pnpm.io), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. Optional: [`gh`](https://cli.github.com) for PR status.
+Prerequisites: [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. You **don't** need to install pnpm — it's pinned in `package.json` and activated by Corepack (bundled with Node).
 
 ```bash
+git clone https://github.com/seizeddev/swarm.git
+cd swarm
+corepack enable     # activates the pinned pnpm — one time, no manual install
 pnpm install
 pnpm tauri dev      # run the app
 pnpm tauri build    # produce a release bundle
