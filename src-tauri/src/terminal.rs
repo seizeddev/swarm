@@ -110,7 +110,14 @@ fn parse_notifications(bytes: &[u8], st: &mut NotifState) -> Vec<(String, String
             }
             if let Ok(text) = std::str::from_utf8(&bytes[start..end.min(n)]) {
                 if let Some(rest) = text.strip_prefix("9;") {
-                    out.push((String::new(), rest.to_string()));
+                    // OSC 9 is overloaded. iTerm2 uses `OSC 9 ; <message>` for a
+                    // desktop notification, but ConEmu / Windows Terminal use
+                    // `OSC 9 ; <digit> ; …` sub-commands — notably `9;4;<state>;<pct>`
+                    // for the taskbar progress bar. Claude Code emits `9;4;0;` to
+                    // reset progress on start/exit; that is NOT a notification.
+                    if !is_conemu_osc9(rest) {
+                        out.push((String::new(), rest.to_string()));
+                    }
                 } else if let Some(rest) = text.strip_prefix("777;notify;") {
                     let mut parts = rest.splitn(2, ';');
                     let title = parts.next().unwrap_or("").to_string();
@@ -128,6 +135,15 @@ fn parse_notifications(bytes: &[u8], st: &mut NotifState) -> Vec<(String, String
         }
     }
     out
+}
+
+/// True for ConEmu / Windows Terminal `OSC 9` sub-commands, which take the form
+/// `<digit>;…` (e.g. `4;0;0` taskbar progress, `9;<cwd>` working directory).
+/// iTerm2 notification messages are free-form text, so the `<digit>;` shape is a
+/// reliable signal that this OSC 9 is a control sequence, not a notification.
+fn is_conemu_osc9(rest: &str) -> bool {
+    let mut chars = rest.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_digit()) && chars.next() == Some(';')
 }
 
 /// kitty notification protocol: `99;<meta>;<payload>` where meta is a
@@ -538,6 +554,23 @@ mod tests {
         assert_eq!(
             parse_notifications(b"\x1b]99;i=x:p=body;There\x1b\\", &mut k),
             vec![("Hi".to_string(), "There".to_string())]
+        );
+    }
+
+    #[test]
+    fn osc9_conemu_subcommands_are_not_notifications() {
+        let mut st = NotifState::default();
+        // Taskbar progress reset emitted by Claude Code on start/exit — must NOT
+        // surface as a "4;0;" notification (the bug this guards against).
+        assert!(parse_notifications(b"\x1b]9;4;0;\x07", &mut st).is_empty());
+        // Other progress states and the cwd sub-command are likewise ignored.
+        assert!(parse_notifications(b"\x1b]9;4;3;50\x07", &mut st).is_empty());
+        assert!(parse_notifications(b"\x1b]9;9;/home/u\x07", &mut st).is_empty());
+        // A genuine iTerm2 notification whose text merely *starts* with a digit
+        // (no `<digit>;` control shape) still comes through.
+        assert_eq!(
+            parse_notifications(b"\x1b]9;42 builds done\x07", &mut st),
+            vec![(String::new(), "42 builds done".to_string())]
         );
     }
 

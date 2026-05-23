@@ -145,6 +145,7 @@ interface State {
   onNotify(ptyId: string, title: string, body: string): void;
   onPaneNotify(paneId: string, body: string): void;
   onTitle(ptyId: string, title: string): void;
+  dismissNotification(id: string): void;
   clearNotifications(): void;
 }
 
@@ -614,6 +615,10 @@ export const useStore = create<State>((set, get) => {
       const t = title.trim();
       if (!t) return;
       set((s) => ({ panes: s.panes.map((p) => (p.ptyId === ptyId ? { ...p, title: t } : p)) }));
+    },
+
+    dismissNotification(id) {
+      set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) }));
     },
 
     clearNotifications() {

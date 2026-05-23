@@ -334,6 +334,15 @@ describe("notifications + attention", () => {
     s().clearNotifications();
     expect(s().notifications).toHaveLength(0);
   });
+
+  it("dismisses a single notification by id, leaving the rest", () => {
+    s().openDiff("a.txt", false);
+    s().onPaneNotify(paneId, "first");
+    s().onPaneNotify(paneId, "second");
+    const target = s().notifications.find((n) => n.body === "first")!;
+    s().dismissNotification(target.id);
+    expect(s().notifications.map((n) => n.body)).toEqual(["second"]);
+  });
 });
 
 describe("workspace navigation", () => {
