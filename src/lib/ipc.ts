@@ -10,7 +10,7 @@ import type {
   PrInfo,
   PrSummary,
   RepoInfo,
-  WireGrid,
+  WireUpdate,
   WorktreeInfo,
 } from "./types";
 
@@ -65,15 +65,17 @@ export const api = {
       cols: number;
       rows: number;
     },
-    onGrid: (g: WireGrid) => void,
+    onUpdate: (u: WireUpdate) => void,
   ) => {
-    const channel = new Channel<WireGrid>();
-    channel.onmessage = onGrid;
-    return invoke<string>("pty_spawn", { opts, onGrid: channel });
+    const channel = new Channel<WireUpdate>();
+    channel.onmessage = onUpdate;
+    return invoke<string>("pty_spawn", { opts, onUpdate: channel });
   },
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
   ptyResize: (id: string, cols: number, rows: number) =>
-    invoke<WireGrid | null>("pty_resize", { id, cols, rows }),
+    invoke<void>("pty_resize", { id, cols, rows }),
+  ptySetVisible: (id: string, visible: boolean) =>
+    invoke<void>("pty_set_visible", { id, visible }),
   ptyKill: (id: string) => invoke<void>("pty_kill", { id }),
   ptyAlive: (id: string) => invoke<boolean>("pty_alive", { id }),
 };

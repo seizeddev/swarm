@@ -5,9 +5,10 @@
 
 use crate::error::{AppError, AppResult};
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::grid::{Dimensions, Grid};
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::{Config, Term, TermDamage};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, Processor, StdSyncHandler};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use parking_lot::Mutex;
@@ -15,6 +16,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use tauri::ipc::Channel;
@@ -45,15 +47,27 @@ pub struct WireRun {
     pub flags: u16,
 }
 
+/// One painted grid row: its viewport index `y` and the coalesced style runs.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WireGrid {
+pub struct WireLine {
+    pub y: usize,
+    pub runs: Vec<WireRun>,
+}
+
+/// A frame streamed to the frontend. `kind` is `"full"` (replace every row) or
+/// `"delta"` (patch only the listed `lines`). Deltas carry just the rows the
+/// emulator reported as damaged, so a flooding stream costs one row, not a grid.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireUpdate {
+    pub kind: &'static str,
     pub cols: usize,
     pub rows: usize,
     pub cursor_x: usize,
     pub cursor_y: i32,
     pub cursor_visible: bool,
-    pub lines: Vec<Vec<WireRun>>,
+    pub lines: Vec<WireLine>,
 }
 
 #[derive(Clone)]
@@ -224,6 +238,11 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     size: Arc<Mutex<TermSize>>,
+    /// When false, the render thread keeps parsing (state stays correct) but skips
+    /// snapshotting and sending — a hidden pane costs no IPC or serialization.
+    visible: Arc<AtomicBool>,
+    /// Kept so `resize`/`set_visible` can push a full frame outside the render loop.
+    on_update: Channel<WireUpdate>,
 }
 
 #[derive(Clone, Default)]
@@ -267,54 +286,73 @@ fn wflags(f: Flags) -> u16 {
     out
 }
 
-fn snapshot<T: EventListener>(term: &Term<T>, size: TermSize) -> WireGrid {
-    let cols = size.cols.max(1);
-    let rows = size.lines.max(1);
-    let mut cells = vec![vec![(' ', FG, BG, 0u16); cols]; rows];
+/// Coalesce one viewport row (`vy`, 0 = top) into same-style runs by indexing the
+/// grid directly — no full-grid matrix allocation. `off` is the display offset, so
+/// the active grid line is `vy - off` (matches `viewport_to_point`).
+fn line_runs(grid: &Grid<Cell>, vy: usize, cols: usize, off: i32) -> Vec<WireRun> {
+    let row = &grid[Line(vy as i32 - off)];
+    let mut runs: Vec<WireRun> = Vec::new();
+    for col in 0..cols {
+        let cell = &row[Column(col)];
+        // The trailing half of a wide char carries no glyph; render it as a blank
+        // so column alignment is preserved (mirrors the old full-grid behaviour).
+        let (ch, fg, bg, fl) = if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            (' ', FG, BG, 0u16)
+        } else {
+            let ch = if cell.c == '\0' { ' ' } else { cell.c };
+            (ch, enc(cell.fg), enc(cell.bg), wflags(cell.flags))
+        };
+        match runs.last_mut() {
+            Some(r) if r.fg == fg && r.bg == bg && r.flags == fl => r.text.push(ch),
+            _ => runs.push(WireRun {
+                text: ch.to_string(),
+                fg,
+                bg,
+                flags: fl,
+            }),
+        }
+    }
+    runs
+}
 
-    let content = term.renderable_content();
-    let offset = content.display_offset as i32;
-    for ind in content.display_iter {
-        let cell = ind.cell;
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+/// Build a wire frame from the live grid for the given viewport rows. Dimensions
+/// and cursor come straight from the emulator, so the frame is always self-
+/// consistent even mid-resize. Used for both full snapshots and damage deltas.
+fn build_update<T: EventListener>(
+    kind: &'static str,
+    term: &Term<T>,
+    rows_iter: impl Iterator<Item = usize>,
+) -> WireUpdate {
+    let grid = term.grid();
+    let cols = grid.columns().max(1);
+    let rows = grid.screen_lines().max(1);
+    let off = grid.display_offset() as i32;
+    let cursor = term.renderable_content().cursor;
+    let mut lines = Vec::new();
+    for vy in rows_iter {
+        if vy >= rows {
             continue;
         }
-        let line = ind.point.line.0 + offset;
-        let col = ind.point.column.0;
-        if line < 0 || line as usize >= rows || col >= cols {
-            continue;
-        }
-        let ch = if cell.c == '\0' { ' ' } else { cell.c };
-        cells[line as usize][col] = (ch, enc(cell.fg), enc(cell.bg), wflags(cell.flags));
+        lines.push(WireLine {
+            y: vy,
+            runs: line_runs(grid, vy, cols, off),
+        });
     }
-
-    // Coalesce same-style runs per line to keep the payload (and DOM) small.
-    let mut lines = Vec::with_capacity(rows);
-    for row in &cells {
-        let mut runs: Vec<WireRun> = Vec::new();
-        for &(ch, fg, bg, fl) in row {
-            match runs.last_mut() {
-                Some(r) if r.fg == fg && r.bg == bg && r.flags == fl => r.text.push(ch),
-                _ => runs.push(WireRun {
-                    text: ch.to_string(),
-                    fg,
-                    bg,
-                    flags: fl,
-                }),
-            }
-        }
-        lines.push(runs);
-    }
-
-    let cursor = content.cursor;
-    WireGrid {
+    WireUpdate {
+        kind,
         cols,
         rows,
         cursor_x: cursor.point.column.0,
-        cursor_y: cursor.point.line.0 + offset,
+        cursor_y: cursor.point.line.0 + off,
         cursor_visible: !matches!(cursor.shape, CursorShape::Hidden),
         lines,
     }
+}
+
+/// A full snapshot of every viewport row (`kind: "full"`).
+fn snapshot_full<T: EventListener>(term: &Term<T>) -> WireUpdate {
+    let rows = term.grid().screen_lines().max(1);
+    build_update("full", term, 0..rows)
 }
 
 impl TerminalManager {
@@ -323,7 +361,7 @@ impl TerminalManager {
         app: AppHandle,
         id: String,
         opts: SpawnOpts,
-        on_grid: Channel<WireGrid>,
+        on_update: Channel<WireUpdate>,
     ) -> AppResult<()> {
         let cols = opts.cols.max(1);
         let rows = opts.rows.max(1);
@@ -388,6 +426,7 @@ impl TerminalManager {
             },
             proxy,
         )));
+        let visible = Arc::new(AtomicBool::new(true));
 
         self.sessions.lock().insert(
             id.clone(),
@@ -397,42 +436,25 @@ impl TerminalManager {
                 master: pair.master,
                 child,
                 size: size.clone(),
+                visible: visible.clone(),
+                on_update: on_update.clone(),
             },
         );
 
+        // Reader thread: pure blocking I/O. It only drains the PTY into a queue —
+        // no parsing, no locking the emulator — so read latency never waits on a
+        // render. On EOF it reaps the child and announces the exit.
+        let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<u8>>();
         let sessions = self.sessions.clone();
+        let reader_app = app.clone();
+        let reader_id = id.clone();
         std::thread::spawn(move || {
-            let mut parser = Processor::<StdSyncHandler>::new();
-            let mut notif = NotifState::default();
-            let mut last_body = String::new();
-            let mut last_at: Option<std::time::Instant> = None;
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        for (title, body) in parse_notifications(&buf[..n], &mut notif) {
-                            // Dedup identical content within a 1s window.
-                            let now = std::time::Instant::now();
-                            if body == last_body
-                                && last_at.is_some_and(|t| now.duration_since(t).as_millis() < 1000)
-                            {
-                                continue;
-                            }
-                            last_body = body.clone();
-                            last_at = Some(now);
-                            let _ = app.emit(
-                                "term:notify",
-                                serde_json::json!({ "id": id, "title": title, "body": body }),
-                            );
-                            let _ = app.emit("term:attention", serde_json::json!({ "id": id }));
-                        }
-                        let grid = {
-                            let mut t = term.lock();
-                            parser.advance(&mut *t, &buf[..n]);
-                            snapshot(&t, *size.lock())
-                        };
-                        if on_grid.send(grid).is_err() {
+                        if chunk_tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
                     }
@@ -440,11 +462,87 @@ impl TerminalManager {
             }
             let code = sessions
                 .lock()
-                .get_mut(&id)
+                .get_mut(&reader_id)
                 .and_then(|s| s.child.wait().ok())
                 .map(|st| st.exit_code());
-            sessions.lock().remove(&id);
-            let _ = app.emit("pty:exit", serde_json::json!({ "id": id, "code": code }));
+            sessions.lock().remove(&reader_id);
+            let _ = reader_app.emit(
+                "pty:exit",
+                serde_json::json!({ "id": reader_id, "code": code }),
+            );
+        });
+
+        // Render thread: coalesces a burst of chunks into one frame. It blocks for
+        // the first chunk, then drains everything already queued, advances the
+        // parser over all of them, and snapshots *once* — so a token-by-token
+        // stream collapses into a single repaint per frame.
+        std::thread::spawn(move || {
+            let mut parser = Processor::<StdSyncHandler>::new();
+            let mut notif = NotifState::default();
+            let mut last_body = String::new();
+            let mut last_at: Option<std::time::Instant> = None;
+            // `recv` blocks for the first chunk; `Err` means the reader (and so the
+            // PTY) is gone, ending the loop.
+            while let Ok(first) = chunk_rx.recv() {
+                let mut chunks = vec![first];
+                while let Ok(c) = chunk_rx.try_recv() {
+                    chunks.push(c);
+                }
+
+                let mut notifs: Vec<(String, String)> = Vec::new();
+                let is_visible = visible.load(Ordering::Acquire);
+                let update = {
+                    let mut t = term.lock();
+                    for c in &chunks {
+                        notifs.extend(parse_notifications(c, &mut notif));
+                        parser.advance(&mut *t, c);
+                    }
+                    if !is_visible {
+                        // Keep state correct but pay nothing: drop accumulated damage
+                        // (a full frame is sent when the pane is shown again).
+                        let _ = t.damage();
+                        t.reset_damage();
+                        None
+                    } else {
+                        let rows = t.grid().screen_lines().max(1);
+                        let (full, idx): (bool, Vec<usize>) = match t.damage() {
+                            TermDamage::Full => (true, Vec::new()),
+                            TermDamage::Partial(it) => {
+                                (false, it.map(|d| d.line).filter(|&y| y < rows).collect())
+                            }
+                        };
+                        t.reset_damage();
+                        Some(if full {
+                            build_update("full", &t, 0..rows)
+                        } else {
+                            build_update("delta", &t, idx.into_iter())
+                        })
+                    }
+                };
+
+                for (title, body) in notifs {
+                    // Dedup identical content within a 1s window.
+                    let now = std::time::Instant::now();
+                    if body == last_body
+                        && last_at.is_some_and(|t| now.duration_since(t).as_millis() < 1000)
+                    {
+                        continue;
+                    }
+                    last_body = body.clone();
+                    last_at = Some(now);
+                    let _ = app.emit(
+                        "term:notify",
+                        serde_json::json!({ "id": id, "title": title, "body": body }),
+                    );
+                    let _ = app.emit("term:attention", serde_json::json!({ "id": id }));
+                }
+
+                if let Some(update) = update {
+                    if on_update.send(update).is_err() {
+                        break;
+                    }
+                }
+            }
         });
 
         Ok(())
@@ -461,11 +559,11 @@ impl TerminalManager {
             .map_err(|e| AppError::Pty(e.to_string()))
     }
 
-    pub fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<Option<WireGrid>> {
+    pub fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = match guard.get(id) {
             Some(s) => s,
-            None => return Ok(None),
+            None => return Ok(()),
         };
         let new = TermSize {
             cols: cols.max(1) as usize,
@@ -481,9 +579,41 @@ impl TerminalManager {
             })
             .map_err(|e| AppError::Pty(e.to_string()))?;
         *session.size.lock() = new;
-        let mut t = session.term.lock();
-        t.resize(new);
-        Ok(Some(snapshot(&t, new)))
+        // `resize` marks the emulator fully damaged; push a fresh full frame so an
+        // idle terminal repaints at the new geometry without waiting for output.
+        let update = {
+            let mut t = session.term.lock();
+            t.resize(new);
+            let upd = snapshot_full(&t);
+            t.reset_damage();
+            upd
+        };
+        if session.visible.load(Ordering::Acquire) {
+            let _ = session.on_update.send(update);
+        }
+        Ok(())
+    }
+
+    /// Mark a pane visible or hidden. Going visible pushes one full frame (so the
+    /// pane repaints immediately after a tab switch) and clears stale damage;
+    /// going hidden just flips the flag — the render thread stops sending.
+    pub fn set_visible(&self, id: &str, visible: bool) -> AppResult<()> {
+        let guard = self.sessions.lock();
+        let session = match guard.get(id) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let was = session.visible.swap(visible, Ordering::AcqRel);
+        if visible && !was {
+            let update = {
+                let mut t = session.term.lock();
+                let upd = snapshot_full(&t);
+                t.reset_damage();
+                upd
+            };
+            let _ = session.on_update.send(update);
+        }
+        Ok(())
     }
 
     pub fn kill(&self, id: &str) -> AppResult<()> {
@@ -524,17 +654,20 @@ mod tests {
         let mut parser = Processor::<StdSyncHandler>::new();
         parser.advance(&mut term, b"Hi\x1b[31mX");
 
-        let grid = snapshot(&term, size);
+        let grid = snapshot_full(&term);
         assert_eq!((grid.cols, grid.rows), (20, 3));
+        assert_eq!(grid.kind, "full");
+        assert_eq!(grid.lines.len(), 3, "full frame carries every row");
 
-        let line0: String = grid.lines[0].iter().map(|r| r.text.clone()).collect();
+        let line0: String = grid.lines[0].runs.iter().map(|r| r.text.clone()).collect();
         assert!(line0.starts_with("HiX"), "got {line0:?}");
 
         // The 'X' should carry red foreground (NamedColor::Red == 1).
         let red_x = grid.lines[0]
+            .runs
             .iter()
             .any(|r| r.text.contains('X') && r.fg == 1);
-        assert!(red_x, "expected red X in {:?}", grid.lines[0]);
+        assert!(red_x, "expected red X in {:?}", grid.lines[0].runs);
     }
 
     #[test]
@@ -667,15 +800,19 @@ mod tests {
         );
         let mut parser = Processor::<StdSyncHandler>::new();
         parser.advance(&mut term, b"abc");
-        let grid = snapshot(&term, size);
+        let grid = snapshot_full(&term);
         // "abc" + 7 trailing spaces share one style → a single run for the text
         // plus (at most) one run for the default-styled blanks.
-        let texts: Vec<String> = grid.lines[0].iter().map(|r| r.text.clone()).collect();
+        let texts: Vec<String> = grid.lines[0].runs.iter().map(|r| r.text.clone()).collect();
         let joined: String = texts.concat();
         assert!(joined.starts_with("abc"));
         assert_eq!(joined.len(), 10, "row padded to column count");
         // Same-style "abc" is not split into three runs.
-        assert!(grid.lines[0].len() <= 2, "runs: {:?}", grid.lines[0]);
+        assert!(
+            grid.lines[0].runs.len() <= 2,
+            "runs: {:?}",
+            grid.lines[0].runs
+        );
     }
 
     #[test]
@@ -689,12 +826,113 @@ mod tests {
         let mut parser = Processor::<StdSyncHandler>::new();
         // Write more than fits on a line; emulator wraps, snapshot stays in bounds.
         parser.advance(&mut term, b"abcdefgh");
-        let grid = snapshot(&term, size);
+        let grid = snapshot_full(&term);
         assert_eq!(grid.rows, 2);
         assert_eq!(grid.cols, 4);
-        assert!(grid
-            .lines
+        assert!(grid.lines.iter().all(|l| l
+            .runs
             .iter()
-            .all(|l| l.iter().map(|r| r.text.chars().count()).sum::<usize>() == 4));
+            .map(|r| r.text.chars().count())
+            .sum::<usize>()
+            == 4));
+    }
+
+    /// Mirror the render thread's damage handling: advance, read damage, build the
+    /// matching update, then reset. Returns the update and whether damage was full.
+    fn damage_update(term: &mut Term<alacritty_terminal::event::VoidListener>) -> WireUpdate {
+        let rows = term.grid().screen_lines().max(1);
+        let (full, idx): (bool, Vec<usize>) = match term.damage() {
+            TermDamage::Full => (true, Vec::new()),
+            TermDamage::Partial(it) => (false, it.map(|d| d.line).filter(|&y| y < rows).collect()),
+        };
+        term.reset_damage();
+        if full {
+            build_update("full", term, 0..rows)
+        } else {
+            build_update("delta", term, idx.into_iter())
+        }
+    }
+
+    #[test]
+    fn damage_delta_reports_only_changed_lines() {
+        let size = TermSize { cols: 10, lines: 4 };
+        let mut term = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser = Processor::<StdSyncHandler>::new();
+        // Fill a few lines, then drain the (initially full) damage.
+        parser.advance(&mut term, b"line0\r\nline1\r\nline2");
+        let first = damage_update(&mut term);
+        assert_eq!(first.kind, "full");
+
+        // Touch only the current line (line 2) — a single character.
+        parser.advance(&mut term, b"X");
+        let delta = damage_update(&mut term);
+        assert_eq!(delta.kind, "delta");
+        // Only line 2 (and possibly the cursor's own line, which is the same) is
+        // reported — never the untouched rows 0 and 1.
+        assert!(
+            delta.lines.iter().all(|l| l.y == 2),
+            "expected only line 2, got {:?}",
+            delta.lines.iter().map(|l| l.y).collect::<Vec<_>>()
+        );
+        let joined: String = delta.lines[0].runs.iter().map(|r| r.text.clone()).collect();
+        assert!(joined.starts_with("line2X"), "got {joined:?}");
+    }
+
+    #[test]
+    fn reset_damage_yields_no_phantom_lines() {
+        let size = TermSize { cols: 8, lines: 3 };
+        let mut term = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser = Processor::<StdSyncHandler>::new();
+        // Damage all three rows, then drain that (full) damage.
+        parser.advance(&mut term, b"r0\r\nr1\r\nr2");
+        let _ = damage_update(&mut term);
+
+        // No new bytes: the emulator always re-reports the cursor's own line, but
+        // reset_damage must have cleared rows 0 and 1 — no phantom carry-over.
+        let delta = damage_update(&mut term);
+        assert_eq!(delta.kind, "delta");
+        assert!(
+            delta.lines.iter().all(|l| l.y == 2),
+            "only the cursor line may remain, got {:?}",
+            delta.lines.iter().map(|l| l.y).collect::<Vec<_>>()
+        );
+        assert!(delta.lines.len() <= 1, "at most the cursor line");
+    }
+
+    #[test]
+    fn coalesced_burst_matches_single_advance() {
+        let size = TermSize { cols: 12, lines: 2 };
+        // One chunk vs. the same bytes split across many chunks must snapshot
+        // identically — this is what the render thread's burst-drain relies on.
+        let mut whole = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut split = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut p1 = Processor::<StdSyncHandler>::new();
+        let mut p2 = Processor::<StdSyncHandler>::new();
+        p1.advance(&mut whole, b"\x1b[32mgreen\x1b[0m text");
+        for byte in b"\x1b[32mgreen\x1b[0m text" {
+            p2.advance(&mut split, &[*byte]);
+        }
+        let a = snapshot_full(&whole);
+        let b = snapshot_full(&split);
+        let ta: String = a.lines[0].runs.iter().map(|r| r.text.clone()).collect();
+        let tb: String = b.lines[0].runs.iter().map(|r| r.text.clone()).collect();
+        assert_eq!(ta, tb);
+        assert_eq!(a.lines[0].runs.len(), b.lines[0].runs.len());
     }
 }

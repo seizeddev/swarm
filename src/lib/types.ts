@@ -116,13 +116,21 @@ export interface WireRun {
   flags: number;
 }
 
-export interface WireGrid {
+export interface WireLine {
+  y: number;
+  runs: WireRun[];
+}
+
+// A streamed terminal frame. `full` replaces every row; `delta` patches only the
+// rows in `lines` (the ones the emulator reported as damaged).
+export interface WireUpdate {
+  kind: "full" | "delta";
   cols: number;
   rows: number;
   cursorX: number;
   cursorY: number;
   cursorVisible: boolean;
-  lines: WireRun[][];
+  lines: WireLine[];
 }
 
 export interface AppError {

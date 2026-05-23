@@ -9,7 +9,7 @@ use error::AppResult;
 use tauri::ipc::Channel;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, State};
-use terminal::{SpawnOpts, TerminalManager, WireGrid};
+use terminal::{SpawnOpts, TerminalManager, WireUpdate};
 
 #[tauri::command]
 fn repo_info(path: String) -> AppResult<git::RepoInfo> {
@@ -197,10 +197,10 @@ fn pty_spawn(
     app: AppHandle,
     state: State<TerminalManager>,
     opts: SpawnOpts,
-    on_grid: Channel<WireGrid>,
+    on_update: Channel<WireUpdate>,
 ) -> AppResult<String> {
     let id = uuid::Uuid::new_v4().to_string();
-    state.spawn(app, id.clone(), opts, on_grid)?;
+    state.spawn(app, id.clone(), opts, on_update)?;
     Ok(id)
 }
 
@@ -210,13 +210,13 @@ fn pty_write(state: State<TerminalManager>, id: String, data: String) -> AppResu
 }
 
 #[tauri::command]
-fn pty_resize(
-    state: State<TerminalManager>,
-    id: String,
-    cols: u16,
-    rows: u16,
-) -> AppResult<Option<WireGrid>> {
+fn pty_resize(state: State<TerminalManager>, id: String, cols: u16, rows: u16) -> AppResult<()> {
     state.resize(&id, cols, rows)
+}
+
+#[tauri::command]
+fn pty_set_visible(state: State<TerminalManager>, id: String, visible: bool) -> AppResult<()> {
+    state.set_visible(&id, visible)
 }
 
 #[tauri::command]
@@ -446,6 +446,7 @@ pub fn run() {
             pty_spawn,
             pty_write,
             pty_resize,
+            pty_set_visible,
             pty_kill,
             pty_alive,
         ])

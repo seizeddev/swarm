@@ -1,54 +1,54 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useReducer, useRef } from "react";
 import { api } from "../lib/ipc";
 import { encodeKey } from "../lib/keys";
-import {
-  F_BOLD,
-  F_DIM,
-  F_HIDDEN,
-  F_INVERSE,
-  F_ITALIC,
-  F_STRIKE,
-  F_UNDERLINE,
-  resolveColor,
-  TERM_BG,
-} from "../lib/theme";
+import { applyUpdate, runStyle } from "../lib/term";
 import { useStore, type Pane } from "../store";
-import type { WireGrid, WireRun } from "../lib/types";
+import type { WireRun, WireUpdate } from "../lib/types";
 
-function runStyle(run: WireRun): CSSProperties {
-  let fg = resolveColor(run.fg, "fg");
-  let bg = resolveColor(run.bg, "bg");
-  if (run.flags & F_INVERSE) [fg, bg] = [bg, fg];
-  const s: CSSProperties = { color: fg };
-  if (bg !== TERM_BG) s.background = bg;
-  if (run.flags & F_BOLD) s.fontWeight = 700;
-  if (run.flags & F_ITALIC) s.fontStyle = "italic";
-  const deco: string[] = [];
-  if (run.flags & F_UNDERLINE) deco.push("underline");
-  if (run.flags & F_STRIKE) deco.push("line-through");
-  if (deco.length) s.textDecoration = deco.join(" ");
-  if (run.flags & F_DIM) s.opacity = 0.6;
-  if (run.flags & F_HIDDEN) s.visibility = "hidden";
-  return s;
-}
+// One grid row. Memoized and keyed by its row index, so a delta that replaces a
+// single line's `runs` array re-renders only that `<TermLine>` — the untouched
+// rows keep their previous `runs` reference and bail out of reconciliation.
+const TermLine = memo(function TermLine({ runs }: { runs: WireRun[] }) {
+  return (
+    <div className="term-line">
+      {runs.map((run, i) => (
+        <span key={i} style={runStyle(run)}>
+          {run.text}
+        </span>
+      ))}
+    </div>
+  );
+});
 
 export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const ptyIdRef = useRef<string | null>(null);
-  const latest = useRef<WireGrid | null>(null);
+  // The source of truth: one runs-array per visible row, patched in place by
+  // deltas. Rendering reads straight from it; React re-renders are driven by the
+  // `frame` reducer below (only while the pane is visible).
+  const linesRef = useRef<WireRun[][]>([]);
+  const cursorRef = useRef({ x: 0, y: 0, visible: false });
+  const visibleRef = useRef(visible);
   const raf = useRef<number | undefined>(undefined);
   const cell = useRef({ w: 7.5, h: 16.5 });
-  const [grid, setGrid] = useState<WireGrid | null>(null);
-  const [exited, setExited] = useState(false);
+  const [, drawFrame] = useReducer((n: number) => n + 1, 0);
+  const [exited, dispatchExit] = useReducer(() => true, false);
 
   const scheduleRender = () => {
     if (raf.current != null) return;
     raf.current = requestAnimationFrame(() => {
       raf.current = undefined;
-      setGrid(latest.current);
+      drawFrame();
     });
+  };
+
+  const apply = (u: WireUpdate) => {
+    linesRef.current = applyUpdate(linesRef.current, u);
+    cursorRef.current = { x: u.cursorX, y: u.cursorY, visible: u.cursorVisible };
+    // Hidden panes keep their state current but never paint — no setState churn.
+    if (visibleRef.current) scheduleRender();
   };
 
   const measure = () => {
@@ -79,10 +79,7 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
           cols,
           rows,
         },
-        (g) => {
-          latest.current = g;
-          scheduleRender();
-        },
+        apply,
       )
       .then((id) => {
         if (disposed) {
@@ -90,9 +87,12 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
           return;
         }
         ptyIdRef.current = id;
+        // Tell the core our current visibility so a backgrounded pane starts
+        // gated from the first frame.
+        api.ptySetVisible(id, visibleRef.current).catch(() => {});
         useStore.getState().bindPty(pane.paneId, id);
       })
-      .catch(() => setExited(true));
+      .catch(() => dispatchExit());
 
     return () => {
       disposed = true;
@@ -105,22 +105,39 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
+    let timer: number | undefined;
     const ro = new ResizeObserver(() => {
-      if (!ptyIdRef.current) return;
-      const { cols, rows } = measure();
-      api.ptyResize(ptyIdRef.current, cols, rows).then((g) => {
-        if (g) {
-          latest.current = g;
-          scheduleRender();
-        }
-      });
+      const id = ptyIdRef.current;
+      if (!id) return;
+      // A hidden pane (display:none ancestor) reports a 0-size box; resizing the
+      // PTY to that would reflow the agent's UI to 2×1. Ignore those.
+      if (el.clientWidth === 0 || el.clientHeight === 0) return;
+      // Debounce: a resize drag fires the observer continuously; only the final
+      // geometry needs to reach the PTY (the core pushes a full frame back).
+      if (timer != null) clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const { cols, rows } = measure();
+        api.ptyResize(id, cols, rows).catch(() => {});
+      }, 50);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      if (timer != null) clearTimeout(timer);
+      ro.disconnect();
+    };
   }, []);
 
   useEffect(() => {
-    if (visible) wrapRef.current?.focus();
+    visibleRef.current = visible;
+    const id = ptyIdRef.current;
+    if (id) api.ptySetVisible(id, visible).catch(() => {});
+    if (visible) {
+      wrapRef.current?.focus();
+      // Paint the current state immediately; the core also pushes a fresh full
+      // frame in response to ptySetVisible(true).
+      scheduleRender();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -131,6 +148,7 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     }
   };
 
+  const cursor = cursorRef.current;
   return (
     <div
       ref={wrapRef}
@@ -151,23 +169,17 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
         MMMMMMMMMM
       </span>
 
-      {grid?.lines.map((runs, y) => (
-        <div key={y} className="term-line">
-          {runs.map((run, i) => (
-            <span key={i} style={runStyle(run)}>
-              {run.text}
-            </span>
-          ))}
-        </div>
+      {linesRef.current.map((runs, y) => (
+        <TermLine key={y} runs={runs} />
       ))}
 
-      {grid && grid.cursorVisible && visible && (
+      {cursor.visible && visible && (
         <div
           className="term-cursor"
           style={{
             position: "absolute",
-            left: 8 + grid.cursorX * cell.current.w,
-            top: 8 + grid.cursorY * cell.current.h,
+            left: 8 + cursor.x * cell.current.w,
+            top: 8 + cursor.y * cell.current.h,
             width: cell.current.w,
             height: cell.current.h,
             opacity: 0.85,
