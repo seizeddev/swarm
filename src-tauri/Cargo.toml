@@ -25,7 +25,7 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Git: libgit2 bindings — worktrees, status, diffs, branches. No shelling out to `git`.
-git2 = { version = "0.20", default-features = false }
+git2 = { version = "0.21", default-features = false }
 # Cross-platform PTY for streaming agent terminals.
 portable-pty = "0.9"
 # Async runtime (Tauri uses it; we use it for spawning blocking PTY readers off-thread).
@@ -35,7 +35,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 dirs = "6"
-alacritty_terminal = "0.25.0"
+alacritty_terminal = "0.26.0"
 # Repairs $PATH for GUI launches: a bundled .app started from Finder/Dock inherits
 # only launchd's minimal PATH, so bare-name agent commands (`claude`, …) aren't found.
 # Pulls the login-shell PATH at startup. See tauri-apps/fix-path-env-rs.

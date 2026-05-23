@@ -108,7 +108,7 @@ fn ahead_behind(repo: &Repository) -> (usize, usize) {
     let upstream = repo
         .head()
         .ok()
-        .and_then(|h| h.shorthand().map(str::to_owned))
+        .and_then(|h| h.shorthand().ok().map(str::to_owned))
         .and_then(|name| repo.find_branch(&name, BranchType::Local).ok())
         .and_then(|b| b.upstream().ok())
         .and_then(|u| u.get().target());
@@ -126,11 +126,13 @@ pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
     let remote_url = repo
         .find_remote("origin")
         .ok()
-        .and_then(|r| r.url().map(str::to_owned));
+        .and_then(|r| r.url().ok().map(str::to_owned));
     Ok(RepoInfo {
         path: wd.to_string_lossy().into_owned(),
         name: repo_basename(&repo),
-        head_branch: head.as_ref().and_then(|h| h.shorthand().map(str::to_owned)),
+        head_branch: head
+            .as_ref()
+            .and_then(|h| h.shorthand().ok().map(str::to_owned)),
         head_short: head
             .as_ref()
             .and_then(|h| h.target())
@@ -162,7 +164,7 @@ pub fn list_worktrees(path: &str) -> AppResult<Vec<WorktreeInfo>> {
 
     // Linked worktrees.
     let names = repo.worktrees()?;
-    for name in names.iter().flatten() {
+    for name in names.iter().flatten().flatten() {
         let wt = match repo.find_worktree(name) {
             Ok(w) => w,
             Err(_) => continue,
@@ -196,7 +198,9 @@ fn worktree_info_for_path(
     let (branch, head_oid, dirty_count, ahead, behind) = match Repository::open(wt_path) {
         Ok(r) => {
             let head = r.head().ok();
-            let branch = head.as_ref().and_then(|h| h.shorthand().map(str::to_owned));
+            let branch = head
+                .as_ref()
+                .and_then(|h| h.shorthand().ok().map(str::to_owned));
             let head_oid = head
                 .as_ref()
                 .and_then(|h| h.target())
@@ -362,6 +366,7 @@ pub fn changes(worktree_path: &str) -> AppResult<Vec<FileChange>> {
         );
         let path = entry
             .path()
+            .ok()
             .map(str::to_owned)
             .or_else(|| {
                 entry.index_to_workdir().and_then(|d| {
@@ -495,7 +500,7 @@ pub fn git_log(repo_path: &str, limit: usize) -> AppResult<Vec<CommitInfo>> {
             if !(r.is_branch() || r.is_tag()) {
                 continue;
             }
-            if let (Some(oid), Some(name)) = (r.target(), r.shorthand()) {
+            if let (Some(oid), Ok(name)) = (r.target(), r.shorthand()) {
                 refmap
                     .entry(oid.to_string())
                     .or_default()
@@ -520,7 +525,7 @@ pub fn git_log(repo_path: &str, limit: usize) -> AppResult<Vec<CommitInfo>> {
         };
         out.push(CommitInfo {
             short: short_oid(&oid),
-            summary: c.summary().unwrap_or("").to_string(),
+            summary: c.summary().ok().flatten().unwrap_or("").to_string(),
             author: c.author().name().unwrap_or("").to_string(),
             time: c.time().seconds(),
             parents: c.parent_ids().map(|p| p.to_string()).collect(),
