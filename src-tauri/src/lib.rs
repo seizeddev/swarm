@@ -44,57 +44,6 @@ async fn repo_info(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult
 }
 
 #[tauri::command]
-async fn list_worktrees(
-    reg: State<'_, WorkspaceRegistry>,
-    path: String,
-) -> AppResult<Vec<git::WorktreeInfo>> {
-    reg.ensure_within_root(&path)?;
-    off_thread(move || git::list_worktrees(&path)).await
-}
-
-#[tauri::command]
-async fn create_worktree(
-    reg: State<'_, WorkspaceRegistry>,
-    repo_path: String,
-    branch_name: String,
-    base_ref: Option<String>,
-) -> AppResult<git::WorktreeInfo> {
-    reg.ensure_within_root(&repo_path)?;
-    off_thread(move || git::create_worktree(&repo_path, &branch_name, base_ref.as_deref())).await
-}
-
-#[tauri::command]
-async fn remove_worktree(
-    reg: State<'_, WorkspaceRegistry>,
-    repo_path: String,
-    name: String,
-    force: bool,
-) -> AppResult<()> {
-    reg.ensure_within_root(&repo_path)?;
-    off_thread(move || git::remove_worktree(&repo_path, &name, force)).await
-}
-
-#[tauri::command]
-async fn changes(
-    reg: State<'_, WorkspaceRegistry>,
-    worktree_path: String,
-) -> AppResult<Vec<git::FileChange>> {
-    reg.ensure_within_root(&worktree_path)?;
-    off_thread(move || git::changes(&worktree_path)).await
-}
-
-#[tauri::command]
-async fn file_diff(
-    reg: State<'_, WorkspaceRegistry>,
-    worktree_path: String,
-    file: String,
-    staged: bool,
-) -> AppResult<String> {
-    reg.ensure_within_root(&worktree_path)?;
-    off_thread(move || git::file_diff(&worktree_path, &file, staged)).await
-}
-
-#[tauri::command]
 async fn file_diff_hunks(
     reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
@@ -106,30 +55,12 @@ async fn file_diff_hunks(
 }
 
 #[tauri::command]
-async fn diff_stats(
-    reg: State<'_, WorkspaceRegistry>,
-    worktree_path: String,
-) -> AppResult<git::DiffStatsInfo> {
-    reg.ensure_within_root(&worktree_path)?;
-    off_thread(move || git::diff_stats(&worktree_path)).await
-}
-
-#[tauri::command]
 async fn status_and_stats(
     reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
 ) -> AppResult<git::StatusAndStats> {
     reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::status_and_stats(&worktree_path)).await
-}
-
-#[tauri::command]
-async fn list_branches(
-    reg: State<'_, WorkspaceRegistry>,
-    repo_path: String,
-) -> AppResult<Vec<git::BranchInfo>> {
-    reg.ensure_within_root(&repo_path)?;
-    off_thread(move || git::list_branches(&repo_path)).await
 }
 
 #[tauri::command]
@@ -153,17 +84,6 @@ async fn commit_detail(
 }
 
 #[tauri::command]
-async fn commit_file_diff(
-    reg: State<'_, WorkspaceRegistry>,
-    repo_path: String,
-    oid: String,
-    file: String,
-) -> AppResult<String> {
-    reg.ensure_within_root(&repo_path)?;
-    off_thread(move || git::commit_file_diff(&repo_path, &oid, &file)).await
-}
-
-#[tauri::command]
 async fn commit_diff(
     reg: State<'_, WorkspaceRegistry>,
     repo_path: String,
@@ -171,16 +91,6 @@ async fn commit_diff(
 ) -> AppResult<String> {
     reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::commit_diff(&repo_path, &oid)).await
-}
-
-#[tauri::command]
-async fn commit_all(
-    reg: State<'_, WorkspaceRegistry>,
-    worktree_path: String,
-    message: String,
-) -> AppResult<String> {
-    reg.ensure_within_root(&worktree_path)?;
-    off_thread(move || git::commit_all(&worktree_path, &message)).await
 }
 
 #[tauri::command]
@@ -223,16 +133,6 @@ async fn commit(
 ) -> AppResult<String> {
     reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::commit(&worktree_path, &message)).await
-}
-
-#[tauri::command]
-async fn pr_for_branch(
-    reg: State<'_, WorkspaceRegistry>,
-    repo_path: String,
-    branch: String,
-) -> AppResult<Option<github::PrInfo>> {
-    reg.ensure_within_root(&repo_path)?;
-    off_thread(move || github::pr_for_branch(&repo_path, &branch)).await
 }
 
 #[tauri::command]
@@ -584,23 +484,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             register_root,
             repo_info,
-            list_worktrees,
-            create_worktree,
-            remove_worktree,
-            changes,
-            file_diff,
             file_diff_hunks,
-            diff_stats,
             status_and_stats,
-            list_branches,
             git_log,
-            commit_all,
             stage,
             unstage,
             stage_all,
             unstage_all,
             commit,
-            pr_for_branch,
             pr_list,
             pr_detail,
             gh_login,
@@ -612,7 +503,6 @@ pub fn run() {
             events_dir,
             prepare_codex_home,
             commit_detail,
-            commit_file_diff,
             commit_diff,
             pty_spawn,
             pty_attach,

@@ -65,7 +65,7 @@ Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enab
                 │  Tauri IPC (commands + Channel)
 ┌───────────────┴─────────────────────────────────┐
 │  Rust core (src-tauri)                           │
-│  • git.rs       libgit2: worktrees/diff/status   │
+│  • git.rs       libgit2: diff/status/history     │
 │  • terminal.rs  Alacritty VT engine + PTY        │
 │  • github.rs    PR status via `gh`               │
 │  • agents.rs    agent registry + detection       │

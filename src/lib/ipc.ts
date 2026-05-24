@@ -3,19 +3,14 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { decodeUpdate } from "./term";
 import type {
   AgentDef,
-  BranchInfo,
   CommitDetail,
   CommitInfo,
   DiffHunk,
-  DiffStatsInfo,
-  FileChange,
   PrDetail,
-  PrInfo,
   PrSummary,
   RepoInfo,
   StatusAndStats,
   WireUpdate,
-  WorktreeInfo,
 } from "./types";
 
 export const api = {
@@ -23,34 +18,20 @@ export const api = {
   // Must be called before any git/PTY command touches that root.
   registerRoot: (path: string) => invoke<void>("register_root", { path }),
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
-  listWorktrees: (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path }),
-  createWorktree: (repoPath: string, branchName: string, baseRef?: string) =>
-    invoke<WorktreeInfo>("create_worktree", { repoPath, branchName, baseRef: baseRef ?? null }),
-  removeWorktree: (repoPath: string, name: string, force = false) =>
-    invoke<void>("remove_worktree", { repoPath, name, force }),
-  changes: (worktreePath: string) => invoke<FileChange[]>("changes", { worktreePath }),
-  fileDiff: (worktreePath: string, file: string, staged: boolean) =>
-    invoke<string>("file_diff", { worktreePath, file, staged }),
   fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>
     invoke<DiffHunk[]>("file_diff_hunks", { worktreePath, file, staged }),
-  diffStats: (worktreePath: string) => invoke<DiffStatsInfo>("diff_stats", { worktreePath }),
   statusAndStats: (worktreePath: string) =>
     invoke<StatusAndStats>("status_and_stats", { worktreePath }),
-  listBranches: (repoPath: string) => invoke<BranchInfo[]>("list_branches", { repoPath }),
   gitLog: (repoPath: string, limit = 200) =>
     invoke<CommitInfo[]>("git_log", { repoPath, limit }),
   commitDetail: (repoPath: string, oid: string) =>
     invoke<CommitDetail>("commit_detail", { repoPath, oid }),
-  commitFileDiff: (repoPath: string, oid: string, file: string) =>
-    invoke<string>("commit_file_diff", { repoPath, oid, file }),
   commitDiff: (repoPath: string, oid: string) =>
     invoke<string>("commit_diff", { repoPath, oid }),
   saveSession: (data: string) => invoke<void>("save_session", { data }),
   loadSession: () => invoke<string | null>("load_session"),
   eventsDir: () => invoke<string>("events_dir"),
   prepareCodexHome: () => invoke<string>("prepare_codex_home"),
-  commitAll: (worktreePath: string, message: string) =>
-    invoke<string>("commit_all", { worktreePath, message }),
   stage: (worktreePath: string, paths: string[]) =>
     invoke<void>("stage", { worktreePath, paths }),
   unstage: (worktreePath: string, paths: string[]) =>
@@ -59,8 +40,6 @@ export const api = {
   unstageAll: (worktreePath: string) => invoke<void>("unstage_all", { worktreePath }),
   commit: (worktreePath: string, message: string) =>
     invoke<string>("commit", { worktreePath, message }),
-  prForBranch: (repoPath: string, branch: string) =>
-    invoke<PrInfo | null>("pr_for_branch", { repoPath, branch }),
   prList: (repoPath: string) => invoke<PrSummary[]>("pr_list", { repoPath }),
   prDetail: (repoPath: string, number: number) =>
     invoke<PrDetail | null>("pr_detail", { repoPath, number }),

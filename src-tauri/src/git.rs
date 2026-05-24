@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Git operations via libgit2 (no shelling out to the `git` binary).
 //!
-//! This module is swarm's wedge against cmux: first-class *worktree* listing and
-//! creation, per-worktree status, and unified diffs ready for review.
+//! Per-repo status, structured diffs ready for review, commit history, and
+//! staging/commit operations — all on the repository the user opened.
 
 use crate::error::{AppError, AppResult};
-use git2::{
-    Branch, BranchType, Delta, Diff, DiffFormat, DiffOptions, Repository, Status, StatusOptions,
-    WorktreeAddOptions, WorktreePruneOptions,
-};
+use git2::{Delta, Diff, DiffFormat, DiffOptions, Repository, Status, StatusOptions};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,22 +24,6 @@ pub struct RepoInfo {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorktreeInfo {
-    pub name: String,
-    pub path: String,
-    pub branch: Option<String>,
-    pub head_oid: Option<String>,
-    pub is_main: bool,
-    pub is_locked: bool,
-    pub locked_reason: Option<String>,
-    pub is_prunable: bool,
-    pub ahead: usize,
-    pub behind: usize,
-    pub dirty_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
     pub old_path: Option<String>,
@@ -57,14 +38,6 @@ pub struct DiffStatsInfo {
     pub files_changed: usize,
     pub insertions: usize,
     pub deletions: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchInfo {
-    pub name: String,
-    pub is_head: bool,
-    pub upstream: Option<String>,
 }
 
 /// Open the *main* repository even when `path` points at a linked worktree.
@@ -100,24 +73,6 @@ fn is_dirty(repo: &Repository) -> bool {
         .unwrap_or(false)
 }
 
-fn ahead_behind(repo: &Repository) -> (usize, usize) {
-    let local = match repo.head().ok().and_then(|h| h.target()) {
-        Some(oid) => oid,
-        None => return (0, 0),
-    };
-    let upstream = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().ok().map(str::to_owned))
-        .and_then(|name| repo.find_branch(&name, BranchType::Local).ok())
-        .and_then(|b| b.upstream().ok())
-        .and_then(|u| u.get().target());
-    match upstream {
-        Some(up) => repo.graph_ahead_behind(local, up).unwrap_or((0, 0)),
-        None => (0, 0),
-    }
-}
-
 pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
     let repo = open_main(path)?;
     let wd = workdir(&repo)?;
@@ -147,179 +102,6 @@ fn short_oid(oid: &git2::Oid) -> String {
     oid.to_string().chars().take(8).collect()
 }
 
-/// List the main checkout plus every linked worktree, each with live metadata.
-pub fn list_worktrees(path: &str) -> AppResult<Vec<WorktreeInfo>> {
-    let repo = open_main(path)?;
-    let mut out = Vec::new();
-
-    // Main checkout first.
-    let main_wd = workdir(&repo)?;
-    out.push(worktree_info_for_path(
-        &main_wd,
-        &repo_basename(&repo),
-        true,
-        None,
-        false,
-    )?);
-
-    // Linked worktrees.
-    let names = repo.worktrees()?;
-    for name in names.iter().flatten().flatten() {
-        let wt = match repo.find_worktree(name) {
-            Ok(w) => w,
-            Err(_) => continue,
-        };
-        let wt_path = wt.path().to_path_buf();
-        let lock = wt.is_locked().ok();
-        let (locked, reason) = match lock {
-            Some(git2::WorktreeLockStatus::Locked(r)) => (true, r),
-            _ => (false, None),
-        };
-        let prunable = wt.is_prunable(None).unwrap_or(false);
-        out.push(worktree_info_for_path(
-            &wt_path,
-            name,
-            false,
-            Some((locked, reason)),
-            prunable,
-        )?);
-    }
-    Ok(out)
-}
-
-fn worktree_info_for_path(
-    wt_path: &Path,
-    name: &str,
-    is_main: bool,
-    lock: Option<(bool, Option<String>)>,
-    is_prunable: bool,
-) -> AppResult<WorktreeInfo> {
-    // Opening the worktree's own repo gives us its HEAD, status, ahead/behind.
-    let (branch, head_oid, dirty_count, ahead, behind) = match Repository::open(wt_path) {
-        Ok(r) => {
-            let head = r.head().ok();
-            let branch = head
-                .as_ref()
-                .and_then(|h| h.shorthand().ok().map(str::to_owned));
-            let head_oid = head
-                .as_ref()
-                .and_then(|h| h.target())
-                .map(|o| short_oid(&o));
-            let mut so = StatusOptions::new();
-            so.include_untracked(true).recurse_untracked_dirs(true);
-            let dirty_count = r.statuses(Some(&mut so)).map(|s| s.len()).unwrap_or(0);
-            let (a, b) = ahead_behind(&r);
-            (branch, head_oid, dirty_count, a, b)
-        }
-        Err(_) => (None, None, 0, 0, 0),
-    };
-    let (is_locked, locked_reason) = lock.unwrap_or((false, None));
-    Ok(WorktreeInfo {
-        name: name.to_string(),
-        path: wt_path.to_string_lossy().into_owned(),
-        branch,
-        head_oid,
-        is_main,
-        is_locked,
-        locked_reason,
-        is_prunable,
-        ahead,
-        behind,
-        dirty_count,
-    })
-}
-
-fn sanitize(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-/// Where swarm keeps its worktrees: `~/.swarm/worktrees/<repo>/<branch>`.
-/// Deliberately *outside* the repo so the user's tree stays clean. Ensures the
-/// `~/.swarm` root exists and is owner-only (`0700`) on Unix — `create_worktree`
-/// may be the first thing to create it, before `swarm_dir()` in `lib.rs` runs.
-fn worktrees_root(repo: &Repository) -> AppResult<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home directory".into()))?;
-    let swarm = home.join(".swarm");
-    std::fs::create_dir_all(&swarm)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&swarm, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(swarm.join("worktrees").join(repo_basename(repo)))
-}
-
-/// Create a new branch (from `base_ref` or HEAD) and add a worktree for it.
-pub fn create_worktree(
-    repo_path: &str,
-    branch_name: &str,
-    base_ref: Option<&str>,
-) -> AppResult<WorktreeInfo> {
-    let repo = open_main(repo_path)?;
-    if branch_name.trim().is_empty() {
-        return Err(AppError::Invalid("branch name is empty".into()));
-    }
-
-    let base_commit = match base_ref {
-        Some(r) if !r.is_empty() => repo.revparse_single(r)?.peel_to_commit()?,
-        _ => repo.head()?.peel_to_commit()?,
-    };
-
-    let safe = sanitize(branch_name);
-    let root = worktrees_root(&repo)?;
-    std::fs::create_dir_all(&root)?;
-    let wt_path = root.join(&safe);
-    if wt_path.exists() {
-        return Err(AppError::Invalid(format!(
-            "worktree path already exists: {}",
-            wt_path.display()
-        )));
-    }
-
-    // Reuse an existing branch or create a fresh one.
-    let branch: Branch = match repo.find_branch(branch_name, BranchType::Local) {
-        Ok(b) => b,
-        Err(_) => repo.branch(branch_name, &base_commit, false)?,
-    };
-    let reference = branch.into_reference();
-
-    let mut opts = WorktreeAddOptions::new();
-    opts.reference(Some(&reference));
-    repo.worktree(&safe, &wt_path, Some(&opts))?;
-
-    worktree_info_for_path(&wt_path, &safe, false, Some((false, None)), false)
-}
-
-/// Remove a linked worktree (and its files). `force` also removes locked ones.
-pub fn remove_worktree(repo_path: &str, name: &str, force: bool) -> AppResult<()> {
-    let repo = open_main(repo_path)?;
-    let wt = repo
-        .find_worktree(name)
-        .map_err(|_| AppError::NotFound(format!("worktree '{name}' not found")))?;
-    let path = wt.path().to_path_buf();
-
-    let mut popts = WorktreePruneOptions::new();
-    popts.valid(true).working_tree(true);
-    if force {
-        popts.locked(true);
-    }
-    wt.prune(Some(&mut popts))?;
-
-    // `prune` removes the admin files; remove leftover working tree dir if present.
-    if path.exists() {
-        let _ = std::fs::remove_dir_all(&path);
-    }
-    Ok(())
-}
-
 fn status_label(s: Status) -> &'static str {
     if s.is_conflicted() {
         "conflicted"
@@ -340,12 +122,7 @@ fn status_label(s: Status) -> &'static str {
     }
 }
 
-/// Per-file change list for a worktree (staged + unstaged + untracked).
-pub fn changes(worktree_path: &str) -> AppResult<Vec<FileChange>> {
-    let repo = Repository::open(worktree_path)?;
-    changes_in(&repo)
-}
-
+/// Per-file change list for a repo (staged + unstaged + untracked).
 fn changes_in(repo: &Repository) -> AppResult<Vec<FileChange>> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
@@ -487,28 +264,7 @@ pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResu
     Ok(hunks)
 }
 
-/// Unified-diff patch text for one file (raw patch; see also `file_diff_hunks`).
-pub fn file_diff(worktree_path: &str, file: &str, staged: bool) -> AppResult<String> {
-    let repo = Repository::open(worktree_path)?;
-    let diff = build_diff(&repo, Some(file), staged)?;
-    let mut buf = String::new();
-    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
-        let origin = line.origin();
-        if matches!(origin, '+' | '-' | ' ') {
-            buf.push(origin);
-        }
-        buf.push_str(&String::from_utf8_lossy(line.content()));
-        true
-    })?;
-    Ok(buf)
-}
-
 /// Aggregate insertions/deletions across the whole worktree (unstaged + staged).
-pub fn diff_stats(worktree_path: &str) -> AppResult<DiffStatsInfo> {
-    let repo = Repository::open(worktree_path)?;
-    diff_stats_in(&repo)
-}
-
 fn diff_stats_in(repo: &Repository) -> AppResult<DiffStatsInfo> {
     let mut files = 0usize;
     let mut ins = 0usize;
@@ -545,29 +301,6 @@ pub fn status_and_stats(worktree_path: &str) -> AppResult<StatusAndStats> {
         changes: changes_in(&repo)?,
         stats: diff_stats_in(&repo)?,
     })
-}
-
-pub fn list_branches(repo_path: &str) -> AppResult<Vec<BranchInfo>> {
-    let repo = open_main(repo_path)?;
-    let mut out = Vec::new();
-    for b in repo.branches(Some(BranchType::Local))? {
-        let (branch, _) = b?;
-        let name = match branch.name()? {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        let upstream = branch
-            .upstream()
-            .ok()
-            .and_then(|u| u.name().ok().flatten().map(str::to_owned));
-        out.push(BranchInfo {
-            is_head: branch.is_head(),
-            name,
-            upstream,
-        });
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
 }
 
 #[derive(Debug, Serialize)]
@@ -703,29 +436,6 @@ pub fn commit_detail(repo_path: &str, oid_str: &str) -> AppResult<CommitDetail> 
     })
 }
 
-/// Unified patch for one file within a commit (vs its first parent).
-pub fn commit_file_diff(repo_path: &str, oid_str: &str, file: &str) -> AppResult<String> {
-    let repo = open_main(repo_path)?;
-    let oid = git2::Oid::from_str(oid_str)?;
-    let c = repo.find_commit(oid)?;
-    let tree = c.tree()?;
-    let parent = c.parent(0).ok();
-    let parent_tree = parent.as_ref().and_then(|p| p.tree().ok());
-    let mut opts = DiffOptions::new();
-    opts.pathspec(file).context_lines(3);
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
-    let mut buf = String::new();
-    diff.print(DiffFormat::Patch, |_d, _h, line| {
-        let origin = line.origin();
-        if matches!(origin, '+' | '-' | ' ') {
-            buf.push(origin);
-        }
-        buf.push_str(&String::from_utf8_lossy(line.content()));
-        true
-    })?;
-    Ok(buf)
-}
-
 /// Full unified patch for a commit (all files, vs first parent).
 pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<String> {
     let repo = open_main(repo_path)?;
@@ -747,23 +457,6 @@ pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<String> {
         true
     })?;
     Ok(buf)
-}
-
-/// Stage everything and commit — "accept" an agent's work in its worktree.
-pub fn commit_all(worktree_path: &str, message: &str) -> AppResult<String> {
-    let repo = Repository::open(worktree_path)?;
-    let mut index = repo.index()?;
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
-    index.write()?;
-    let tree_oid = index.write_tree()?;
-    let tree = repo.find_tree(tree_oid)?;
-    let sig = repo
-        .signature()
-        .or_else(|_| git2::Signature::now("swarm", "swarm@localhost"))?;
-    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-    let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
-    Ok(short_oid(&oid))
 }
 
 pub fn stage_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
@@ -841,17 +534,22 @@ pub fn commit(worktree_path: &str, message: &str) -> AppResult<String> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
-
-    /// `worktrees_root`/`swarm_dir` resolve against `$HOME`, and tests mutate it
-    /// process-wide. Serialize every test that touches HOME so the parallel test
-    /// runner can't interleave two `set_var("HOME", …)` calls.
-    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn scratch() -> PathBuf {
         let p = std::env::temp_dir().join(format!("swarm-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    /// Test-only thin wrapper: the public surface is `status_and_stats`, but the
+    /// per-file change list is what most assertions care about.
+    fn changes(path: &str) -> AppResult<Vec<FileChange>> {
+        Ok(status_and_stats(path)?.changes)
+    }
+
+    /// Test-only thin wrapper over `status_and_stats` for the aggregate counts.
+    fn diff_stats(path: &str) -> AppResult<DiffStatsInfo> {
+        Ok(status_and_stats(path)?.stats)
     }
 
     fn commit_file(repo: &Repository, name: &str, body: &str, msg: &str) -> git2::Oid {
@@ -884,55 +582,13 @@ mod tests {
         Repository::init(dir).unwrap()
     }
 
-    #[test]
-    fn worktree_lifecycle_and_diff() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        // Redirect ~/.swarm into a scratch dir for isolation.
-        let home = scratch();
-        std::env::set_var("HOME", &home);
-
-        let repo_dir = scratch();
-        let _repo = init_repo(&repo_dir);
-        let repo_path = repo_dir.to_str().unwrap();
-
-        // Initially: just the main worktree.
-        let before = list_worktrees(repo_path).unwrap();
-        assert_eq!(before.len(), 1);
-        assert!(before[0].is_main);
-
-        // Create a worktree on a new branch.
-        let wt = create_worktree(repo_path, "feat/x", None).unwrap();
-        assert_eq!(wt.branch.as_deref(), Some("feat/x"));
-
-        let after = list_worktrees(repo_path).unwrap();
-        assert_eq!(after.len(), 2);
-        assert!(after.iter().any(|w| w.branch.as_deref() == Some("feat/x")));
-
-        // Make a change in the worktree → it should show up.
-        fs::write(Path::new(&wt.path).join("b.txt"), "new file\n").unwrap();
-        fs::write(Path::new(&wt.path).join("a.txt"), "hello\nCHANGED\n").unwrap();
-        let ch = changes(&wt.path).unwrap();
-        assert!(ch
-            .iter()
-            .any(|c| c.path == "b.txt" && c.status == "untracked"));
-        assert!(ch
-            .iter()
-            .any(|c| c.path == "a.txt" && c.status == "modified"));
-
-        let patch = file_diff(&wt.path, "a.txt", false).unwrap();
-        assert!(patch.contains("CHANGED"));
-
-        let stats = diff_stats(&wt.path).unwrap();
-        assert!(stats.insertions >= 1);
-
-        // Accept the work.
-        let oid = commit_all(&wt.path, "do the thing").unwrap();
-        assert_eq!(oid.len(), 8);
-        assert!(changes(&wt.path).unwrap().is_empty());
-
-        // Remove it.
-        remove_worktree(repo_path, "feat-x", false).unwrap();
-        assert_eq!(list_worktrees(repo_path).unwrap().len(), 1);
+    /// Add a linked worktree directly via libgit2 — exercises `open_main`'s
+    /// worktree-resolution path without the app needing to create one.
+    fn add_worktree(main_path: &str, name: &str) -> PathBuf {
+        let repo = Repository::open(main_path).unwrap();
+        let wt_path = scratch().join(name);
+        repo.worktree(name, &wt_path, None).unwrap();
+        wt_path
     }
 
     #[test]
@@ -1020,14 +676,15 @@ mod tests {
     }
 
     #[test]
-    fn commit_all_stages_then_commits_everything() {
+    fn stage_all_then_commit_commits_everything() {
         let dir = scratch();
         let _repo = init_repo(&dir);
         let path = dir.to_str().unwrap();
         fs::write(dir.join("a.txt"), "x\n").unwrap();
         fs::write(dir.join("b.txt"), "y\n").unwrap();
 
-        commit_all(path, "everything").unwrap();
+        stage_all(path).unwrap();
+        commit(path, "everything").unwrap();
         assert!(changes(path).unwrap().is_empty());
     }
 
@@ -1039,7 +696,8 @@ mod tests {
         fs::write(dir.join("a.txt"), "first\n").unwrap();
 
         // No HEAD yet, no signature → must fall back to the swarm identity.
-        let oid = commit_all(path, "root").unwrap();
+        stage_all(path).unwrap();
+        let oid = commit(path, "root").unwrap();
         assert_eq!(oid.len(), 8);
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         assert_eq!(head.parent_count(), 0, "root commit has no parents");
@@ -1079,8 +737,6 @@ mod tests {
         assert_eq!(detail.email, "test@swarm.local");
         assert!(detail.files.iter().any(|f| f.path == "a.txt"));
 
-        let fd = commit_file_diff(path, &oid.to_string(), "a.txt").unwrap();
-        assert!(fd.contains("NEWLINE"));
         let full = commit_diff(path, &oid.to_string()).unwrap();
         assert!(full.contains("NEWLINE"));
     }
@@ -1091,24 +747,6 @@ mod tests {
         let _repo = init_repo(&dir);
         let err = commit_detail(dir.to_str().unwrap(), "not-an-oid").unwrap_err();
         assert!(matches!(err, AppError::Git(_)));
-    }
-
-    #[test]
-    fn list_branches_marks_head_and_sorts() {
-        let dir = scratch();
-        let repo = init_repo(&dir);
-        let path = dir.to_str().unwrap();
-        let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("aaa-feature", &head, false).unwrap();
-        repo.branch("zzz-feature", &head, false).unwrap();
-
-        let branches = list_branches(path).unwrap();
-        let names: Vec<_> = branches.iter().map(|b| b.name.clone()).collect();
-        assert!(names.contains(&"aaa-feature".to_string()));
-        let mut sorted = names.clone();
-        sorted.sort();
-        assert_eq!(names, sorted, "branches are sorted by name");
-        assert_eq!(branches.iter().filter(|b| b.is_head).count(), 1);
     }
 
     #[test]
@@ -1138,21 +776,21 @@ mod tests {
     }
 
     #[test]
-    fn status_and_stats_matches_separate_calls_in_one_pass() {
+    fn status_and_stats_reports_changes_and_stats_in_one_pass() {
         let dir = scratch();
         let _repo = init_repo(&dir);
         let path = dir.to_str().unwrap();
-        fs::write(dir.join("a.txt"), "hello\nthere\nworld\n").unwrap();
-        fs::write(dir.join("new.txt"), "fresh\n").unwrap();
+        fs::write(dir.join("a.txt"), "hello\nthere\nworld\n").unwrap(); // modify tracked
+        fs::write(dir.join("new.txt"), "fresh\n").unwrap(); // untracked
 
         let combined = status_and_stats(path).unwrap();
-        let separate_changes = changes(path).unwrap();
-        let separate_stats = diff_stats(path).unwrap();
-
-        assert_eq!(combined.changes.len(), separate_changes.len());
         assert!(combined.changes.iter().any(|c| c.path == "new.txt"));
-        assert_eq!(combined.stats.insertions, separate_stats.insertions);
-        assert_eq!(combined.stats.files_changed, separate_stats.files_changed);
+        assert!(combined
+            .changes
+            .iter()
+            .any(|c| c.path == "a.txt" && c.status == "modified"));
+        assert!(combined.stats.insertions >= 1);
+        assert!(combined.stats.files_changed >= 1);
     }
 
     #[test]
@@ -1168,51 +806,21 @@ mod tests {
     }
 
     #[test]
-    fn remove_worktree_errors_when_missing() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        std::env::set_var("HOME", scratch());
-        let dir = scratch();
-        let _repo = init_repo(&dir);
-        let err = remove_worktree(dir.to_str().unwrap(), "ghost", false).unwrap_err();
-        assert!(matches!(err, AppError::NotFound(_)));
-    }
-
-    #[test]
-    fn create_worktree_rejects_empty_branch() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        std::env::set_var("HOME", scratch());
-        let dir = scratch();
-        let _repo = init_repo(&dir);
-        let err = create_worktree(dir.to_str().unwrap(), "  ", None).unwrap_err();
-        assert!(matches!(err, AppError::Invalid(_)));
-    }
-
-    #[test]
     fn open_main_resolves_from_a_linked_worktree() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        std::env::set_var("HOME", scratch());
         let dir = scratch();
         let _repo = init_repo(&dir);
         let main_path = dir.to_str().unwrap();
 
-        let wt = create_worktree(main_path, "side", Some("HEAD")).unwrap();
+        let wt_path = add_worktree(main_path, "side");
+        let wt = wt_path.to_str().unwrap();
         // repo_info on the *worktree* path must report the main checkout's path.
-        let info = repo_info(&wt.path).unwrap();
+        let info = repo_info(wt).unwrap();
         let canon_main = std::fs::canonicalize(main_path).unwrap();
         let canon_info = std::fs::canonicalize(&info.path).unwrap();
         assert_eq!(canon_info, canon_main);
 
         // git_log via the worktree path sees the shared history.
-        assert!(!git_log(&wt.path, 10).unwrap().is_empty());
-    }
-
-    #[test]
-    fn sanitize_replaces_unsafe_characters() {
-        assert_eq!(sanitize("feat/x"), "feat-x");
-        assert_eq!(sanitize("a b@c#d"), "a-b-c-d");
-        assert_eq!(sanitize("keep.dots_and-dashes"), "keep.dots_and-dashes");
-        // Non-ascii scalars become dashes; embedded ascii (n, c, d) survives.
-        assert_eq!(sanitize("Ünïcödé"), "-n-c-d-");
+        assert!(!git_log(wt, 10).unwrap().is_empty());
     }
 
     #[test]

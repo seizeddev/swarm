@@ -9,20 +9,6 @@ export interface RepoInfo {
   dirty: boolean;
 }
 
-export interface WorktreeInfo {
-  name: string;
-  path: string;
-  branch: string | null;
-  headOid: string | null;
-  isMain: boolean;
-  isLocked: boolean;
-  lockedReason: string | null;
-  isPrunable: boolean;
-  ahead: number;
-  behind: number;
-  dirtyCount: number;
-}
-
 export type ChangeStatus =
   | "added"
   | "modified"
@@ -62,21 +48,6 @@ export interface DiffLine {
 export interface DiffHunk {
   header: string;
   lines: DiffLine[];
-}
-
-export interface BranchInfo {
-  name: string;
-  isHead: boolean;
-  upstream: string | null;
-}
-
-export interface PrInfo {
-  number: number;
-  title: string;
-  state: string;
-  url: string;
-  isDraft: boolean;
-  checks: "passing" | "failing" | "pending" | null;
 }
 
 export interface CommitInfo {
@@ -162,9 +133,4 @@ export interface WireUpdate {
   cursorY: number;
   cursorVisible: boolean;
   lines: WireLine[];
-}
-
-export interface AppError {
-  kind: string;
-  message: string;
 }

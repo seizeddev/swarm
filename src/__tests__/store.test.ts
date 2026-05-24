@@ -8,29 +8,19 @@ vi.mock("../lib/ipc", () => ({
   api: {
     registerRoot: vi.fn(),
     repoInfo: vi.fn(),
-    listWorktrees: vi.fn(),
-    createWorktree: vi.fn(),
-    removeWorktree: vi.fn(),
-    changes: vi.fn(),
-    fileDiff: vi.fn(),
-    diffStats: vi.fn(),
     statusAndStats: vi.fn(),
-    listBranches: vi.fn(),
     gitLog: vi.fn(),
     commitDetail: vi.fn(),
-    commitFileDiff: vi.fn(),
     commitDiff: vi.fn(),
     saveSession: vi.fn(),
     loadSession: vi.fn(),
     eventsDir: vi.fn(),
     prepareCodexHome: vi.fn(),
-    commitAll: vi.fn(),
     stage: vi.fn(),
     unstage: vi.fn(),
     stageAll: vi.fn(),
     unstageAll: vi.fn(),
     commit: vi.fn(),
-    prForBranch: vi.fn(),
     prList: vi.fn(),
     ghLogin: vi.fn(),
     ghAvailable: vi.fn(),
@@ -115,8 +105,6 @@ beforeEach(() => {
   m.ghAvailable.mockResolvedValue(false);
   m.listAgents.mockResolvedValue([SHELL, CLAUDE]);
   m.claudeSessionExists.mockResolvedValue(true);
-  m.changes.mockResolvedValue([]);
-  m.diffStats.mockResolvedValue({ filesChanged: 0, insertions: 0, deletions: 0 });
   m.statusAndStats.mockResolvedValue({
     changes: [],
     stats: { filesChanged: 0, insertions: 0, deletions: 0 },
@@ -138,7 +126,6 @@ beforeEach(() => {
     m[fn].mockResolvedValue(undefined);
   }
   m.commit.mockResolvedValue("deadbee");
-  m.commitAll.mockResolvedValue("deadbee");
   upd.check.mockResolvedValue(null);
   upd.downloadAndInstall.mockResolvedValue(undefined);
   upd.relaunch.mockResolvedValue(undefined);

@@ -21,11 +21,6 @@ export function clampPanelWidth(px: number, innerWidth: number): number {
   return Math.round(Math.max(PANEL_MIN, Math.min(max, px)));
 }
 
-// Widest the panel may grow at the current window size.
-export function panelMax(): number {
-  return clampPanelWidth(PANEL_MAX, window.innerWidth);
-}
-
 // Clamp to the live window bounds and write it to the document.
 export function applyPanelWidth(px: number): void {
   document.documentElement.style.setProperty("--panel-w", `${clampPanelWidth(px, window.innerWidth)}px`);

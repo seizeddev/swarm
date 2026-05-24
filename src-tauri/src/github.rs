@@ -65,17 +65,6 @@ fn run_gh(args: &[&str], cwd: Option<&str>) -> Option<Vec<u8>> {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PrInfo {
-    pub number: u64,
-    pub title: String,
-    pub state: String,
-    pub url: String,
-    pub is_draft: bool,
-    pub checks: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PrSummary {
     pub number: u64,
     pub title: String,
@@ -255,77 +244,6 @@ pub fn gh_available() -> bool {
     run_gh(&["--version"], None).is_some()
 }
 
-pub fn pr_for_branch(repo_path: &str, branch: &str) -> AppResult<Option<PrInfo>> {
-    // A ref starting with `-` would be parsed as a flag; reject it outright, and
-    // additionally pass the branch after a `--` separator so `gh` always treats
-    // it as the positional PR selector (argument-injection defence, M-1).
-    if branch.starts_with('-') {
-        return Ok(None);
-    }
-    let stdout = match run_gh(
-        &[
-            "pr",
-            "view",
-            "--json",
-            "number,title,state,url,isDraft,statusCheckRollup",
-            "--",
-            branch,
-        ],
-        Some(repo_path),
-    ) {
-        Some(o) => o,
-        None => return Ok(None),
-    };
-
-    let v: serde_json::Value = match serde_json::from_slice(&stdout) {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
-    };
-
-    let checks = v
-        .get("statusCheckRollup")
-        .and_then(|r| r.as_array())
-        .map(|arr| {
-            let mut failing = 0;
-            let mut pending = 0;
-            for c in arr {
-                match c.get("conclusion").and_then(|x| x.as_str()).unwrap_or("") {
-                    "SUCCESS" | "NEUTRAL" | "SKIPPED" => {}
-                    "" => pending += 1,
-                    _ => failing += 1,
-                }
-            }
-            if failing > 0 {
-                "failing".to_string()
-            } else if pending > 0 {
-                "pending".to_string()
-            } else {
-                "passing".to_string()
-            }
-        });
-
-    Ok(Some(PrInfo {
-        number: v.get("number").and_then(|x| x.as_u64()).unwrap_or(0),
-        title: v
-            .get("title")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        state: v
-            .get("state")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        url: v
-            .get("url")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        is_draft: v.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false),
-        checks,
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,23 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn pr_for_branch_returns_none_when_gh_unavailable() {
-        let out = pr_for_branch("/nonexistent-path-xyz", "main").unwrap();
-        assert!(out.is_none());
-    }
-
-    #[test]
     fn pr_detail_returns_none_when_gh_unavailable() {
         assert!(pr_detail("/nonexistent-path-xyz", 1).unwrap().is_none());
-    }
-
-    #[test]
-    fn pr_for_branch_rejects_dash_prefixed_ref() {
-        // A ref that looks like a flag must short-circuit to None and never be
-        // handed to `gh` (argument-injection guard, M-1).
-        assert!(pr_for_branch("/nonexistent-path-xyz", "--repo")
-            .unwrap()
-            .is_none());
-        assert!(pr_for_branch(".", "-x").unwrap().is_none());
     }
 }

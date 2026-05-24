@@ -44,17 +44,17 @@ The **CSP is the primary defence**: `default-src 'self'`, no remote/inline scrip
 in production, `object-src`/`frame-src`/`frame-ancestors`/`form-action` `'none'`,
 `base-uri 'self'`, `worker-src 'self'`. As defence-in-depth, every path-taking
 IPC command validates its path against a registry of roots the user explicitly
-opened (`src-tauri/guard.rs`, canonicalize + containment), plus the implicit
-`~/.swarm/worktrees` tree. So even a subverted page can only touch repositories
-already on screen — no sudden `/etc` read, no shell spawned in `/`. PTY spawns
-additionally reject an empty command and a `cwd` outside an opened root.
+opened (`src-tauri/guard.rs`, canonicalize + containment). So even a subverted
+page can only touch repositories already on screen — no sudden `/etc` read, no
+shell spawned in `/`. PTY spawns additionally reject an empty command and a
+`cwd` outside an opened root.
 
 ### T3 — Argument injection / hangs via `gh` (boundary 2)
-All three `gh` calls go through one hardened helper (`src-tauri/src/github.rs`):
+Every `gh` call goes through one hardened helper (`src-tauri/src/github.rs`):
 non-interactive env (`GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`, …), stdin
 from `/dev/null`, a 15 s watchdog that kills a hung subprocess, and stdout drained
-on a side thread to avoid pipe deadlock. Branch refs are passed after a `--`
-separator and dash-prefixed refs are rejected, so a ref can't be parsed as a flag.
+on a side thread to avoid pipe deadlock. The PR selector is passed after a `--`
+separator so it can never be parsed as a flag.
 
 ### T4 — Malicious or downgrade update (boundary 3)
 Update artifacts are **minisign-signed**; the client verifies the signature before
