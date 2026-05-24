@@ -54,10 +54,16 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     if (visibleRef.current) scheduleRender();
   };
 
-  const measure = () => {
+  // Returns the grid geometry, or `null` when the pane has no real laid-out size
+  // yet (missing refs or a 0×0 box). Crucially it never invents a fallback size:
+  // a measurement taken from a 0-box used to floor() to 2×1 (or, worse, a sane-
+  // looking 80×24) and get *sent* as a resize — which starts/reflows the agent
+  // into the wrong geometry and leaves the terminal stuck at the top with dead
+  // space below. Callers must skip when this is null.
+  const measure = (): { cols: number; rows: number } | null => {
     const m = measureRef.current;
     const wrap = wrapRef.current;
-    if (!m || !wrap) return { cols: 80, rows: 24 };
+    if (!m || !wrap || wrap.clientWidth === 0 || wrap.clientHeight === 0) return null;
     const r = m.getBoundingClientRect();
     if (r.width > 0) cell.current = { w: r.width / 10, h: r.height };
     // Subtract the wrapper's padding so the grid never overflows the viewport.
@@ -69,8 +75,56 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     return { cols, rows };
   };
 
+  // Resolve once the pane has a real laid-out size, so the spawn never measures
+  // a transient 0×0 box. Retries across a few frames; only if the pane never
+  // lays out (genuinely hidden) does it fall back to a usable default.
+  const measureReady = (cancelledRef: () => boolean) =>
+    new Promise<{ cols: number; rows: number }>((resolve) => {
+      let tries = 0;
+      const tick = () => {
+        const dims = measure();
+        if (dims) resolve(dims);
+        else if (cancelledRef() || tries >= 20) resolve({ cols: 80, rows: 24 });
+        else {
+          tries++;
+          requestAnimationFrame(tick);
+        }
+      };
+      tick();
+    });
+
+  // Measure and push the current geometry to the running PTY. Guards against a
+  // missing id or a zero-size (hidden / unmounted) box, so it's safe to fire
+  // from any settle point. Re-sending the same geometry is cheap (the core just
+  // repaints), so it needs no change-tracking.
+  const fit = () => {
+    const id = ptyIdRef.current;
+    if (!id) return;
+    const dims = measure();
+    if (!dims) return; // pane not laid out — never push a degenerate size
+    api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
+  };
+
   useEffect(() => {
     let cancelled = false;
+    // A single spawn-time measure is racy. In a packaged build the window and
+    // layout can settle a frame or two *after* the pane first mounts, so the
+    // initial measure() may catch a transient (too-small) box and spawn the PTY
+    // with too few rows — and on a steady window nothing re-measures, while the
+    // ResizeObserver's first callback can fire before the async spawn has set
+    // the PTY id (so it bails on `!id`). That left the terminal short of the
+    // bottom, intermittently, only in release (dev's StrictMode remount + a
+    // settled dev window hid it). Fix: once the PTY exists, re-fit at several
+    // independent settle points — the next two frames, after fonts load, and a
+    // timed backstop. Whichever lands last on the final geometry wins; live
+    // resizes are then handled by the observer.
+    const timers: number[] = [];
+    const scheduleSettleFits = () => {
+      timers.push(requestAnimationFrame(() => requestAnimationFrame(fit)));
+      timers.push(window.setTimeout(fit, 60));
+      timers.push(window.setTimeout(fit, 250));
+      document.fonts?.ready.then(fit).catch(() => {});
+    };
     (async () => {
       // Reattach to a still-running PTY if this pane already has one (it survived
       // a previous unmount, e.g. a workspace switch); otherwise spawn fresh.
@@ -81,12 +135,16 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
         try {
           await api.ptyAttach(existing, apply);
           api.ptySetVisible(existing, visibleRef.current).catch(() => {});
+          scheduleSettleFits();
           return;
         } catch {
           /* session vanished between the alive check and attach → spawn below */
         }
       }
-      const { cols, rows } = measure();
+      // Wait for the pane's real size before spawning — measuring too early
+      // yields a 0×0 box and would start the agent in a 1-row terminal.
+      const { cols, rows } = await measureReady(() => cancelled);
+      if (cancelled) return;
       try {
         const id = await api.ptySpawn(
           { cwd: pane.cwd, command: pane.command, args: pane.args, env: pane.env, cols, rows },
@@ -102,6 +160,7 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
         // If the component unmounted mid-spawn (e.g. a workspace switch), start
         // the PTY hidden; a later remount reattaches and makes it visible.
         api.ptySetVisible(id, cancelled ? false : visibleRef.current).catch(() => {});
+        scheduleSettleFits();
       } catch {
         if (!cancelled) setExited(true);
       }
@@ -109,6 +168,13 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
 
     return () => {
       cancelled = true;
+      // Drop any pending settle-fits so they don't resize a kept-alive PTY after
+      // this pane has unmounted (the handles are rAF + timeout ids; clearing both
+      // ways is harmless for the mismatched kind).
+      for (const t of timers) {
+        clearTimeout(t);
+        cancelAnimationFrame(t);
+      }
       // Keep the PTY alive across remounts; just gate it so the render thread
       // stops sending. The PTY is killed explicitly on pane/workspace removal.
       if (ptyIdRef.current) api.ptySetVisible(ptyIdRef.current, false).catch(() => {});
@@ -141,8 +207,10 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
       // geometry needs to reach the PTY (the core pushes a full frame back).
       if (timer != null) clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const { cols, rows } = measure();
-        api.ptyResize(id, cols, rows).catch(() => {});
+        // Re-measure at fire time; if the pane is now 0×0 (hidden mid-debounce),
+        // measure() returns null and we skip rather than push a fallback size.
+        const dims = measure();
+        if (dims) api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
       }, 50);
     });
     ro.observe(el);
@@ -161,6 +229,10 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
       // Paint the current state immediately; the core also pushes a fresh full
       // frame in response to ptySetVisible(true).
       scheduleRender();
+      // Re-fit on becoming visible: while hidden (display:none) the box is 0×0,
+      // so any window resize that happened meanwhile was ignored by the observer
+      // (it bails on a zero-size box). Reconcile the geometry now it's shown.
+      requestAnimationFrame(fit);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);

@@ -314,8 +314,24 @@ impl TerminalManager {
             })
             .map_err(|e| AppError::Pty(e.to_string()))?;
 
-        let mut cmd = CommandBuilder::new(&opts.command);
-        cmd.args(&opts.args);
+        // Spawn the agent through the user's interactive login shell, exactly as a
+        // real terminal emulator does, so it inherits the user's full environment:
+        // PATH, LANG, and personal settings such as CLAUDE_CODE_NO_FLICKER (which
+        // controls whether Claude Code uses the full-height alternate screen vs an
+        // inline render). A GUI / .dmg launch only carries a minimal launchd
+        // environment — without sourcing the login profile the agent rendered in
+        // the degraded inline mode, so the terminal looked "cut off" at the bottom
+        // in packaged builds but not from a shell/`tauri dev` launch. `exec "$0"
+        // "$@"` replaces the shell in place (no extra process, same PTY) and passes
+        // argv through verbatim without re-quoting.
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let mut cmd = CommandBuilder::new(&shell);
+        cmd.arg("-ilc");
+        cmd.arg("exec \"$0\" \"$@\"");
+        cmd.arg(&opts.command);
+        for a in &opts.args {
+            cmd.arg(a);
+        }
         cmd.cwd(&opts.cwd);
         for (k, v) in &opts.env {
             cmd.env(k, v);

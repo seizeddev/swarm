@@ -14,6 +14,7 @@ persisted session format is unchanged.
 ### Added
 
 - **Responsive layout** — the app now reflows across narrow and wide windows, with a resizable inspector panel.
+- **Empty state for terminals** — closing the last terminal in a workspace now shows a prompt with a one-click *Open a terminal* button instead of a blank pane.
 
 ### Changed
 
@@ -37,6 +38,8 @@ persisted session format is unchanged.
 
 ### Fixed
 
+- **Terminal fills the full pane height for full-screen TUIs.** Agents are now launched through the user's interactive login shell (as a real terminal emulator does), so they inherit the complete environment — `PATH`, locale, and personal settings such as Claude Code's `CLAUDE_CODE_NO_FLICKER`. A GUI launch (e.g. from the packaged `.dmg`) previously gave agents only a minimal environment, so Claude Code fell back to a reduced inline render and the terminal looked cut off at the bottom; it now renders full-height regardless of how the app was launched.
+- The PTY is sized from the pane's real geometry: a degenerate (0×0 / 1-row) measurement during a slow first paint is no longer sent, and the grid re-fits at several settle points after spawn so it reliably fills the pane.
 - Terminal grid keeps painting after cleanup — the requestAnimationFrame handle is reset correctly.
 
 ### Removed

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
 import { SwarmMark } from "./Sidebar";
 import { computeLayout, type DivRect, type LeafRect } from "../lib/layout";
@@ -16,12 +16,13 @@ export function Workspace() {
   // unmount, but their PTYs keep running in Rust and reattach on return.
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectPane, removePane, setRatio, showTerminal } = useStore(
+  const { selectPane, removePane, setRatio, showTerminal, addPane } = useStore(
     useShallow((s) => ({
       selectPane: s.selectPane,
       removePane: s.removePane,
       setRatio: s.setRatio,
       showTerminal: s.showTerminal,
+      addPane: s.addPane,
     })),
   );
   const areaRef = useRef<HTMLDivElement>(null);
@@ -169,6 +170,28 @@ export function Workspace() {
         {ws?.editor.type === "commit" && (
           <div className="animate-fade-rise absolute inset-0">
             <CommitDetail repoPath={ws.repo.path} oid={ws.editor.oid} onClose={showTerminal} />
+          </div>
+        )}
+
+        {/* A workspace with no open terminal tab (the last one was closed): the
+            tiling area would otherwise be blank. Offer a one-click way back in. */}
+        {ws && ws.editor.type === "terminal" && !tab && (
+          <div className="grid h-full place-items-center px-6 text-center">
+            <div className="animate-fade-rise">
+              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-text)]">
+                <SwarmMark size={56} />
+              </div>
+              <p className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+                No terminals open
+              </p>
+              <p className="mx-auto mt-1.5 max-w-[300px] text-[13px] leading-relaxed text-[var(--color-muted)]">
+                Open a terminal to start an agent or shell in{" "}
+                <span className="text-[var(--color-text)]">{ws.repo.name}</span>.
+              </p>
+              <button className="btn btn-accent mx-auto mt-5" onClick={() => addPane()}>
+                <Plus size={15} /> Open a terminal
+              </button>
+            </div>
           </div>
         )}
 
