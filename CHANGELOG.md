@@ -6,6 +6,43 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-24
+
+A performance, security, and design release. No data migration required; the
+persisted session format is unchanged.
+
+### Added
+
+- **Responsive layout** — the app now reflows across narrow and wide windows, with a resizable inspector panel.
+
+### Changed
+
+- **Deep design overhaul** — a unified material system and chrome, reworked information architecture, and refined diff/PR presentation. The UI stays strictly monochrome.
+- Bumped frontend tooling to current releases (Vite 8, Vitest 4, `@vitejs/plugin-react` 6).
+
+### Performance
+
+- Terminal grid streams as damage deltas with burst coalescing and visibility gating; grid frames are sent as binary over IPC instead of JSON.
+- Git and GitHub commands run off the main thread with deduplicated status; filesystem watching uses `notify` events instead of interval polling.
+- Diff and history views are virtualized, with diff hunks parsed in Rust.
+- Render path uses selector subscriptions, lazy panes with PTY reattach, and the React Compiler; terminal lines/panes use CSS containment and `content-visibility`.
+- The hot terminal dependencies are built at `-O3`.
+
+### Security
+
+- **Path-allowlist guard** — every path-taking command validates against roots the frontend registers, reducing blast radius behind the CSP.
+- Frontend hardening: opener allowlist, paste guard, and bounded decoding.
+- Bounded PTY, hardened GitHub CLI usage, and fuzzing of the notification/OSC parser.
+- CI supply-chain hardening: all GitHub Actions pinned to commit SHAs, least-privilege tokens, and dependency gates. Release signing sits behind a protected environment.
+
+### Fixed
+
+- Terminal grid keeps painting after cleanup — the requestAnimationFrame handle is reset correctly.
+
+### Removed
+
+- Dead code, unused commands, and the unwired worktree subsystem.
+
 ## [0.1.0] - 2026-05-23
 
 First public release.
@@ -26,5 +63,6 @@ First public release.
 - Pre-1.0: interfaces and persisted snapshot format may change.
 - Licensed under **GPL-3.0-or-later**.
 
-[Unreleased]: https://github.com/seizeddev/swarm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/seizeddev/swarm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/seizeddev/swarm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/seizeddev/swarm/releases/tag/v0.1.0
