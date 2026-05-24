@@ -6,6 +6,7 @@ import type { AgentDef, RepoInfo } from "../lib/types";
 // per-test; the store logic itself runs for real.
 vi.mock("../lib/ipc", () => ({
   api: {
+    registerRoot: vi.fn(),
     repoInfo: vi.fn(),
     listWorktrees: vi.fn(),
     createWorktree: vi.fn(),

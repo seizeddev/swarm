@@ -121,6 +121,38 @@ describe("decodeUpdate", () => {
     expect(out.kind).toBe("full");
     expect(out.lines[0].runs[0].text).toBe("日本語");
   });
+
+  it("returns a harmless no-op for a frame too short to hold the header", () => {
+    // Fewer than 16 header bytes: must not throw RangeError, just do nothing.
+    const out = decodeUpdate(new Uint8Array([1, 0, 0]));
+    expect(out.kind).toBe("delta");
+    expect(out.lines).toEqual([]);
+  });
+
+  it("stops cleanly when a frame is truncated mid-run instead of over-reading", () => {
+    // Encode a valid two-line frame, then lop off the tail so the last run's
+    // declared text bytes run past the buffer end.
+    const update = full(3, [
+      { y: 0, runs: [run("ok")] },
+      { y: 1, runs: [run("cut-here")] },
+    ]);
+    const bytes = encode(update);
+    const truncated = bytes.subarray(0, bytes.byteLength - 4);
+    const out = decodeUpdate(truncated);
+    // The first, fully-present line survives; decoding never throws.
+    expect(out.lines[0].runs[0].text).toBe("ok");
+    // The truncated run is dropped (its line carries no complete run).
+    const lastLine = out.lines[out.lines.length - 1];
+    expect(lastLine.runs.some((r: WireRun) => r.text === "cut-here")).toBe(false);
+  });
+
+  it("stops when the line table itself is truncated mid-header", () => {
+    const update = full(2, [{ y: 0, runs: [run("a")] }]);
+    const bytes = encode(update);
+    // Keep the header + claim of 1 line, but cut into the line header (need 4).
+    const cut = decodeUpdate(bytes.subarray(0, 16 + 2));
+    expect(cut.lines).toEqual([]);
+  });
 });
 
 describe("runStyle cache", () => {

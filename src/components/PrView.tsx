@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { ExternalLink, GitPullRequest, X } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternal } from "../lib/external";
 import type { PrSummary } from "../lib/types";
 
 function checkColor(checks: string | null) {
@@ -47,7 +47,7 @@ export function PrView({ pr, onClose }: { pr: PrSummary; onClose: () => void }) 
           <Row label="Number" value={`#${pr.number}`} />
         </div>
 
-        <button className="btn btn-accent mt-6" onClick={() => openUrl(pr.url)}>
+        <button className="btn btn-accent mt-6" onClick={() => openExternal(pr.url).catch(() => {})}>
           <ExternalLink size={15} /> Open on GitHub
         </button>
       </div>

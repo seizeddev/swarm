@@ -18,6 +18,9 @@ import type {
 } from "./types";
 
 export const api = {
+  // Authorize a repository root for the path-allowlist guard (src-tauri/guard.rs).
+  // Must be called before any git/PTY command touches that root.
+  registerRoot: (path: string) => invoke<void>("register_root", { path }),
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
   listWorktrees: (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path }),
   createWorktree: (repoPath: string, branchName: string, baseRef?: string) =>

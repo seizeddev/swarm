@@ -173,11 +173,31 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     }
   };
 
+  // Paste guard: a multi-line clipboard payload lands at the shell prompt and
+  // every embedded newline auto-executes the line before it — so a page that
+  // seeded the clipboard with `rm -rf … \n` could run it on a single paste.
+  // Require explicit confirmation when the paste spans more than one line.
+  const onPaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData("text");
+    e.preventDefault();
+    const id = ptyIdRef.current;
+    if (!id || !text) return;
+    const multiline = /[\r\n]/.test(text.replace(/[\r\n]+$/, ""));
+    if (multiline) {
+      const count = text.replace(/[\r\n]+$/, "").split(/\r\n|\r|\n/).length;
+      if (!window.confirm(`Paste ${count} lines into the terminal? Lines may run as commands.`)) {
+        return;
+      }
+    }
+    api.ptyWrite(id, text);
+  };
+
   return (
     <div
       ref={wrapRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onPaste={onPaste}
       onClick={() => {
         wrapRef.current?.focus();
         useStore.getState().selectPane(pane.paneId);

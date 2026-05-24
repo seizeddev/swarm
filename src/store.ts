@@ -65,6 +65,10 @@ export interface Notif {
   title: string;
   body: string;
   ts: number;
+  // Where the notification text came from: an untrusted OSC sequence emitted by
+  // a program in the terminal ("terminal"), or an agent's Stop hook ("agent").
+  // The UI labels terminal-sourced notifications and never acts on their body.
+  source: "terminal" | "agent";
 }
 
 // Self-update lifecycle. `progress` is 0..1, meaningful only while downloading.
@@ -326,9 +330,14 @@ export const useStore = create<State>((set, get) => {
           for (const sw of snap.workspaces) {
             let repo: RepoInfo;
             try {
+              // Authorize the root before any path command runs against it.
+              await api.registerRoot(sw.repoPath);
               repo = await api.repoInfo(sw.repoPath);
+              // repoInfo resolves to the canonical workdir (which every later
+              // command uses); authorize that too in case it differs.
+              if (repo.path !== sw.repoPath) await api.registerRoot(repo.path);
             } catch {
-              continue; // repo moved/deleted — drop this workspace
+              continue; // repo moved/deleted/outside-root — drop this workspace
             }
             workspaces.push({
               id: sw.id,
@@ -396,7 +405,11 @@ export const useStore = create<State>((set, get) => {
       set({ busy: true, error: null });
       try {
         if (!get().agents.length) set({ agents: await api.listAgents() });
+        // Authorize the user-picked root for the path guard before any command
+        // touches it; repoInfo's canonical path (used by everything after) too.
+        await api.registerRoot(path);
         const [repo, gh] = await Promise.all([api.repoInfo(path), ghAvailableOnce()]);
+        if (repo.path !== path) await api.registerRoot(repo.path);
         const id = uid("ws");
         const ws: Workspace = {
           id,
@@ -657,6 +670,7 @@ export const useStore = create<State>((set, get) => {
         title: title || pane.title,
         body,
         ts: Date.now(),
+        source: "terminal",
       };
       set((s) => ({
         notifications: [notif, ...s.notifications].slice(0, 100),
@@ -674,6 +688,7 @@ export const useStore = create<State>((set, get) => {
         title: pane.title,
         body,
         ts: Date.now(),
+        source: "agent",
       };
       set((s) => ({
         notifications: [notif, ...s.notifications].slice(0, 100),

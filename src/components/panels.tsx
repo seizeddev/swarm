@@ -368,6 +368,17 @@ export function NotificationsPanel() {
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 flex-none rounded-full" style={{ background: "var(--color-text)" }} />
                 <span className="flex-1 truncate text-[13px] font-medium">{n.title}</span>
+                {n.source === "terminal" && (
+                  // Untrusted origin: this text came from a program in the
+                  // terminal, so mark it plainly and never act on its content.
+                  <span
+                    className="flex-none rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-faint)]"
+                    style={{ background: "rgba(255,255,255,0.06)" }}
+                    title="Reported by a program running in the terminal"
+                  >
+                    terminal
+                  </span>
+                )}
                 <span className="text-[11px] text-[var(--color-faint)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>

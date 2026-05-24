@@ -19,8 +19,27 @@ export const EMPTY_RUNS: WireRun[] = [];
 
 const TEXT_DECODER = new TextDecoder();
 
+// A no-op frame: a delta with no lines patches nothing and leaves the cursor
+// hidden. Returned when a frame is too short to decode safely, so a corrupt or
+// truncated IPC payload degrades to "do nothing" instead of throwing RangeError.
+const NOOP_UPDATE: WireUpdate = {
+  kind: "delta",
+  cols: 0,
+  rows: 0,
+  cursorX: 0,
+  cursorY: 0,
+  cursorVisible: false,
+  lines: [],
+};
+
+const HEADER_BYTES = 16; // see `encode` in terminal.rs
+const RUN_FIXED_BYTES = 12; // fg(4) + bg(4) + flags(2) + textLen(2)
+
 // Decode a binary grid frame (see `encode` in terminal.rs) straight into the
-// WireUpdate shape — no JSON parse. Little-endian throughout.
+// WireUpdate shape — no JSON parse. Little-endian throughout. Every read is
+// bounds-checked against the buffer length: a frame that ends mid-field stops
+// cleanly with whatever decoded so far (missing rows render blank via
+// applyUpdate) rather than over-reading the DataView.
 export function decodeUpdate(raw: ArrayBuffer | Uint8Array | number[]): WireUpdate {
   const bytes =
     raw instanceof Uint8Array
@@ -28,7 +47,11 @@ export function decodeUpdate(raw: ArrayBuffer | Uint8Array | number[]): WireUpda
       : raw instanceof ArrayBuffer
         ? new Uint8Array(raw)
         : Uint8Array.from(raw);
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const total = bytes.byteLength;
+  // Too short to even hold the fixed header → nothing to apply.
+  if (total < HEADER_BYTES) return NOOP_UPDATE;
+
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, total);
   let o = 0;
   const kind = dv.getUint8(o) === 1 ? "delta" : "full";
   o += 1;
@@ -45,14 +68,20 @@ export function decodeUpdate(raw: ArrayBuffer | Uint8Array | number[]): WireUpda
   const lineCount = dv.getUint32(o, true);
   o += 4;
 
-  const lines: WireLine[] = new Array(lineCount);
+  const lines: WireLine[] = [];
   for (let i = 0; i < lineCount; i++) {
+    if (o + 4 > total) break; // truncated before this line's header
     const y = dv.getUint16(o, true);
     o += 2;
     const runCount = dv.getUint16(o, true);
     o += 2;
-    const runs: WireRun[] = new Array(runCount);
+    const runs: WireRun[] = [];
+    let truncated = false;
     for (let j = 0; j < runCount; j++) {
+      if (o + RUN_FIXED_BYTES > total) {
+        truncated = true;
+        break;
+      }
       const fg = dv.getInt32(o, true);
       o += 4;
       const bg = dv.getInt32(o, true);
@@ -61,11 +90,16 @@ export function decodeUpdate(raw: ArrayBuffer | Uint8Array | number[]): WireUpda
       o += 2;
       const len = dv.getUint16(o, true);
       o += 2;
+      if (o + len > total) {
+        truncated = true;
+        break;
+      }
       const text = len ? TEXT_DECODER.decode(bytes.subarray(o, o + len)) : "";
       o += len;
       runs[j] = { text, fg, bg, flags };
     }
-    lines[i] = { y, runs };
+    lines.push({ y, runs });
+    if (truncated) break;
   }
   return { kind, cols, rows, cursorX, cursorY, cursorVisible, lines };
 }

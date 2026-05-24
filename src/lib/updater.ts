@@ -15,11 +15,33 @@ export interface UpdateMeta {
   date?: string;
 }
 
+// Parse a semver core ("v1.2.3-rc1+build" → [1,2,3]); ignores pre-release and
+// build metadata. Missing/garbage components read as 0. Tiny on purpose — no dep.
+function parseVersion(v: string): [number, number, number] {
+  const core = v.trim().replace(/^v/, "").split("+")[0].split("-")[0];
+  const parts = core.split(".").map((p) => parseInt(p, 10));
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+}
+
+/** True iff `candidate` is a strictly higher version than `current`. */
+export function isNewerVersion(candidate: string, current: string): boolean {
+  const a = parseVersion(candidate);
+  const b = parseVersion(current);
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return false;
+}
+
 export const updater = {
   /** Hit the release endpoint. Returns metadata when a newer version exists, else null. */
   async check(): Promise<UpdateMeta | null> {
     const update = await check();
-    if (!update) {
+    // Rollback guard (defence-in-depth against a tampered latest.json): only
+    // accept a strictly newer version. The plugin verifies the signature, but a
+    // valid signature on an *older* build would otherwise let an attacker force a
+    // downgrade to a known-vulnerable release. Refuse anything not newer.
+    if (!update || !isNewerVersion(update.version, update.currentVersion)) {
       await pending?.close().catch(() => {});
       pending = null;
       return null;
