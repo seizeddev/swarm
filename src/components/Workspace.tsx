@@ -91,7 +91,7 @@ export function Workspace() {
                   : { inset: 0, display: "none" }
               }
             >
-              <Terminal pane={p} visible={shown && focused} />
+              <Terminal pane={p} visible={shown} focused={shown && focused} />
               {split && shown && (
                 <button
                   onMouseDown={(e) => e.stopPropagation()}

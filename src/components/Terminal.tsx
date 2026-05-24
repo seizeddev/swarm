@@ -21,7 +21,20 @@ const TermLine = memo(function TermLine({ runs }: { runs: WireRun[] }) {
   );
 });
 
-export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
+// `visible` = this pane is on screen (a split shows every leaf at once, so all of
+// them are visible and must paint live). `focused` = it also owns the keyboard —
+// only the active leaf, which alone grabs DOM focus and draws a solid cursor.
+// Conflating the two froze unfocused split panes: the core was told to stop
+// emitting, so a working agent in a sibling pane looked idle until you clicked it.
+export function Terminal({
+  pane,
+  visible,
+  focused,
+}: {
+  pane: Pane;
+  visible: boolean;
+  focused: boolean;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -225,7 +238,6 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     const id = ptyIdRef.current;
     if (id) api.ptySetVisible(id, visible).catch(() => {});
     if (visible) {
-      wrapRef.current?.focus();
       // Paint the current state immediately; the core also pushes a fresh full
       // frame in response to ptySetVisible(true).
       scheduleRender();
@@ -236,6 +248,12 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
+
+  // Keyboard focus follows the active leaf only — never grab focus just for being
+  // on screen, or sibling split panes would fight over the keyboard on mount.
+  useEffect(() => {
+    if (focused) wrapRef.current?.focus();
+  }, [focused]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const seq = encodeKey(e.nativeEvent);
@@ -298,7 +316,9 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
             top: 8 + cursor.y * cell.current.h,
             width: cell.current.w,
             height: cell.current.h,
-            opacity: 0.85,
+            // Solid in the focused pane; dimmed in an unfocused (but live) split
+            // sibling, the usual terminal convention for "running, not typing here".
+            opacity: focused ? 0.85 : 0.32,
           }}
         />
       )}
