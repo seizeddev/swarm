@@ -24,13 +24,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-      # cargo-fuzz requires a nightly toolchain (the -Z sanitizer flags).
+      # cargo-fuzz requires a nightly toolchain (the -Z sanitizer flags). The
+      # target #[path]-includes the pure parser (osc.rs) and pulls only base64,
+      # so no WebKit/system libs are needed.
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: nightly

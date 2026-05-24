@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Under `--cfg fuzzing` (set by cargo-fuzz) only the OSC parser path is exercised;
-// the Tauri command/entrypoint code is excluded, so silence its unused warnings.
-#![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
 mod agents;
 mod error;
 mod git;
 mod github;
 mod guard;
+mod osc;
 mod terminal;
 mod watcher;
 
@@ -16,15 +14,6 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
 use terminal::{SpawnOpts, TerminalManager, UpdateChannel};
 use watcher::WatcherManager;
-
-/// Fuzz entrypoint (G-3): drive the OSC notification parser over arbitrary bytes.
-/// `#[doc(hidden)]` and underscore-prefixed — it exists only so the out-of-tree
-/// `fuzz/` crate can reach the otherwise-private parser. Never called by the app.
-#[doc(hidden)]
-pub fn __fuzz_parse_notifications(data: &[u8]) {
-    let mut st = terminal::NotifState::default();
-    let _ = terminal::parse_notifications(data, &mut st);
-}
 
 /// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
 /// run on the main thread and would freeze the UI on a slow libgit2 walk or a `gh`
@@ -429,11 +418,6 @@ fn pty_alive(state: State<TerminalManager>, id: String) -> bool {
     state.alive(&id)
 }
 
-// Excluded from the fuzz build: `generate_context!()` embeds the frontend dist
-// and resolves the full Tauri app context — irrelevant to fuzzing the parser, and
-// the macro mis-expands under the fuzz crate's dependency resolution. cargo-fuzz
-// sets `--cfg fuzzing`; normal builds/tests compile this as usual.
-#[cfg(not(fuzzing))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Repair $PATH before anything spawns. A bundled .app launched from Finder/Dock
