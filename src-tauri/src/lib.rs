@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Under `--cfg fuzzing` (set by cargo-fuzz) only the OSC parser path is exercised;
+// the Tauri command/entrypoint code is excluded, so silence its unused warnings.
+#![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
 mod agents;
 mod error;
 mod git;
@@ -426,6 +429,11 @@ fn pty_alive(state: State<TerminalManager>, id: String) -> bool {
     state.alive(&id)
 }
 
+// Excluded from the fuzz build: `generate_context!()` embeds the frontend dist
+// and resolves the full Tauri app context — irrelevant to fuzzing the parser, and
+// the macro mis-expands under the fuzz crate's dependency resolution. cargo-fuzz
+// sets `--cfg fuzzing`; normal builds/tests compile this as usual.
+#[cfg(not(fuzzing))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Repair $PATH before anything spawns. A bundled .app launched from Finder/Dock

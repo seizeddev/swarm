@@ -12,6 +12,11 @@ rust-version = "1.77"
 name = "swarm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# `fuzzing` is set by cargo-fuzz (see fuzz/); declare it so the unexpected_cfgs
+# lint doesn't warn (which would fail clippy's -D warnings in CI).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

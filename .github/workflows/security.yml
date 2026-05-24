@@ -4,6 +4,12 @@ name: Security
 # audit. Runs on every PR/push to main so a vulnerable or disallowed dependency
 # can't merge, plus a weekly schedule to catch newly-disclosed advisories in
 # code that hasn't changed.
+#
+# cargo-deny is the RUSTSEC advisory gate: it audits the same advisory database
+# (vulnerabilities + yanked = deny in deny.toml), so a separate cargo-audit job
+# would be redundant — and the rustsec/audit-check action additionally fails on
+# transitive *unmaintained* advisories (gtk-rs, proc-macro-error, unic, …) that
+# have no fix, which deny.toml deliberately tolerates (unmaintained = workspace).
 on:
   push:
     branches: [main]
@@ -31,18 +37,6 @@ jobs:
           manifest-path: src-tauri/Cargo.toml
           # all = advisories, bans, licenses, sources (deny.toml governs each).
           command: check all
-
-  cargo-audit:
-    name: cargo-audit (RUSTSEC)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: src-tauri
 
   pnpm-audit:
     name: pnpm audit (high+)

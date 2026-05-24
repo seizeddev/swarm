@@ -27,7 +27,7 @@ These are the security properties we actively maintain and verify:
 - **Filesystem blast-radius guard.** Every path-taking command is validated against a registry of roots the user explicitly opened (`src-tauri/guard.rs`); a subverted frontend can't reach `/etc` or spawn a shell in `/`.
 - **`gh` is run hardened.** Non-interactive (no prompts), with a 15 s watchdog timeout, refs passed after a `--` separator, and dash-prefixed refs rejected.
 - **Signed, rollback-protected updates.** Update artifacts are minisign-signed; the client refuses any version that isn't strictly newer than the running one (`src/lib/updater.ts`).
-- **Hardened supply chain.** All GitHub Actions are pinned to commit SHAs; `cargo-deny`, `cargo-audit`, `pnpm audit`, and CodeQL gate every PR; releases carry SLSA build provenance; OpenSSF Scorecard tracks posture.
+- **Hardened supply chain.** All GitHub Actions are pinned to commit SHAs; `cargo-deny` (RUSTSEC advisories + licence/ban/source policy), `pnpm audit`, and CodeQL gate every PR; releases carry SLSA build provenance; OpenSSF Scorecard tracks posture.
 - **Zero-panic Rust.** No `unwrap`/`expect`/`panic!` in production code; the OSC notification parser is fuzzed.
 
 ## Updater signing key — rotation runbook

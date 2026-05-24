@@ -66,9 +66,9 @@ password-protected and only reachable from a reviewer-gated release Environment.
 ### T5 — Supply-chain compromise (boundary 4)
 GitHub Actions are pinned to **commit SHAs** (Dependabot keeps them current).
 Tokens are least-privilege (`contents: read` by default), and checkouts that don't
-push set `persist-credentials: false`. Merge gates: `cargo-deny` (advisories +
-licence allowlist + sources), `cargo-audit`, `pnpm audit --audit-level=high`, and
-**CodeQL**. Releases publish **SLSA build provenance** for every artifact, and
+push set `persist-credentials: false`. Merge gates: `cargo-deny` (RUSTSEC
+advisories + licence allowlist + sources + bans), `pnpm audit --audit-level=high`,
+and **CodeQL**. Releases publish **SLSA build provenance** for every artifact, and
 **OpenSSF Scorecard** tracks posture. The release signing key is isolated to a
 protected Environment so a rogue matrix job can't read it.
 
