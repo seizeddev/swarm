@@ -903,3 +903,117 @@ describe("self-update", () => {
     expect(upd.relaunch).toHaveBeenCalledOnce();
   });
 });
+
+// Defensive guards: with no active workspace, view + SCM actions must no-op
+// (never touch the IPC boundary or throw) instead of dereferencing a null ws.
+describe("actions with no active workspace", () => {
+  it("view actions no-op", () => {
+    s().openDiff("a.txt", false);
+    s().openPr({
+      number: 1,
+      title: "t",
+      url: "u",
+      state: "OPEN",
+      isDraft: false,
+      author: "me",
+      headRef: "f",
+      reviewDecision: null,
+      checks: "passing",
+    });
+    s().openCommit("abc");
+    s().showTerminal();
+    s().setCommitMsg("hello");
+    s().selectTab("nope");
+    s().setRatio("split", 0.5);
+    expect(s().workspaces).toHaveLength(0);
+  });
+
+  it("SCM actions never reach the backend", async () => {
+    await s().stage("a.txt");
+    await s().unstage("a.txt");
+    await s().stageAll();
+    await s().unstageAll();
+    await s().commit();
+    expect(m.stage).not.toHaveBeenCalled();
+    expect(m.unstage).not.toHaveBeenCalled();
+    expect(m.stageAll).not.toHaveBeenCalled();
+    expect(m.unstageAll).not.toHaveBeenCalled();
+    expect(m.commit).not.toHaveBeenCalled();
+  });
+
+  it("loadPrs with no workspace is a no-op", async () => {
+    await s().loadPrs();
+    expect(m.prList).not.toHaveBeenCalled();
+  });
+
+  it("selectPane / removePane ignore unknown pane ids", () => {
+    s().selectPane("ghost");
+    s().removePane("ghost");
+    expect(m.ptyKill).not.toHaveBeenCalled();
+  });
+});
+
+describe("action edge cases with an active workspace", () => {
+  beforeEach(async () => {
+    useStore.setState({ agents: [SHELL, CLAUDE], eventsDir: "/events" });
+    await s().addWorkspace("/repo");
+  });
+
+  it("removePane kills the bound PTY and collapses the empty tab", () => {
+    m.ptyKill.mockResolvedValue(undefined);
+    const pane = s().panes[0];
+    s().bindPty(pane.paneId, "pty-0");
+    s().removePane(pane.paneId);
+    expect(m.ptyKill).toHaveBeenCalledWith("pty-0");
+    expect(s().panes).toHaveLength(0);
+  });
+
+  it("commit records a stringified non-Error rejection", async () => {
+    s().setCommitMsg("wip");
+    m.commit.mockRejectedValue("kaboom");
+    await s().commit();
+    expect(s().error).toBe("kaboom");
+    expect(s().busy).toBe(false);
+  });
+
+  it("loadPrs serves a fresh cache without re-hitting gh", async () => {
+    const pr = {
+      number: 9,
+      title: "t",
+      url: "u",
+      state: "OPEN" as const,
+      isDraft: false,
+      author: "me",
+      headRef: "f",
+      reviewDecision: null,
+      checks: "passing" as const,
+    };
+    m.prList.mockResolvedValue([pr]);
+    const wsId = s().activeWorkspaceId!;
+    await s().loadPrs(wsId);
+    await s().loadPrs(wsId);
+    expect(m.prList).toHaveBeenCalledTimes(1);
+    expect(s().workspaces[0].prs).toHaveLength(1);
+  });
+
+  it("attention + notifications only fire for non-visible panes", () => {
+    const first = s().panes[0];
+    s().bindPty(first.paneId, "pty-0");
+    // addPane opens a new active tab, leaving the first pane non-visible.
+    s().addPane(SHELL);
+    expect(s().panes).toHaveLength(2);
+
+    s().onAttention("ghost-pty"); // unknown pty: suppressed
+    s().onAttention("pty-0");
+    expect(s().panes.find((p) => p.paneId === first.paneId)?.attention).toBe(true);
+
+    s().onNotify("pty-0", "Title", "body");
+    s().onPaneNotify("ghost", "ignored"); // unknown pane: suppressed
+    s().onPaneNotify(first.paneId, "agent says hi");
+    expect(s().notifications.length).toBeGreaterThanOrEqual(2);
+
+    s().onTitle("pty-0", "Renamed");
+    s().onTitle("pty-0", "   "); // blank title: ignored
+    expect(s().panes.find((p) => p.paneId === first.paneId)?.title).toBe("Renamed");
+  });
+});
