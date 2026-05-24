@@ -54,3 +54,11 @@ lto = true
 opt-level = "s"   # optimize for size — lightweight binary
 panic = "abort"
 strip = true
+
+# The crate stays size-optimized, but the hot terminal path (VT parsing + PTY)
+# is speed-critical under flooding output, so build just those deps at -O3.
+[profile.release.package.alacritty_terminal]
+opt-level = 3
+
+[profile.release.package.portable-pty]
+opt-level = 3
