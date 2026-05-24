@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-24
+
+### Fixed
+
+- **Split panes now render live even when unfocused.** A tiled split shows every terminal at once, but only the active leaf was being marked visible — so a sibling pane told the core to stop sending updates and froze, making an agent working in an unfocused split pane look idle until you clicked it. Visibility (on-screen → paints live) is now separate from keyboard focus (active leaf → owns input), so every visible pane streams its agent's output in real time.
+
 ## [0.2.1] - 2026-05-24
 
 ### Added
