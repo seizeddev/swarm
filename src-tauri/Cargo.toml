@@ -42,7 +42,7 @@ notify = "8"
 # Repairs $PATH for GUI launches: a bundled .app started from Finder/Dock inherits
 # only launchd's minimal PATH, so bare-name agent commands (`claude`, …) aren't found.
 # Pulls the login-shell PATH at startup. See tauri-apps/fix-path-env-rs.
-fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
+fix-path-env = { version = "0.0.0", git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
 
 # Updater is desktop-only (no mobile install path); keep it off Android/iOS builds.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

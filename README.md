@@ -7,6 +7,7 @@
 A lightweight, cross-platform desktop app. Rust core, native webview, no Electron.
 
 [![CI](https://github.com/seizeddev/swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/seizeddev/swarm/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/seizeddev/swarm/badge)](https://scorecard.dev/viewer/?uri=github.com/seizeddev/swarm)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-informational.svg)](./LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555)
 

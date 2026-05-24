@@ -4,6 +4,10 @@ on:
   push:
     tags: ["v*"]
 
+# Least privilege by default; jobs opt in to the scopes they actually need.
+permissions:
+  contents: read
+
 jobs:
   # One job creates the single draft release up front; every build job then
   # uploads into it via releaseId. This avoids the race where parallel matrix
@@ -17,7 +21,7 @@ jobs:
     steps:
       - name: create draft release
         id: create
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const { data } = await github.rest.repos.createRelease({
@@ -32,8 +36,14 @@ jobs:
 
   build:
     needs: create-release
+    # The signing key lives in this protected environment (required reviewers),
+    # so it is exposed only to a human-approved run — not to every matrix build
+    # by default. Keeps the two-phase create/upload pattern (see CLAUDE.md).
+    environment: release
     permissions:
-      contents: write
+      contents: write # upload release assets
+      id-token: write # OIDC token for SLSA provenance signing
+      attestations: write # write the provenance attestations
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +58,9 @@ jobs:
             target: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'
@@ -57,30 +69,38 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 20
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - id: tauri
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signs the updater artifacts and merges latest.json into the shared
-          # release. The private key (from ~/.tauri/swarm.key) is the repo
-          # secret; see CONTRIBUTING. The key has no password — set the literal
-          # empty string here rather than a secret (GitHub rejects empty-valued
-          # secrets), so the signer doesn't block on an interactive prompt.
+          # release. The private key (from ~/.tauri/swarm.key) and its password
+          # are repo secrets, exposed only via the `release` environment above.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      # SLSA build provenance for every artifact tauri produced, so a consumer
+      # can verify (gh attestation verify) the binary came from this workflow at
+      # this commit — not a forged upload to the release.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: ${{ join(fromJSON(steps.tauri.outputs.artifactPaths), ',') }}

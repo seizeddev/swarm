@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# cargo-deny policy — the supply-chain merge gate (see .github/workflows/security.yml).
+# `cargo deny check all` runs advisories + bans + licenses + sources.
+
+[graph]
+# Only the platforms we actually ship; avoids policing deps we never link.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+all-features = false
+
+[advisories]
+# RUSTSEC advisory DB. A known vulnerability or a yanked crate fails the build.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Genuine vulnerabilities always fail the build. "Unmaintained" advisories are
+# only enforced for our own workspace crate(s): the deep transitive offenders
+# (gtk-rs GTK3 bindings, unic-* via tauri-utils) have no upstream fix and we
+# can't act on them, so flagging them would only produce an un-actionable gate.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Allowlist covering every license currently in the tree. Anything outside this
+# set fails the build, so a new dependency with an incompatible license can't
+# slip in unnoticed. GPL-3.0-or-later is our own crate (copyleft, see LICENSE).
+confidence-threshold = 0.9
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "0BSD",
+  "Zlib",
+  "Unicode-3.0",
+  "Unlicense",
+  "MPL-2.0",
+  "CC0-1.0",
+  "MIT-0",
+  "CDLA-Permissive-2.0",
+  "GPL-3.0-or-later",
+]
+
+[bans]
+# Duplicate versions are common and benign in a Tauri tree, so warn rather than
+# block; wildcard ("*") version requirements are sloppy and denied outright.
+multiple-versions = "warn"
+# Catch sloppy `version = "*"` requirements on crates.io deps, but exempt the
+# one git dependency (fix-path-env): it's pinned by exact rev in Cargo.toml and
+# vetted under [sources], so cargo treats its absent version req as a wildcard.
+wildcards = "deny"
+allow-wildcard-paths = true
+allow = []
+deny = []
+
+[sources]
+# Crates may come only from crates.io and the one vetted git dependency:
+# fix-path-env, pinned by rev in Cargo.toml (repairs $PATH for GUI launches).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/tauri-apps/fix-path-env-rs"]
