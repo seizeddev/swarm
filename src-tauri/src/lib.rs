@@ -252,6 +252,16 @@ async fn pr_list(
 }
 
 #[tauri::command]
+async fn pr_detail(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    number: u64,
+) -> AppResult<Option<github::PrDetail>> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || github::pr_detail(&repo_path, number)).await
+}
+
+#[tauri::command]
 async fn gh_login() -> Option<String> {
     tauri::async_runtime::spawn_blocking(github::gh_login)
         .await
@@ -592,6 +602,7 @@ pub fn run() {
             commit,
             pr_for_branch,
             pr_list,
+            pr_detail,
             gh_login,
             gh_available,
             list_agents,

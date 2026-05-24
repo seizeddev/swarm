@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "./store";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
+import { TopBar } from "./components/TopBar";
 
 let zoom = 1;
 async function handleMenu(id: string) {
@@ -117,9 +118,12 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <Workspace />
+    <div className="flex h-full flex-col">
+      <TopBar />
+      <div className="flex min-h-0 flex-1">
+        <Sidebar />
+        <Workspace />
+      </div>
     </div>
   );
 }

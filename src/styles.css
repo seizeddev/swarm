@@ -1,44 +1,116 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 @import "tailwindcss";
 
+/* Inter Variable — self-hosted, single woff2 (weights 100–900 in one file).
+   No runtime fetch: Vite fingerprints this into the bundle, served same-origin,
+   so the CSP's `default-src/font-src 'self'` covers it. font-display: swap keeps
+   first paint on the system fallback until Inter is ready. */
+@font-face {
+  font-family: "InterVariable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/InterVariable.woff2") format("woff2");
+}
+
 /* Surface scale sampled 1:1 from the reference (opaque hex). */
 @theme {
-  /* Eyedropped 1:1 from the reference: background #161616 (subtle gradient to
-     #1a1a1a), cards a touch lighter, the Move button #4e4e4e. */
-  --color-bg: #161616;
-  --color-bg-deep: #161616;
-  --color-panel: #161616;
-  --color-surface-1: #1c1c1c;
-  --color-surface-2: #242424;
-  --color-surface-3: #2a2a2a;
-  --color-recessed: #121212;
+  /* Warm-graphite neutral ramp (Wave 1). A whisper of warmth (R ≳ G ≳ B by
+     ~1–2) reads as graphite/paper instead of cold display, without ever
+     becoming a hue. Elevation steps are perceptually even. Eyedropped origin
+     was a flat neutral #161616 ramp; this keeps the same value structure. */
+  --color-bg: #161513;
+  --color-bg-deep: #161513;
+  --color-panel: #161513;
+  --color-surface-1: #1d1b19;
+  --color-surface-2: #252220;
+  --color-surface-3: #2b2825;
+  --color-recessed: #111110;
   --color-border: rgba(255, 255, 255, 0.1);
   --color-border-strong: rgba(255, 255, 255, 0.2);
-  --color-text: #f4f4f5;
-  --color-muted: #8a8a8e;
-  --color-faint: #5a5a5e;
 
-  --color-accent: #f4f4f5;
+  /* Text as alpha-white (Wave 1). Composites over any elevation with stable
+     perceived contrast, instead of fixed grays that sink on lighter surfaces.
+     Tiers ≈ 93 / 58 / 40 % white = primary / muted / faint. */
+  --color-text: rgba(255, 255, 255, 0.93);
+  --color-muted: rgba(255, 255, 255, 0.58);
+  --color-faint: rgba(255, 255, 255, 0.4);
+
+  --color-accent: rgba(255, 255, 255, 0.93);
   --color-accent-2: #ffffff;
   --color-accent-soft: rgba(255, 255, 255, 0.07);
 
-  /* Semantic status colours — the only non-monochrome hues, each with one
-     canonical value + a soft (tinted-fill) variant. Used for diffs, git
-     status and PR checks, where colour carries meaning. */
-  --color-success: #34d399;
-  --color-success-soft: rgba(52, 211, 153, 0.13);
-  --color-danger: #ff6b6b;
-  --color-danger-soft: rgba(255, 107, 107, 0.12);
-  --color-warning: #e8c474;
-  --color-warning-soft: rgba(232, 196, 116, 0.12);
+  /* Status as muted "ink" (Wave 1) — the only non-monochrome hues. Calmer than
+     the old neon (#34d399 / #ff6b6b) so green/red read as deliberate marks
+     beside the restrained chrome, not traffic lights. One canonical value +
+     a soft tinted-fill variant each. */
+  --color-success: #5bb894;
+  --color-success-soft: rgba(91, 184, 148, 0.14);
+  --color-danger: #e07a72;
+  --color-danger-soft: rgba(224, 122, 114, 0.13);
+  --color-warning: #d9b56a;
+  --color-warning-soft: rgba(217, 181, 106, 0.13);
   --color-info: var(--color-muted); /* diff hunk headers — monochrome, no accent colour */
+  /* Stronger fills for the *changed words* inside an intra-line diff — they sit
+     on top of the line's soft fill, so the eye lands on the actual edit. */
+  --color-success-word: rgba(91, 184, 148, 0.32);
+  --color-danger-word: rgba(224, 122, 114, 0.32);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
 }
 
+/* ── Design scales ────────────────────────────────────────────────────
+   One source of truth for the geometry, interaction tints and motion that
+   the reference left implicit. Kept on :root (not @theme) so they never
+   collide with Tailwind's own radius/ease utilities used in the markup. */
 :root {
   color-scheme: dark;
+
+  /* Corner radius — a real modular scale. Pills (status chips) stay 999px;
+     everything interactive is a squircle from this ladder. */
+  --radius-chip: 8px; /* icon buttons + small interactive targets */
+  --radius-control: 10px; /* text buttons, inputs */
+  --radius-row: 12px; /* list rows */
+  --radius-card: 16px; /* panels, menus, cards */
+
+  /* Interaction tints — white over the dark surface, three stops only. */
+  --tint-hover: rgba(255, 255, 255, 0.06);
+  --tint-press: rgba(255, 255, 255, 0.1);
+  --tint-active: rgba(255, 255, 255, 0.12);
+
+  /* Motion — one easing curve, two durations. Everything decelerates the
+     same way, which is what makes a UI feel "engineered" rather than busy. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 110ms;
+  --dur-base: 170ms;
+
+  /* Keyboard focus only: a gap ring that reads on any surface. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 3.5px rgba(255, 255, 255, 0.55);
+
+  /* 4pt spatial scale (Wave 1). Components snap to these as each wave rebuilds
+     them — the single source of rhythm. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Type ramp (Wave 1) — a fixed 6-step ladder. Migrated into components as
+     waves rebuild them, replacing the 12 ad-hoc one-off sizes. */
+  --text-caption: 11px; /* uppercase labels, meta */
+  --text-meta: 12px; /* secondary, timestamps */
+  --text-body: 13px; /* default UI text */
+  --text-emphasis: 15px; /* row titles, lead-ins */
+  --text-title: 18px; /* view titles */
+  --text-display: 24px; /* hero titles */
+
+  /* Film-grain strength — tune to taste; dithers the dark gradient so it
+     doesn't band. Set to 0 to disable. */
+  --grain-opacity: 0.022;
 }
 
 * {
@@ -53,175 +125,381 @@ body,
 }
 
 body {
-  background: linear-gradient(180deg, #1a1a1a 0%, #161616 60%, #151515 100%);
+  background: linear-gradient(180deg, #1a1816 0%, #161513 60%, #141210 100%);
   color: var(--color-text);
   font-family: var(--font-sans);
+  /* Inter wants its optical sizing + ligatures on; a hair of negative tracking
+     is what gives variable Inter its tight, designed look at UI sizes. */
+  font-optical-sizing: auto;
+  font-feature-settings: "liga" 1, "calt" 1;
+  letter-spacing: -0.0035em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+  /* Native feel: chrome text isn't selectable. WKWebView only honours the
+     -webkit- form, so both are needed; data surfaces opt back in via .selectable
+     / .field / .term below. */
   user-select: none;
+  -webkit-user-select: none;
 }
 
-/* ── Surfaces ─────────────────────────────────────────────────────
-   Opaque fills (exact reference hex) + a real 0.5px hairline rim
-   (1 device px on retina) + a thin bright top sheen = the glassy edge.
-   No outer glow, no blur. */
-
-.surface {
-  background: var(--color-surface-1);
-  border: 0.5px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+/* Numbers that update in place (times, counts, percentages) must not reflow as
+   digits change width — opt them into a fixed advance. */
+.nums {
+  font-variant-numeric: tabular-nums;
 }
 
-.row {
-  background: #161617;
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
-  transition: background 0.13s ease, border-color 0.13s ease;
-}
-.row:hover {
-  background: #1f1f20;
-  border-color: rgba(255, 255, 255, 0.14);
-}
-.row[data-active="true"],
-.row[data-active="true"]:hover {
-  background: #232325;
-  border-color: var(--color-border-strong);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+/* Opt selection back in for content the user legitimately copies — code,
+   diffs, commit messages, PR text. Chrome around it stays unselectable. */
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────
-   .btn-accent = the "Move" graphite button: #424242 fill, lighter top,
-   thin bright top edge, light-gray text. */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 16px;
-  border-radius: 11px;
-  font-size: 14px;
+/* Rendered markdown (PR/issue bodies). Monochrome by design — hierarchy via
+   weight/brightness, the one ornament being underlined links. */
+.md {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--color-muted);
+  word-break: break-word;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0 0 0.75em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 1.4em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+.md h1 {
+  font-size: 1.35em;
+}
+.md h2 {
+  font-size: 1.18em;
+}
+.md h3 {
+  font-size: 1.05em;
+}
+.md a {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+}
+.md a:hover {
+  text-decoration-color: var(--color-text);
+}
+.md ul,
+.md ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.4em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li {
+  margin: 0.2em 0;
+}
+.md strong {
   font-weight: 600;
   color: var(--color-text);
-  background: var(--color-surface-2);
-  border: 0.5px solid rgba(255, 255, 255, 0.11);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
-  cursor: pointer;
-  transition: background 0.12s ease, transform 0.04s ease;
 }
-.btn:hover {
-  background: #2e2e2f;
-}
-.btn:active {
-  transform: translateY(1px);
-}
-
-.btn.btn-accent {
-  color: #e6e6e8;
-  background: #4e4e4e;
-  border: 0.5px solid rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22);
-}
-.btn.btn-accent:hover {
-  background: #585858;
-}
-
-.btn-ghost {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: var(--color-muted);
-}
-.btn-ghost:hover {
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
   background: rgba(255, 255, 255, 0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
   color: var(--color-text);
 }
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  filter: none;
-}
-
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  color: var(--color-muted);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.icon-btn:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: var(--color-text);
-}
-.icon-btn[data-active="true"] {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--color-text);
-}
-
-/* ── Pills, chips, badges ─────────────────────────────────────────── */
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--color-text);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
-}
-.pill-muted {
-  background: #232324;
-  color: var(--color-muted);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
-}
-
-.icon-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  background: var(--color-surface-2);
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
-  color: var(--color-text);
-  flex: none;
-}
-
-/* ── Inputs (the #222 amount field) ──────────────────────────────── */
-.field {
-  width: 100%;
+.md pre {
+  margin: 0 0 0.85em;
+  padding: 12px 14px;
+  overflow-x: auto;
   background: var(--color-recessed);
-  border: 0.5px solid rgba(255, 255, 255, 0.09);
-  border-radius: 11px;
-  padding: 10px 12px;
-  color: var(--color-text);
-  font-size: 14px;
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
-  outline: none;
+  border: 0.5px solid var(--color-border);
+  border-radius: var(--radius-control);
 }
-.field::placeholder {
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+}
+.md blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 2px solid var(--color-border-strong);
   color: var(--color-faint);
 }
-.field:focus {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+.md table {
+  display: block;
+  overflow-x: auto;
+  margin: 0 0 0.85em;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.md th,
+.md td {
+  padding: 5px 10px;
+  border: 0.5px solid var(--color-border);
+  text-align: left;
+}
+.md th {
+  font-weight: 600;
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.03);
+}
+.md hr {
+  margin: 1.2em 0;
+  border: none;
+  border-top: 0.5px solid var(--color-border);
+}
+.md img {
+  max-width: 100%;
+}
+.md details {
+  margin: 0 0 0.75em;
+  padding: 0.5em 0.85em;
+  background: rgba(255, 255, 255, 0.02);
+  border: 0.5px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+.md summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--color-text);
 }
 
-.divider {
-  height: 0.5px;
-  background: var(--color-border);
+/* Lucide ships a 2px stroke; at 13–16px that reads heavy next to hairline rims.
+   1.75 keeps the glyphs crisp but lighter, in the same key as the borders.
+   (CSS overrides the SVG's stroke-width attribute.) */
+svg.lucide {
+  stroke-width: 1.75;
+}
+
+/* Changed-word spans in an intra-line diff — a stronger box around just the
+   edited tokens, with brighter text so the change reads at a glance. */
+.dl-word-add,
+.dl-word-del {
+  border-radius: 3px;
+  padding: 0 1px;
+  color: var(--color-text);
+}
+.dl-word-add {
+  background: var(--color-success-word);
+}
+.dl-word-del {
+  background: var(--color-danger-word);
+}
+
+/* ── Components ───────────────────────────────────────────────────────
+   In @layer components on purpose: Tailwind's utilities (h-5, w-7, rounded-…)
+   live in a later layer, so a call site's `icon-btn h-5 w-5` correctly resizes
+   the button. (Unlayered, these fixed sizes would override the utilities — the
+   bug that made every icon button render at one base size.) */
+@layer components {
+  /* ── Surfaces ─────────────────────────────────────────────────────
+     Opaque fills (exact reference hex) + a real 0.5px hairline rim
+     (1 device px on retina) + a thin bright top sheen = the glassy edge.
+     No outer glow, no blur. */
+
+  .surface {
+    background: var(--color-surface-1);
+    border: 0.5px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-card);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+  }
+
+  .row {
+    background: #171513;
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-row);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+    transition: background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
+  }
+  .row:hover {
+    background: #201e1b;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .row[data-active="true"],
+  .row[data-active="true"]:hover {
+    background: #262320;
+    border-color: var(--color-border-strong);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+  }
+  .row:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  /* ── Buttons ──────────────────────────────────────────────────────
+     .btn-accent = the "Move" graphite button: #424242 fill, lighter top,
+     thin bright top edge, light-gray text. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: var(--radius-control);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text);
+    background: var(--color-surface-2);
+    border: 0.5px solid rgba(255, 255, 255, 0.11);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  }
+  .btn:hover {
+    background: #2f2c28;
+  }
+  .btn:active {
+    transform: translateY(1px);
+  }
+  .btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring), inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  .btn.btn-accent {
+    color: #ecebe8;
+    background: #4e4b46;
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22);
+  }
+  .btn.btn-accent:hover {
+    background: #58544e;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: var(--color-muted);
+  }
+  .btn-ghost:hover {
+    background: var(--tint-hover);
+    color: var(--color-text);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: none;
+  }
+
+  /* Icon buttons — a squircle, not a circle. The full-circle disc made the
+     hover state balloon around the glyph; an 8px squircle hugs the icon and
+     shares the shape language of the rows and workspace tiles next to it.
+     Size comes from the call site (h-5/h-7/h-8 …); the base only declares the
+     box model so those utilities have something to resize. */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: var(--radius-chip);
+    color: var(--color-muted);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .icon-btn:hover {
+    background: var(--tint-hover);
+    color: var(--color-text);
+  }
+  .icon-btn:active {
+    transform: scale(0.92);
+  }
+  .icon-btn[data-active="true"] {
+    background: var(--tint-active);
+    color: var(--color-text);
+  }
+  .icon-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  /* ── Pills, chips, badges ─────────────────────────────────────────── */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--color-text);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+  }
+  .pill-muted {
+    background: #242220;
+    color: var(--color-muted);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .icon-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-chip);
+    background: var(--color-surface-2);
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
+    color: var(--color-text);
+    flex: none;
+  }
+
+  /* ── Inputs (the #222 amount field) ──────────────────────────────── */
+  .field {
+    width: 100%;
+    background: var(--color-recessed);
+    border: 0.5px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-control);
+    padding: 10px 12px;
+    color: var(--color-text);
+    font-size: 14px;
+    font-family: inherit;
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
+    outline: none;
+    user-select: text;
+    -webkit-user-select: text;
+    transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  }
+  .field::placeholder {
+    color: var(--color-faint);
+  }
+  .field:focus {
+    border-color: rgba(255, 255, 255, 0.28);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+  }
+
+  .divider {
+    height: 0.5px;
+    background: var(--color-border);
+  }
 }
 
 /* ── Terminal grid ───────────────────────────────────────────────── */
@@ -232,6 +510,9 @@ body {
   line-height: 17px;
   white-space: pre;
   background: var(--color-bg-deep);
+  /* Terminal output is data — let it be selected/copied. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 /* The terminal pane is a self-contained, fixed-size, clipped surface, so its
    layout/paint never affects (or is affected by) the rest of the app. NB: only
@@ -261,21 +542,32 @@ body {
   contain-intrinsic-size: auto 32px;
 }
 
+/* Thin, quiet scrollbars: 4px of visible thumb that wakes up on hover. A fat
+   scrollbar is the loudest "this is a web app" tell; trimming it is half the
+   reason native apps feel calm. */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
-  border: 2px solid transparent;
+  border: 3.5px solid transparent;
   background-clip: content-box;
+  transition: background var(--dur-base) var(--ease-out);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
   background-clip: content-box;
 }
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
+/* ── Motion vocabulary ────────────────────────────────────────────────
+   A small, restrained set — fade-rise for content entering, scale-in for
+   menus springing from their trigger. Used only on view/panel switches and
+   transient surfaces, never on dense lists that re-render mid-stream. */
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -283,4 +575,68 @@ body {
 }
 .spin {
   animation: spin 0.8s linear infinite;
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-fade-rise {
+  animation: fade-rise var(--dur-base) var(--ease-out) both;
+}
+.animate-fade-in {
+  animation: fade-in var(--dur-base) var(--ease-out) both;
+}
+.animate-scale-in {
+  transform-origin: var(--origin, top right);
+  animation: scale-in 150ms var(--ease-out) both;
+}
+
+/* Film grain over the whole window — dithers the dark gradient so it doesn't
+   band on 8-bit panels, and lends a faint material texture. Non-interactive,
+   sits above everything (clicks pass through). Strength via --grain-opacity. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Respect the OS "reduce motion" setting — kill the spinner's perpetual motion
+   and shorten transitions to a near-instant cross-fade. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Bell,
   Check,
@@ -8,22 +8,17 @@ import {
   Minus,
   Plus,
   RefreshCw,
-  TerminalSquare,
   Trash2,
-  X,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useActiveWorkspace, useStore } from "../store";
-import { leaves } from "../lib/layout";
-import type { AgentDef, ChangeStatus, FileChange } from "../lib/types";
-
-const ATTN = "var(--color-text)"; // attention signal — monochrome, no accent colour
+import type { ChangeStatus, FileChange } from "../lib/types";
 
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
 const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
-  added: { letter: "A", color: "#c9c9cf" },
-  untracked: { letter: "U", color: "#c9c9cf" },
+  added: { letter: "A", color: "#c9c6c0" },
+  untracked: { letter: "U", color: "#c9c6c0" },
   modified: { letter: "M", color: "var(--color-muted)" },
   deleted: { letter: "D", color: "var(--color-danger)" },
   renamed: { letter: "R", color: "var(--color-muted)" },
@@ -31,112 +26,13 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
   conflicted: { letter: "!", color: "var(--color-warning)" },
 };
 
-function AgentMenu() {
-  const { agents, addPane } = useStore(
-    useShallow((s) => ({ agents: s.agents, addPane: s.addPane })),
-  );
-  const ref = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-  return (
-    <div ref={ref} className="relative">
-      <button className="icon-btn h-7 w-7" title="New terminal" onClick={() => setOpen((v) => !v)}>
-        <Plus size={14} />
-      </button>
-      {open && (
-        <div className="surface absolute right-0 top-9 z-50 w-52 p-1.5">
-          <p className="px-2 py-1.5 text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
-            Spawn
-          </p>
-          {agents.map((a: AgentDef) => (
-            <button
-              key={a.id}
-              onClick={() => {
-                addPane(a);
-                setOpen(false);
-              }}
-              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] hover:bg-white/5"
-            >
-              <span
-                className="h-2 w-2 flex-none rounded-full"
-                style={{ background: a.installed ? "var(--color-text)" : "var(--color-faint)" }}
-              />
-              <span className="flex-1">{a.name}</span>
-              {!a.installed && <span className="text-[10px] text-[var(--color-faint)]">missing</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PanelHeader({ title, children }: { title: string; children?: React.ReactNode }) {
+function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-11 flex-none items-center justify-between px-4">
       <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
         {title}
       </span>
       <div className="flex items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-export function TerminalsPanel() {
-  const ws = useActiveWorkspace();
-  const allPanes = useStore((s) => s.panes);
-  const { selectTab, removePane } = useStore(
-    useShallow((s) => ({ selectTab: s.selectTab, removePane: s.removePane })),
-  );
-  return (
-    <div className="flex h-full flex-col">
-      <PanelHeader title="Terminals">
-        <AgentMenu />
-      </PanelHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        {ws?.tabs.map((t) => {
-          const ids = leaves(t.layout);
-          const head =
-            allPanes.find((p) => p.paneId === t.activeLeaf) ??
-            allPanes.find((p) => p.paneId === ids[0]);
-          const attn = allPanes.some((p) => ids.includes(p.paneId) && p.attention);
-          const active = ws.activeTab === t.id && ws.editor.type === "terminal";
-          return (
-            <div
-              key={t.id}
-              data-active={active}
-              onClick={() => selectTab(t.id)}
-              className="group row mb-1.5 flex cursor-pointer items-center gap-2.5 px-3 py-2.5"
-            >
-              <TerminalSquare size={15} className="text-[var(--color-muted)]" />
-              <span className="flex-1 truncate text-[13px]">{head?.title ?? "Shell"}</span>
-              {ids.length > 1 && (
-                <span className="text-[11px] text-[var(--color-faint)]">{ids.length}</span>
-              )}
-              {attn && <span className="h-2 w-2 flex-none rounded-full" style={{ background: ATTN }} />}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  ids.forEach((id) => removePane(id));
-                }}
-                title="Close terminal"
-                className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          );
-        })}
-        {!ws?.tabs.length && (
-          <p className="px-3 py-4 text-[13px] text-[var(--color-muted)]">No terminals yet.</p>
-        )}
-      </div>
     </div>
   );
 }
@@ -194,7 +90,7 @@ export function SourceControlPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <PanelHeader title={ws.repo.headBranch ? `⎇ ${ws.repo.headBranch}` : "Source Control"}>
+      <PanelHeader title="Source Control">
         <button className="icon-btn h-7 w-7" title="Refresh" onClick={() => refreshStatus()}>
           <RefreshCw size={14} />
         </button>
@@ -287,7 +183,7 @@ export function PullRequestsPanel() {
       <GitPullRequest size={15} className="mt-0.5 flex-none" style={{ color: checkColor(p.checks) }} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium">{p.title}</span>
-        <span className="mt-0.5 block truncate text-[11px] text-[var(--color-muted)]">
+        <span className="nums mt-0.5 block truncate text-[11px] text-[var(--color-muted)]">
           #{p.number} · {p.author} · {p.headRef}
         </span>
       </span>
@@ -363,7 +259,7 @@ export function NotificationsPanel() {
                 selectPane(n.paneId); // also restores the terminals panel
                 dismissNotification(n.id);
               }}
-              className="row mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"
+              className="row animate-fade-rise mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"
             >
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 flex-none rounded-full" style={{ background: "var(--color-text)" }} />
@@ -379,7 +275,7 @@ export function NotificationsPanel() {
                     terminal
                   </span>
                 )}
-                <span className="text-[11px] text-[var(--color-faint)]">
+                <span className="nums text-[11px] text-[var(--color-faint)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>

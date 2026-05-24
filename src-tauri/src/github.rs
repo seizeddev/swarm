@@ -88,6 +88,75 @@ pub struct PrSummary {
     pub checks: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrFile {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrDetail {
+    pub body: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub files: Vec<PrFile>,
+}
+
+/// The richer per-PR payload behind the PR view: description body, line totals
+/// and the changed-file list. Degrades to `None` if `gh` is unavailable or the
+/// number doesn't resolve (same graceful pattern as the other calls).
+pub fn pr_detail(repo_path: &str, number: u64) -> AppResult<Option<PrDetail>> {
+    let num = number.to_string();
+    let stdout = match run_gh(
+        &[
+            "pr",
+            "view",
+            "--json",
+            "body,additions,deletions,files",
+            "--",
+            &num,
+        ],
+        Some(repo_path),
+    ) {
+        Some(o) => o,
+        None => return Ok(None),
+    };
+    let v: serde_json::Value = match serde_json::from_slice(&stdout) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let files = v
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| PrFile {
+                    path: f
+                        .get("path")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    additions: f.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+                    deletions: f.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Some(PrDetail {
+        body: v
+            .get("body")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        additions: v.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+        deletions: v.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+        files,
+    }))
+}
+
 fn rollup_status(v: &serde_json::Value) -> Option<String> {
     let arr = v.get("statusCheckRollup")?.as_array()?;
     let mut failing = 0;
@@ -327,6 +396,11 @@ mod tests {
     fn pr_for_branch_returns_none_when_gh_unavailable() {
         let out = pr_for_branch("/nonexistent-path-xyz", "main").unwrap();
         assert!(out.is_none());
+    }
+
+    #[test]
+    fn pr_detail_returns_none_when_gh_unavailable() {
+        assert!(pr_detail("/nonexistent-path-xyz", 1).unwrap().is_none());
     }
 
     #[test]

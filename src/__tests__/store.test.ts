@@ -309,13 +309,15 @@ describe("editor + panel switching", () => {
     expect(s().workspaces[0].editor).toEqual({ type: "diff", file: "a.txt", staged: false });
   });
 
-  it("restores the terminal editor when selecting the terminals panel", () => {
+  it("keeps the editor when switching panels; showTerminal returns to the terminal", () => {
     s().openCommit("abc123");
     s().setPanel("scm");
+    // Inspector and editor are decoupled: switching panels never touches the
+    // main area.
     expect(s().workspaces[0].editor).toEqual({ type: "commit", oid: "abc123" });
-    s().setPanel("terminals");
+    expect(s().workspaces[0].panel).toBe("scm");
+    s().showTerminal();
     expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
-    expect(s().workspaces[0].panel).toBe("terminals");
   });
 
   it("toggles the sidebar", () => {
@@ -559,23 +561,23 @@ describe("misc workspace actions", () => {
     expect(s().workspaces[0].activeTab).toBe(tabId);
   });
 
-  it("selecting a tab from another panel returns the sidebar to terminals", () => {
+  it("selecting a tab surfaces the terminal but leaves the inspector panel sticky", () => {
     const tabId = s().workspaces[0].activeTab!;
     s().setPanel("notifications");
     s().openCommit("abc123");
     expect(s().workspaces[0].panel).toBe("notifications");
     s().selectTab(tabId);
     expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
-    expect(s().workspaces[0].panel).toBe("terminals");
+    expect(s().workspaces[0].panel).toBe("notifications");
   });
 
-  it("selecting a pane from another panel returns the sidebar to terminals", () => {
+  it("selecting a pane surfaces the terminal but leaves the inspector panel sticky", () => {
     const paneId = s().panes[0].paneId;
     s().setPanel("scm");
     s().openDiff("a.txt", false);
     s().selectPane(paneId);
     expect(s().workspaces[0].editor).toEqual({ type: "terminal" });
-    expect(s().workspaces[0].panel).toBe("terminals");
+    expect(s().workspaces[0].panel).toBe("scm");
   });
 
   it("adjusts a split ratio", () => {

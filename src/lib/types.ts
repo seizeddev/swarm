@@ -118,6 +118,19 @@ export interface PrSummary {
   checks: "passing" | "failing" | "pending" | null;
 }
 
+export interface PrFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface PrDetail {
+  body: string;
+  additions: number;
+  deletions: number;
+  files: PrFile[];
+}
+
 export interface AgentDef {
   id: string;
   name: string;

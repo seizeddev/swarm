@@ -9,6 +9,7 @@ import type {
   DiffHunk,
   DiffStatsInfo,
   FileChange,
+  PrDetail,
   PrInfo,
   PrSummary,
   RepoInfo,
@@ -61,6 +62,8 @@ export const api = {
   prForBranch: (repoPath: string, branch: string) =>
     invoke<PrInfo | null>("pr_for_branch", { repoPath, branch }),
   prList: (repoPath: string) => invoke<PrSummary[]>("pr_list", { repoPath }),
+  prDetail: (repoPath: string, number: number) =>
+    invoke<PrDetail | null>("pr_detail", { repoPath, number }),
   ghLogin: () => invoke<string | null>("gh_login"),
   ghAvailable: () => invoke<boolean>("gh_available"),
   watchWorktree: (workspaceId: string, path: string) =>

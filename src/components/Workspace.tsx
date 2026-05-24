@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
-import {
-  FolderGit2,
-  Plus,
-  SplitSquareHorizontal,
-  SplitSquareVertical,
-  TerminalSquare,
-  X,
-} from "lucide-react";
+import { X } from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
-import { computeLayout, leaves, type DivRect, type LeafRect } from "../lib/layout";
+import { SwarmMark } from "./Sidebar";
+import { computeLayout, type DivRect, type LeafRect } from "../lib/layout";
 import { Terminal } from "./Terminal";
 import { DiffEditor } from "./DiffEditor";
 import { PrView } from "./PrView";
 import { CommitDetail } from "./CommitDetail";
-
-const ATTN = "var(--color-text)";
 
 export function Workspace() {
   const ws = useActiveWorkspace();
@@ -24,18 +16,14 @@ export function Workspace() {
   // unmount, but their PTYs keep running in Rust and reattach on return.
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectTab, selectPane, removePane, addPane, splitActive, setRatio, showTerminal } =
-    useStore(
-      useShallow((s) => ({
-        selectTab: s.selectTab,
-        selectPane: s.selectPane,
-        removePane: s.removePane,
-        addPane: s.addPane,
-        splitActive: s.splitActive,
-        setRatio: s.setRatio,
-        showTerminal: s.showTerminal,
-      })),
-    );
+  const { selectPane, removePane, setRatio, showTerminal } = useStore(
+    useShallow((s) => ({
+      selectPane: s.selectPane,
+      removePane: s.removePane,
+      setRatio: s.setRatio,
+      showTerminal: s.showTerminal,
+    })),
+  );
   const areaRef = useRef<HTMLDivElement>(null);
 
   const tab = ws?.tabs.find((t) => t.id === ws.activeTab) ?? null;
@@ -72,66 +60,7 @@ export function Workspace() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      {/* Tab strip + split toolbar */}
-      <div className="flex h-11 flex-none items-center gap-1 border-b border-[var(--color-border)] px-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
-          {ws?.tabs.map((t) => {
-            const active = ws.activeTab === t.id && ws.editor.type === "terminal";
-            const ids = leaves(t.layout);
-            const head = allPanes.find((p) => p.paneId === t.activeLeaf) ?? allPanes.find((p) => p.paneId === ids[0]);
-            const attn = allPanes.some((p) => ids.includes(p.paneId) && p.attention);
-            return (
-              <div
-                key={t.id}
-                data-active={active}
-                onClick={() => selectTab(t.id)}
-                className="group row flex h-8 cursor-pointer items-center gap-2 px-3 text-[12.5px]"
-              >
-                <TerminalSquare size={13} className="text-[var(--color-muted)]" />
-                <span className="max-w-[150px] truncate">{head?.title ?? "Shell"}</span>
-                {ids.length > 1 && (
-                  <span className="text-[10px] text-[var(--color-faint)]">{ids.length}</span>
-                )}
-                {attn && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ATTN }} />}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    ids.forEach((id) => removePane(id));
-                  }}
-                  title="Close terminal"
-                  className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        {ws && (
-          <div className="flex flex-none items-center gap-0.5">
-            <button className="icon-btn h-7 w-7" title="New terminal" onClick={() => addPane()}>
-              <Plus size={14} />
-            </button>
-            <button
-              className="icon-btn h-7 w-7"
-              title="Split right"
-              onClick={() => splitActive("row")}
-            >
-              <SplitSquareHorizontal size={14} />
-            </button>
-            <button
-              className="icon-btn h-7 w-7"
-              title="Split down"
-              onClick={() => splitActive("col")}
-            >
-              <SplitSquareVertical size={14} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Editor area */}
+      {/* Editor area (the tab strip + split toolbar now live in the TopBar) */}
       <div ref={areaRef} className="relative min-h-0 flex-1">
         {/* All terminals stay mounted; the parent rect controls show/hide + tiling. */}
         {allPanes.map((p) => {
@@ -222,7 +151,7 @@ export function Workspace() {
           })}
 
         {ws?.editor.type === "diff" && (
-          <div className="absolute inset-0">
+          <div className="animate-fade-rise absolute inset-0">
             <DiffEditor
               repoPath={ws.repo.path}
               file={ws.editor.file}
@@ -232,22 +161,30 @@ export function Workspace() {
           </div>
         )}
         {ws?.editor.type === "pr" && (
-          <div className="absolute inset-0">
-            <PrView pr={ws.editor.pr} onClose={showTerminal} />
+          <div className="animate-fade-rise absolute inset-0">
+            <PrView repoPath={ws.repo.path} pr={ws.editor.pr} onClose={showTerminal} />
           </div>
         )}
 
         {ws?.editor.type === "commit" && (
-          <div className="absolute inset-0">
+          <div className="animate-fade-rise absolute inset-0">
             <CommitDetail repoPath={ws.repo.path} oid={ws.editor.oid} onClose={showTerminal} />
           </div>
         )}
 
         {!ws && (
-          <div className="grid h-full place-items-center text-center text-[var(--color-muted)]">
-            <div>
-              <FolderGit2 size={30} className="mx-auto mb-3 opacity-50" />
-              <p className="text-[14px]">Add a project with the + in the sidebar to get started</p>
+          <div className="grid h-full place-items-center px-6 text-center">
+            <div className="animate-fade-rise">
+              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-80">
+                <SwarmMark size={60} />
+              </div>
+              <p className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+                Welcome to swarm
+              </p>
+              <p className="mx-auto mt-1.5 max-w-[280px] text-[13px] leading-relaxed text-[var(--color-muted)]">
+                Add a project with the <span className="text-[var(--color-text)]">+</span> in the
+                sidebar to spin up terminals, review diffs and ship pull requests.
+              </p>
             </div>
           </div>
         )}

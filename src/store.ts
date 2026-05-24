@@ -36,7 +36,10 @@ export interface Tab {
   activeLeaf: string;
 }
 
-export type Panel = "terminals" | "scm" | "prs" | "notifications" | "history";
+// The inspector views. Terminals are no longer a panel — they're the content
+// (tabs in the TopBar); the inspector is independent of the editor and stays
+// put while you work, instead of snapping back to a terminal list.
+export type Panel = "scm" | "prs" | "notifications" | "history";
 
 export type Editor =
   | { type: "terminal" }
@@ -342,7 +345,8 @@ export const useStore = create<State>((set, get) => {
             workspaces.push({
               id: sw.id,
               repo,
-              panel: (sw.panel as Panel) ?? "terminals",
+              // Migrate the retired "terminals" panel (and any unknown) to scm.
+              panel: sw.panel === "scm" || sw.panel === "prs" || sw.panel === "notifications" || sw.panel === "history" ? sw.panel : "scm",
               editor: { type: "terminal" },
               tabs: sw.tabs,
               activeTab: sw.activeTab,
@@ -414,7 +418,7 @@ export const useStore = create<State>((set, get) => {
         const ws: Workspace = {
           id,
           repo,
-          panel: "terminals",
+          panel: "scm",
           editor: { type: "terminal" },
           tabs: [],
           activeTab: null,
@@ -473,11 +477,9 @@ export const useStore = create<State>((set, get) => {
 
     setPanel(panel) {
       const ws = active();
-      // The terminals "panel" really lives in the editor area, so selecting it
-      // must also restore the terminal view — otherwise a diff/pr/commit would
-      // stay in the main area while the rail highlights Terminals. The other
-      // panels are self-contained in the sidebar and leave the editor alone.
-      if (ws) patch(ws.id, panel === "terminals" ? { panel, editor: { type: "terminal" } } : { panel });
+      // Inspector is independent of the editor now: switching panels never
+      // touches the main area (a diff/pr/commit stays open behind the panel).
+      if (ws) patch(ws.id, { panel });
       set({ sidebarVisible: true });
     },
 
@@ -492,7 +494,6 @@ export const useStore = create<State>((set, get) => {
         tabs: [...ws.tabs, tab],
         activeTab: tabId,
         editor: { type: "terminal" },
-        panel: "terminals",
       });
     },
 
@@ -511,7 +512,7 @@ export const useStore = create<State>((set, get) => {
       });
       set((s) => ({ panes: [...s.panes, pane] }));
       patchTab(ws.id, tab.id, (t) => ({ ...t, layout: newLayout, activeLeaf: pane.paneId }));
-      patch(ws.id, { editor: { type: "terminal" }, panel: "terminals" });
+      patch(ws.id, { editor: { type: "terminal" } });
     },
 
     removePane(paneId) {
@@ -545,12 +546,11 @@ export const useStore = create<State>((set, get) => {
       if (!pane) return;
       clearAttn((p) => p.paneId === paneId);
       patchTab(pane.workspaceId, pane.tabId, (t) => ({ ...t, activeLeaf: paneId }));
-      // Focusing a terminal returns the whole workspace to the terminal view:
-      // surface it in the editor *and* the sidebar so the two stay in sync.
+      // Focusing a terminal surfaces it in the editor; the inspector stays on
+      // whatever panel the user had open.
       patch(pane.workspaceId, {
         activeTab: pane.tabId,
         editor: { type: "terminal" },
-        panel: "terminals",
       });
     },
 
@@ -558,7 +558,7 @@ export const useStore = create<State>((set, get) => {
       const ws = active();
       if (!ws) return;
       clearAttn((p) => p.tabId === tabId);
-      patch(ws.id, { activeTab: tabId, editor: { type: "terminal" }, panel: "terminals" });
+      patch(ws.id, { activeTab: tabId, editor: { type: "terminal" } });
     },
 
     setRatio(splitNodeId, ratio) {
