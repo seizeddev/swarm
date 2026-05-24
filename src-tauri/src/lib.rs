@@ -7,10 +7,9 @@ mod terminal;
 mod watcher;
 
 use error::AppResult;
-use tauri::ipc::Channel;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
-use terminal::{SpawnOpts, TerminalManager, WireUpdate};
+use terminal::{SpawnOpts, TerminalManager, UpdateChannel};
 use watcher::WatcherManager;
 
 /// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
@@ -230,7 +229,7 @@ fn pty_spawn(
     app: AppHandle,
     state: State<TerminalManager>,
     opts: SpawnOpts,
-    on_update: Channel<WireUpdate>,
+    on_update: UpdateChannel,
 ) -> AppResult<String> {
     let id = uuid::Uuid::new_v4().to_string();
     state.spawn(app, id.clone(), opts, on_update)?;
@@ -241,7 +240,7 @@ fn pty_spawn(
 fn pty_attach(
     state: State<TerminalManager>,
     id: String,
-    on_update: Channel<WireUpdate>,
+    on_update: UpdateChannel,
 ) -> AppResult<()> {
     state.attach(&id, on_update)
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { decodeUpdate } from "./term";
 import type {
   AgentDef,
   BranchInfo,
@@ -77,15 +78,16 @@ export const api = {
     },
     onUpdate: (u: WireUpdate) => void,
   ) => {
-    const channel = new Channel<WireUpdate>();
-    channel.onmessage = onUpdate;
+    // Frames arrive as raw bytes (ArrayBuffer); decode straight into a WireUpdate.
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (raw) => onUpdate(decodeUpdate(raw));
     return invoke<string>("pty_spawn", { opts, onUpdate: channel });
   },
   // Re-bind a still-running PTY to a fresh channel after the pane's component
   // remounts (e.g. switching back to a workspace). The core pushes a full frame.
   ptyAttach: (id: string, onUpdate: (u: WireUpdate) => void) => {
-    const channel = new Channel<WireUpdate>();
-    channel.onmessage = onUpdate;
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (raw) => onUpdate(decodeUpdate(raw));
     return invoke<void>("pty_attach", { id, onUpdate: channel });
   },
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),

@@ -19,8 +19,12 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter};
+
+/// Grid frames travel as raw bytes (`InvokeResponseBody::Raw`), not JSON — see
+/// `encode` for the layout. A `Serialize` channel would emit a number array.
+pub type UpdateChannel = Channel<InvokeResponseBody>;
 
 const FG: i32 = 256; // NamedColor::Foreground
 const BG: i32 = 257; // NamedColor::Background
@@ -244,7 +248,7 @@ struct Session {
     /// The current frontend channel, shared with the render thread and swappable:
     /// when a pane's component unmounts and later remounts (e.g. switching back to
     /// a workspace) it re-`attach`es a fresh channel here while the PTY lives on.
-    chan: Arc<Mutex<Channel<WireUpdate>>>,
+    chan: Arc<Mutex<UpdateChannel>>,
 }
 
 #[derive(Clone, Default)]
@@ -357,13 +361,48 @@ fn snapshot_full<T: EventListener>(term: &Term<T>) -> WireUpdate {
     build_update("full", term, 0..rows)
 }
 
+/// Pack a frame into a compact little-endian byte layout (decoded into typed
+/// arrays in `lib/term.ts`), bypassing JSON. Header is 16 bytes:
+///   u8 kind(0=full,1=delta) · u8 cursorVisible · u16 cols · u16 rows ·
+///   u16 cursorX · i32 cursorY · u32 lineCount
+/// then each line: u16 y · u16 runCount, then each run:
+///   i32 fg · i32 bg · u16 flags · u16 textLen · textLen UTF-8 bytes.
+fn encode(u: &WireUpdate) -> Vec<u8> {
+    let mut b = Vec::with_capacity(16 + u.lines.len() * 8);
+    b.push(if u.kind == "delta" { 1 } else { 0 });
+    b.push(u.cursor_visible as u8);
+    b.extend_from_slice(&(u.cols as u16).to_le_bytes());
+    b.extend_from_slice(&(u.rows as u16).to_le_bytes());
+    b.extend_from_slice(&(u.cursor_x as u16).to_le_bytes());
+    b.extend_from_slice(&u.cursor_y.to_le_bytes());
+    b.extend_from_slice(&(u.lines.len() as u32).to_le_bytes());
+    for line in &u.lines {
+        b.extend_from_slice(&(line.y as u16).to_le_bytes());
+        b.extend_from_slice(&(line.runs.len() as u16).to_le_bytes());
+        for r in &line.runs {
+            b.extend_from_slice(&r.fg.to_le_bytes());
+            b.extend_from_slice(&r.bg.to_le_bytes());
+            b.extend_from_slice(&r.flags.to_le_bytes());
+            let text = r.text.as_bytes();
+            b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            b.extend_from_slice(text);
+        }
+    }
+    b
+}
+
+/// Encode a frame as a raw IPC body (binary, never JSON).
+fn frame(u: &WireUpdate) -> InvokeResponseBody {
+    InvokeResponseBody::Raw(encode(u))
+}
+
 impl TerminalManager {
     pub fn spawn(
         &self,
         app: AppHandle,
         id: String,
         opts: SpawnOpts,
-        on_update: Channel<WireUpdate>,
+        on_update: UpdateChannel,
     ) -> AppResult<()> {
         let cols = opts.cols.max(1);
         let rows = opts.rows.max(1);
@@ -543,7 +582,7 @@ impl TerminalManager {
                 if let Some(update) = update {
                     // Ignore send errors: a detached (unmounted) channel just means
                     // the pane is hidden; the loop ends only when the PTY closes.
-                    let _ = chan.lock().send(update);
+                    let _ = chan.lock().send(frame(&update));
                 }
             }
         });
@@ -592,7 +631,7 @@ impl TerminalManager {
             upd
         };
         if session.visible.load(Ordering::Acquire) {
-            let _ = session.chan.lock().send(update);
+            let _ = session.chan.lock().send(frame(&update));
         }
         Ok(())
     }
@@ -614,7 +653,7 @@ impl TerminalManager {
                 t.reset_damage();
                 upd
             };
-            let _ = session.chan.lock().send(update);
+            let _ = session.chan.lock().send(frame(&update));
         }
         Ok(())
     }
@@ -622,7 +661,7 @@ impl TerminalManager {
     /// Re-bind a live session to a fresh frontend channel — used when a pane's
     /// component remounts (the PTY kept running while it was unmounted). Becomes
     /// visible and pushes a full frame so the remounted view paints immediately.
-    pub fn attach(&self, id: &str, on_update: Channel<WireUpdate>) -> AppResult<()> {
+    pub fn attach(&self, id: &str, on_update: UpdateChannel) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = guard
             .get(id)
@@ -635,7 +674,7 @@ impl TerminalManager {
             t.reset_damage();
             upd
         };
-        let _ = session.chan.lock().send(update);
+        let _ = session.chan.lock().send(frame(&update));
         Ok(())
     }
 
@@ -928,6 +967,46 @@ mod tests {
             delta.lines.iter().map(|l| l.y).collect::<Vec<_>>()
         );
         assert!(delta.lines.len() <= 1, "at most the cursor line");
+    }
+
+    #[test]
+    fn encode_lays_out_header_and_runs_little_endian() {
+        let u = WireUpdate {
+            kind: "delta",
+            cols: 80,
+            rows: 24,
+            cursor_x: 3,
+            cursor_y: 5,
+            cursor_visible: true,
+            lines: vec![WireLine {
+                y: 2,
+                runs: vec![WireRun {
+                    text: "Hi".to_string(),
+                    fg: 1,
+                    bg: 257,
+                    flags: 0,
+                }],
+            }],
+        };
+        let b = encode(&u);
+        // Header (16 bytes): kind=1, cursorVisible=1, cols=80, rows=24, cx=3, cy=5, lines=1
+        assert_eq!(b[0], 1);
+        assert_eq!(b[1], 1);
+        assert_eq!(u16::from_le_bytes([b[2], b[3]]), 80);
+        assert_eq!(u16::from_le_bytes([b[4], b[5]]), 24);
+        assert_eq!(u16::from_le_bytes([b[6], b[7]]), 3);
+        assert_eq!(i32::from_le_bytes([b[8], b[9], b[10], b[11]]), 5);
+        assert_eq!(u32::from_le_bytes([b[12], b[13], b[14], b[15]]), 1);
+        // Line: y=2, runCount=1
+        assert_eq!(u16::from_le_bytes([b[16], b[17]]), 2);
+        assert_eq!(u16::from_le_bytes([b[18], b[19]]), 1);
+        // Run: fg=1, bg=257, flags=0, textLen=2, "Hi"
+        assert_eq!(i32::from_le_bytes([b[20], b[21], b[22], b[23]]), 1);
+        assert_eq!(i32::from_le_bytes([b[24], b[25], b[26], b[27]]), 257);
+        assert_eq!(u16::from_le_bytes([b[28], b[29]]), 0);
+        assert_eq!(u16::from_le_bytes([b[30], b[31]]), 2);
+        assert_eq!(&b[32..34], b"Hi");
+        assert_eq!(b.len(), 34);
     }
 
     #[test]

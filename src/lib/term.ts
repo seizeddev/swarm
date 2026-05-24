@@ -13,9 +13,62 @@ import {
   resolveColor,
   TERM_BG,
 } from "./theme";
-import type { WireRun, WireUpdate } from "./types";
+import type { WireLine, WireRun, WireUpdate } from "./types";
 
 export const EMPTY_RUNS: WireRun[] = [];
+
+const TEXT_DECODER = new TextDecoder();
+
+// Decode a binary grid frame (see `encode` in terminal.rs) straight into the
+// WireUpdate shape — no JSON parse. Little-endian throughout.
+export function decodeUpdate(raw: ArrayBuffer | Uint8Array | number[]): WireUpdate {
+  const bytes =
+    raw instanceof Uint8Array
+      ? raw
+      : raw instanceof ArrayBuffer
+        ? new Uint8Array(raw)
+        : Uint8Array.from(raw);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let o = 0;
+  const kind = dv.getUint8(o) === 1 ? "delta" : "full";
+  o += 1;
+  const cursorVisible = dv.getUint8(o) !== 0;
+  o += 1;
+  const cols = dv.getUint16(o, true);
+  o += 2;
+  const rows = dv.getUint16(o, true);
+  o += 2;
+  const cursorX = dv.getUint16(o, true);
+  o += 2;
+  const cursorY = dv.getInt32(o, true);
+  o += 4;
+  const lineCount = dv.getUint32(o, true);
+  o += 4;
+
+  const lines: WireLine[] = new Array(lineCount);
+  for (let i = 0; i < lineCount; i++) {
+    const y = dv.getUint16(o, true);
+    o += 2;
+    const runCount = dv.getUint16(o, true);
+    o += 2;
+    const runs: WireRun[] = new Array(runCount);
+    for (let j = 0; j < runCount; j++) {
+      const fg = dv.getInt32(o, true);
+      o += 4;
+      const bg = dv.getInt32(o, true);
+      o += 4;
+      const flags = dv.getUint16(o, true);
+      o += 2;
+      const len = dv.getUint16(o, true);
+      o += 2;
+      const text = len ? TEXT_DECODER.decode(bytes.subarray(o, o + len)) : "";
+      o += len;
+      runs[j] = { text, fg, bg, flags };
+    }
+    lines[i] = { y, runs };
+  }
+  return { kind, cols, rows, cursorX, cursorY, cursorVisible, lines };
+}
 
 // Apply a streamed frame to the per-row runs array. A `full` frame returns a
 // fresh array of every row; a `delta` patches only the reported rows *in place*
