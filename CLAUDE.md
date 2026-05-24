@@ -37,6 +37,15 @@
 - `tauri-action` intermittently fails uploads with transient **`Bad credentials`** (and `actions/checkout` auth blips). Just `gh run rerun <run-id> --failed` — partial reruns keep `create-release`'s output, so artifacts land in the same draft and `latest.json` merges across platforms.
 - Builds are **unsigned** (no Developer ID cert; only "Apple Development" certs exist in the keychain). For local install, ad-hoc sign works: `codesign --force --deep --sign - /Applications/swarm.app`.
 
+## Security & supply chain
+
+- **Threat model + guarantees** live in `SECURITY.md` and `docs/THREAT_MODEL.md`; the updater **key-rotation runbook** is in `SECURITY.md`. Update them when the security posture changes.
+- **All GitHub Actions are pinned to commit SHAs** (with a `# vX` comment); Dependabot (`github-actions`) bumps them. When adding a workflow, resolve the SHA with `gh api repos/<owner>/<repo>/commits/<tag>` — never use a moving tag. `dtolnay/rust-toolchain` is a *branch*, so pin the action SHA **and** an explicit `toolchain:` (`1.95.0`; matches local).
+- **Release signing is gated behind a protected `release` GitHub Environment** (required reviewers) so the password-protected `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`) is exposed only to an approved run — not every matrix build. This sits *on top of* the two-phase create/upload pattern, don't remove either.
+- **`cargo-deny` config is `src-tauri/deny.toml`.** Gotchas that took tuning: the `fix-path-env` git dep needs `version = "0.0.0"` in `Cargo.toml` (its rev's version) to clear the wildcard ban; `unmaintained = "workspace"` so un-fixable transitive advisories (gtk-rs GTK3, unic-* via tauri-utils) don't fail the gate while real vulnerabilities still do; `allow-git` lists the one vetted git source. Run `cargo deny check all` before touching deps.
+- **Path-allowlist guard** (`src-tauri/src/guard.rs`, `WorkspaceRegistry`): every path-taking command validates against roots the frontend registered via `register_root`. The frontend must call `api.registerRoot(...)` (in `store.ts` `addWorkspace`/`hydrate`) **before** any git/PTY command, registering both the picked path and the canonical `repo.path`. `~/.swarm/worktrees` is implicitly allowed. The CSP remains the *primary* defence; this is blast-radius reduction.
+- **Fuzzing** is an out-of-tree crate at `src-tauri/fuzz/` (cargo-fuzz, nightly-only, weekly `fuzz.yml`). It is **not** a member of the src-tauri package, so `cargo build`/`clippy`/`cargo-deny` never descend into it. The parser is reached via the `#[doc(hidden)] pub fn __fuzz_parse_notifications` crate-root export.
+
 ## Assets
 
 - README hero is `docs/demo.gif`. `docs/banner.png` (+ `docs/make_banner.py`, which renders the in-app `SwarmMark` vector + palette) is the **GitHub social-preview source**, intentionally not referenced in the README.
