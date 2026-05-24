@@ -21,7 +21,12 @@
 ## Config gotchas
 
 - `tauri.conf.json` security has a strict prod **`csp`** and a permissive **`devCsp`** (for Vite HMR). `style-src` must keep **`'unsafe-inline'`** — the terminal cell-grid renders with inline styles. Verified rendering in both dev and a release binary.
-- Keep `version` identical across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`.
+- Keep `version` identical across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.lock` (the lockfile's `swarm` entry — `cargo update -p swarm --precise <v>`).
+
+## Terminal
+
+- **Agents are spawned through the user's interactive login shell** — `terminal.rs` builds `$SHELL -ilc 'exec "$0" "$@"' <command> <args…>`, not the command directly. **Do not "simplify" this back to a direct spawn.** A real terminal emulator does the same; it makes agents inherit the user's full env (PATH, locale, and personal settings). The concrete bug it fixes: Claude Code only uses the full-height alternate screen when it sees `CLAUDE_CODE_NO_FLICKER` (a user's `~/.zshrc` setting). A GUI/`.dmg` launch only carries a minimal launchd env, so a direct spawn rendered Claude inline ("terminal cut off at the bottom") — **only in packaged builds, not in `tauri dev`/shell launches**. Never *force* such a var from swarm (it's the user's personal config); load their shell instead.
+- **Never send a degenerate PTY size.** `Terminal.tsx` `measure()` returns `null` for a not-yet-laid-out (0×0) pane; the spawn waits for a real size (`measureReady`) and re-fits at several settle points. A 2×1/80×24 resize slipping through wedges a TUI's layout. The cell grid is always correctly sized — terminal-fill problems are almost always the *agent's* render mode (alt-screen vs inline), not swarm's geometry.
 
 ## Running / screenshotting the app (macOS)
 
@@ -32,7 +37,10 @@
 
 ## Releasing (read before touching `release.yml`)
 
-- Triggered by a `v*` tag; builds all platforms and creates a **draft** release that must be **manually published** (`gh release edit <tag> --draft=false`). Needs the `TAURI_SIGNING_PRIVATE_KEY` repo secret for updater artifacts.
+- Triggered by a `v*` tag; builds all platforms and creates a **draft** release that must be **manually published** (`gh release edit <tag> --draft=false`). Needs the `TAURI_SIGNING_PRIVATE_KEY` repo secret for updater artifacts. The matrix `build` job sits behind the protected `release` Environment, so **approve the pending deployment** first: `gh api -X POST repos/<owner>/<repo>/actions/runs/<run_id>/pending_deployments --input -` with `{"environment_ids":[<id>],"state":"approved"}` (the `-f 'environment_ids[]=…'` form silently no-ops).
+- **`v*` tags are PROTECTED — you cannot delete or re-point them** (a repo ruleset rejects `git push origin :refs/tags/vX` and `gh release delete --cleanup-tag` with "Cannot delete this tag", even with admin bypass). So if a tagged build is wrong, **bump to a new version — never re-tag.** (This is why the first published release is `v0.2.1`: `v0.2.0` was tagged but its build had the terminal bug and the tag couldn't be re-pointed.)
+- Version bump touches **four** files — `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, **and `src-tauri/Cargo.lock`** (`cargo update -p swarm --precise <v>`).
+- **`bundle_dmg.sh` is flaky** (its AppleScript layout step + leftover mounted `rw.*.dmg` images block reruns). In CI just rerun; locally, detach stale `/Volumes/swarm*` and delete `rw.*.dmg`, or build the DMG by hand: stage `swarm.app` + an `Applications` symlink and `hdiutil create -volname swarm -srcfolder <stage> -format UDZO <out>.dmg`.
 - **`release.yml` uses a two-phase pattern on purpose**: a `create-release` job makes one draft and outputs its `release_id`; every build job uploads via `releaseId`. **Do not** go back to per-job `releaseDraft: true` — parallel matrix jobs then race and produce duplicate drafts with artifacts split across them.
 - `tauri-action` intermittently fails uploads with transient **`Bad credentials`** (and `actions/checkout` auth blips). Just `gh run rerun <run-id> --failed` — partial reruns keep `create-release`'s output, so artifacts land in the same draft and `latest.json` merges across platforms.
 - Builds are **unsigned** (no Developer ID cert; only "Apple Development" certs exist in the keychain). For local install, ad-hoc sign works: `codesign --force --deep --sign - /Applications/swarm.app`.
