@@ -112,7 +112,17 @@ export function Terminal({ pane, visible }: { pane: Pane; visible: boolean }) {
       // Keep the PTY alive across remounts; just gate it so the render thread
       // stops sending. The PTY is killed explicitly on pane/workspace removal.
       if (ptyIdRef.current) api.ptySetVisible(ptyIdRef.current, false).catch(() => {});
-      if (raf.current) cancelAnimationFrame(raf.current);
+      // Cancelling must also clear the handle: a remount on the SAME instance
+      // (React StrictMode's mount→unmount→remount, where refs persist) would
+      // otherwise leave `raf.current` holding a stale, already-cancelled handle,
+      // and the `raf.current != null` guard in scheduleRender would then drop
+      // every future frame — the grid would never repaint. (root cause of the
+      // post-perf black terminal: the new visible-effect schedules a RAF during
+      // mount, so one is always pending when StrictMode's cleanup fires.)
+      if (raf.current) {
+        cancelAnimationFrame(raf.current);
+        raf.current = undefined;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.paneId]);
