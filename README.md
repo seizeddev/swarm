@@ -2,7 +2,9 @@
 
 # swarm
 
-**Parallel terminals for your AI coding agents — with a built-in GitHub view: source control, diffs, and pull requests.**
+**The agentic development environment, built around the terminal.**
+
+Run a swarm of AI coding agents in parallel — with source control, diffs, and pull requests built in.
 
 A lightweight, cross-platform desktop app. Rust core, native webview, no Electron.
 
