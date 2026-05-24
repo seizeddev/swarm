@@ -20,6 +20,10 @@ const ROW = 38;
 const COLW = 15;
 const XPAD = 14;
 const DOT = 4;
+// Widest node = the HEAD ring (radius DOT+2). Commit rows start flush against
+// it, so an ordinary node sits ~2px from the box and the HEAD ring just kisses
+// it — the floor before the row's background would clip the HEAD marker.
+const NODE_R = DOT + 2;
 
 export function GraphPanel() {
   const ws = useActiveWorkspace();
@@ -124,7 +128,10 @@ export function GraphPanel() {
                 onClick={() => openCommit(r.commit.oid)}
                 title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
                 className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
-                style={{ top: vi.start + 3, left: gw, right: 8, height: ROW - 6 }}
+                // Start the row just past the widest node (gw carries a full
+                // COLW of trailing slack we strip back off); NODE_R clears the
+                // HEAD ring so the box sits flush against the graph column.
+                style={{ top: vi.start + 3, left: gw - COLW + NODE_R, right: 8, height: ROW - 6 }}
               >
                 {r.commit.refs.map((ref) => (
                   <span

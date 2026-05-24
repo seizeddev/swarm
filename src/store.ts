@@ -141,6 +141,10 @@ interface State {
   error: string | null;
   hydrated: boolean;
   sidebarVisible: boolean;
+  // True below the compact breakpoint (<768px), where the inspector panel
+  // overlays the workspace as a drawer instead of pushing it. Driven by a
+  // matchMedia listener in App; components read it to switch layout mode.
+  compact: boolean;
   eventsDir: string | null;
   codexHome: string | null;
   update: UpdateState;
@@ -157,6 +161,7 @@ interface State {
   refreshStatus(wsId?: string): Promise<void>;
   setPanel(p: Panel): void;
   toggleSidebar(): void;
+  setCompact(v: boolean): void;
   closeActivePane(): void;
 
   addPane(agent?: AgentDef, wsId?: string): void;
@@ -206,6 +211,12 @@ export const useStore = create<State>((set, get) => {
     set((s) => ({
       panes: s.panes.map((p) => (predicate(p) ? { ...p, attention: false } : p)),
     }));
+  // In compact mode the panel floats over the workspace as a drawer; once the
+  // user picks something from it (a file/PR/commit), dismiss it so the chosen
+  // view isn't hidden behind it. A no-op in regular mode (push layout).
+  const closeDrawerIfCompact = () => {
+    if (get().compact) set({ sidebarVisible: false });
+  };
 
   const paneVisible = (pane: Pane) => {
     const ws = get().workspaces.find((w) => w.id === pane.workspaceId);
@@ -260,6 +271,7 @@ export const useStore = create<State>((set, get) => {
     error: null,
     hydrated: false,
     sidebarVisible: true,
+    compact: false,
     eventsDir: null,
     codexHome: null,
     update: { status: "idle", progress: 0 },
@@ -268,6 +280,10 @@ export const useStore = create<State>((set, get) => {
 
     toggleSidebar() {
       set((s) => ({ sidebarVisible: !s.sidebarVisible }));
+    },
+
+    setCompact(v) {
+      if (get().compact !== v) set({ compact: v });
     },
 
     cycleWorkspace(dir) {
@@ -575,14 +591,17 @@ export const useStore = create<State>((set, get) => {
     openDiff(file, staged) {
       const ws = active();
       if (ws) patch(ws.id, { editor: { type: "diff", file, staged } });
+      closeDrawerIfCompact();
     },
     openPr(pr) {
       const ws = active();
       if (ws) patch(ws.id, { editor: { type: "pr", pr } });
+      closeDrawerIfCompact();
     },
     openCommit(oid) {
       const ws = active();
       if (ws) patch(ws.id, { editor: { type: "commit", oid } });
+      closeDrawerIfCompact();
     },
     showTerminal() {
       const ws = active();

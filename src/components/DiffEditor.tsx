@@ -245,7 +245,22 @@ export function DiffEditor({
   const [loading, setLoading] = useState(true);
   // View preference is sticky across files and sessions.
   const [split, setSplit] = useState(() => localStorage.getItem("diffSplit") === "1");
+  // Side-by-side needs room: below this the two columns get unreadably narrow,
+  // so we fall back to unified regardless of the saved preference (which is
+  // restored once there's width again). Tracked off the container, not the
+  // window, so it's correct behind a wide inspector panel or in a split pane.
+  const [narrow, setNarrow] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 720));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const effSplit = split && !narrow;
 
   useEffect(() => {
     setLoading(true);
@@ -258,7 +273,7 @@ export function DiffEditor({
 
   const rows = useMemo(() => buildRows(hunks), [hunks]);
   const splitRows = useMemo(() => buildSplitRows(hunks), [hunks]);
-  const view = split ? splitRows : rows;
+  const view = effSplit ? splitRows : rows;
   const { added, removed } = useMemo(() => {
     let added = 0;
     let removed = 0;
@@ -279,8 +294,9 @@ export function DiffEditor({
     overscan: 24,
   });
   // Toggling unified⇄split changes what sits at each index — drop the cached
-  // measurements so rows re-measure at their new heights.
-  useEffect(() => virt.measure(), [split, virt]);
+  // measurements so rows re-measure at their new heights. `effSplit` (not
+  // `split`) so the auto narrow→unified fallback re-measures too.
+  useEffect(() => virt.measure(), [effSplit, virt]);
   const items = virt.getVirtualItems();
 
   // The hunk header for whatever line is currently at the top of the viewport —
@@ -297,7 +313,7 @@ export function DiffEditor({
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)]">
+    <div ref={rootRef} className="flex h-full flex-col bg-[var(--color-bg)]">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
         <span className="selectable truncate font-mono text-[12.5px] text-[var(--color-text)]">
           {file}
@@ -311,14 +327,16 @@ export function DiffEditor({
         )}
         <button
           className="icon-btn ml-auto h-7 w-7"
-          data-active={split}
+          data-active={effSplit}
+          disabled={narrow}
           onClick={() =>
             setSplit((v) => {
               localStorage.setItem("diffSplit", v ? "0" : "1");
               return !v;
             })
           }
-          title={split ? "Unified view" : "Split view"}
+          title={narrow ? "Too narrow for split view" : split ? "Unified view" : "Split view"}
+          style={narrow ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
         >
           <Columns2 size={14} />
         </button>

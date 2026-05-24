@@ -15,6 +15,7 @@ import { useActiveWorkspace, useStore, type Panel } from "../store";
 import { NotificationsPanel, PullRequestsPanel, SourceControlPanel } from "./panels";
 import { GraphPanel } from "./GraphPanel";
 import { useShallow } from "zustand/react/shallow";
+import { PANEL_DEFAULT, clampPanelWidth } from "../lib/panel";
 
 const ATTN = "var(--color-text)";
 
@@ -91,23 +92,34 @@ function RailButton({
   children: React.ReactNode;
 }) {
   const ws = useActiveWorkspace();
-  const setPanel = useStore((s) => s.setPanel);
+  const { setPanel, toggleSidebar, sidebarVisible } = useStore(
+    useShallow((s) => ({
+      setPanel: s.setPanel,
+      toggleSidebar: s.toggleSidebar,
+      sidebarVisible: s.sidebarVisible,
+    })),
+  );
+  // "Active" = this is the selected view; "shown" also requires the panel to be
+  // open. Clicking the already-shown view collapses the panel (VS Code-style),
+  // so the rail doubles as the hide/show toggle at any window size. The
+  // highlight tracks `shown`, so it clears when the panel is hidden.
   const active = ws?.panel === panel;
+  const shown = active && sidebarVisible;
   return (
     <button
       className="icon-btn relative h-8 w-8"
-      data-active={active}
-      title={title}
-      onClick={() => setPanel(panel)}
+      data-active={shown}
+      title={shown ? `Hide ${title}` : title}
+      onClick={() => (shown ? toggleSidebar() : setPanel(panel))}
     >
       {children}
       {!!badge && (
         <span
           className="nums absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold"
-          // Translucent at rest; on the active tab it goes solid so it reads as
+          // Translucent at rest; on the shown tab it goes solid so it reads as
           // a deliberate count, not a faint overlay.
           style={
-            active
+            shown
               ? {
                   background: "var(--color-text)",
                   color: "var(--color-bg)",
@@ -211,15 +223,43 @@ function UpdateBanner() {
 
 export function Sidebar() {
   const ws = useActiveWorkspace();
-  const { workspaces, addWorkspace, notifications, error, sidebarVisible } = useStore(
-    useShallow((s) => ({
-      workspaces: s.workspaces,
-      addWorkspace: s.addWorkspace,
-      notifications: s.notifications,
-      error: s.error,
-      sidebarVisible: s.sidebarVisible,
-    })),
-  );
+  const { workspaces, addWorkspace, notifications, error, sidebarVisible, compact, toggleSidebar } =
+    useStore(
+      useShallow((s) => ({
+        workspaces: s.workspaces,
+        addWorkspace: s.addWorkspace,
+        notifications: s.notifications,
+        error: s.error,
+        sidebarVisible: s.sidebarVisible,
+        compact: s.compact,
+        toggleSidebar: s.toggleSidebar,
+      })),
+    );
+
+  // Drag the invisible handle on the panel's right edge to resize it (regular
+  // mode only). Writes --panel-w straight to the DOM for a jank-free drag, then
+  // persists the final width. Clamping mirrors App's panelMax().
+  const startPanelResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const root = document.documentElement;
+    const startW = parseFloat(getComputedStyle(root).getPropertyValue("--panel-w")) || PANEL_DEFAULT;
+    const onMove = (ev: MouseEvent) => {
+      const w = clampPanelWidth(startW + (ev.clientX - startX), window.innerWidth);
+      root.style.setProperty("--panel-w", `${w}px`);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      localStorage.setItem("panelW", String(parseInt(getComputedStyle(root).getPropertyValue("--panel-w"), 10)));
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   return (
     <>
@@ -263,10 +303,30 @@ export function Sidebar() {
         <div className="flex-1" />
       </div>
 
-      {/* Panel */}
+      {/* Scrim — only in compact mode, where the panel floats over the
+          workspace. Tapping it (or anywhere outside the drawer) dismisses. */}
+      {compact && sidebarVisible && (
+        <div
+          onClick={toggleSidebar}
+          aria-hidden
+          className="animate-fade-in absolute inset-y-0 left-14 right-0 z-20 bg-black/40"
+        />
+      )}
+
+      {/* Panel. Regular: in-flow, flex-none, width driven by --panel-w (the
+          resize handle below rewrites it). Compact: an absolute drawer over the
+          workspace, fixed-width, opaque, sliding in from behind the rail. */}
       <div
-        className="w-[300px] flex-none flex-col border-r border-[var(--color-border)]"
-        style={{ display: sidebarVisible ? "flex" : "none" }}
+        className={
+          compact
+            ? "animate-slide-in absolute inset-y-0 left-14 z-30 flex-col border-r border-[var(--color-border)] shadow-2xl"
+            : "flex-none flex-col border-r border-[var(--color-border)]"
+        }
+        style={{
+          display: sidebarVisible ? "flex" : "none",
+          width: compact ? "min(320px, 82vw)" : "var(--panel-w)",
+          background: compact ? "var(--color-panel)" : undefined,
+        }}
       >
         {ws ? (
           <div key={ws.panel} className="min-h-0 flex-1 animate-fade-in">
@@ -311,6 +371,21 @@ export function Sidebar() {
           <UpdateBanner />
         </div>
       </div>
+
+      {/* Invisible resize handle straddling the panel's right edge (regular mode
+          only). Zero-width in flow so it doesn't shift the layout; the wide hit
+          area overflows both ways, and a hairline brightens on hover/drag to
+          hint it's grabbable. */}
+      {!compact && sidebarVisible && (
+        <div
+          onMouseDown={startPanelResize}
+          className="group relative z-10 w-0 flex-none cursor-col-resize"
+          title="Drag to resize"
+        >
+          <div className="absolute -left-1.5 top-0 h-full w-3" />
+          <div className="absolute -left-px top-0 h-full w-px bg-transparent transition-colors duration-[var(--dur-fast)] group-hover:bg-[var(--color-border-strong)]" />
+        </div>
+      )}
     </>
   );
 }

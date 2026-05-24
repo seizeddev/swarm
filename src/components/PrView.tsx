@@ -58,7 +58,7 @@ export function PrView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="animate-fade-rise mx-auto w-full max-w-2xl px-8 py-10">
+        <div className="animate-fade-rise mx-auto w-full max-w-2xl px-5 py-8 md:px-8 md:py-10">
           <div className="flex flex-wrap items-center gap-2">
             <span className="pill pill-muted">{pr.state.toLowerCase()}</span>
             {pr.isDraft && <span className="pill pill-muted">draft</span>}

@@ -6,6 +6,7 @@ import { useStore } from "./store";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
 import { TopBar } from "./components/TopBar";
+import { applyPanelWidth, currentPanelWidth } from "./lib/panel";
 
 let zoom = 1;
 async function handleMenu(id: string) {
@@ -47,6 +48,27 @@ async function handleMenu(id: string) {
 }
 
 export default function App() {
+  // Compact breakpoint + persisted/clamped panel width. Kept out of the main
+  // effect so it owns its own listeners and runs before first paint matters.
+  useEffect(() => {
+    const saved = parseInt(localStorage.getItem("panelW") ?? "", 10);
+    if (Number.isFinite(saved)) applyPanelWidth(saved);
+
+    const mq = window.matchMedia("(max-width: 767px)");
+    const onMq = () => useStore.getState().setCompact(mq.matches);
+    onMq();
+    mq.addEventListener("change", onMq);
+
+    // On window resize, re-clamp the panel so a shrinking window can't leave the
+    // workspace starved (panelMax() shrinks with innerWidth).
+    const onResize = () => applyPanelWidth(currentPanelWidth());
+    window.addEventListener("resize", onResize);
+    return () => {
+      mq.removeEventListener("change", onMq);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+
   useEffect(() => {
     const s = useStore.getState();
 
@@ -120,7 +142,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <TopBar />
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar />
         <Workspace />
       </div>

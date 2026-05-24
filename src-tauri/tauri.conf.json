@@ -15,8 +15,8 @@
         "title": "swarm",
         "width": 1280,
         "height": 832,
-        "minWidth": 720,
-        "minHeight": 480,
+        "minWidth": 480,
+        "minHeight": 400,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 18, "y": 23 }

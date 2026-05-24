@@ -325,6 +325,32 @@ describe("editor + panel switching", () => {
     s().toggleSidebar();
     expect(s().sidebarVisible).toBe(!before);
   });
+
+  it("setCompact flips the compact flag", () => {
+    expect(s().compact).toBe(false);
+    s().setCompact(true);
+    expect(s().compact).toBe(true);
+    s().setCompact(false);
+    expect(s().compact).toBe(false);
+  });
+
+  it("compact mode closes the drawer when a diff/pr/commit is opened", () => {
+    s().setCompact(true);
+    useStore.setState({ sidebarVisible: true });
+    s().openDiff("a.txt", false);
+    expect(s().sidebarVisible).toBe(false);
+
+    useStore.setState({ sidebarVisible: true });
+    s().openCommit("abc123");
+    expect(s().sidebarVisible).toBe(false);
+  });
+
+  it("regular mode leaves the panel open when opening a view", () => {
+    s().setCompact(false);
+    useStore.setState({ sidebarVisible: true });
+    s().openDiff("a.txt", false);
+    expect(s().sidebarVisible).toBe(true);
+  });
 });
 
 describe("notifications + attention", () => {

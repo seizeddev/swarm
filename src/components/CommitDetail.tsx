@@ -109,7 +109,7 @@ export function CommitDetail({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-3xl px-6 py-6">
+        <div className="mx-auto w-full max-w-3xl px-4 py-5 md:px-6 md:py-6">
           {/* message */}
           <h1 className="selectable text-[18px] font-semibold leading-snug tracking-[-0.015em]">
             {title}

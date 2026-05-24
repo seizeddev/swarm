@@ -76,14 +76,20 @@ export function TopBar() {
   const ws = useActiveWorkspace();
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectTab, removePane, splitActive, sidebarVisible } = useStore(
+  const { selectTab, removePane, splitActive, sidebarVisible, compact } = useStore(
     useShallow((s) => ({
       selectTab: s.selectTab,
       removePane: s.removePane,
       splitActive: s.splitActive,
       sidebarVisible: s.sidebarVisible,
+      compact: s.compact,
     })),
   );
+
+  // The repo-identity block sits over the in-flow inspector panel and must
+  // mirror its width. In compact mode the panel floats (no reserved column), so
+  // the identity block is dropped and the tabs slide left to fill the band.
+  const showIdentity = !!ws && sidebarVisible && !compact;
 
   return (
     <div
@@ -93,13 +99,14 @@ export function TopBar() {
       {/* Rail column — the macOS traffic lights overlay this strip. */}
       <div data-tauri-drag-region className="h-full w-14 flex-none" />
 
-      {/* Repo identity — sits over the inspector panel, only while it's open.
-          pl-8 clears the macOS traffic lights (which spill ~72px from the left,
-          past the 56px rail column). */}
-      {ws && sidebarVisible && (
+      {/* Repo identity — sits over the inspector panel, only while it's open,
+          and tracks the panel's resizable width. pl-8 clears the macOS traffic
+          lights (which spill ~72px from the left, past the 56px rail column). */}
+      {showIdentity && (
         <div
           data-tauri-drag-region
-          className="flex h-full w-[300px] flex-none items-center gap-2 pl-8 pr-3"
+          className="flex h-full flex-none items-center gap-2 pl-8 pr-3"
+          style={{ width: "var(--panel-w)" }}
         >
           <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
             {ws.repo.name}
@@ -118,7 +125,7 @@ export function TopBar() {
       <div
         data-tauri-drag-region
         className={`flex h-full min-w-0 flex-1 items-center gap-1 pr-3 ${
-          ws && sidebarVisible ? "pl-3" : "pl-8"
+          showIdentity ? "pl-3" : "pl-8"
         }`}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">

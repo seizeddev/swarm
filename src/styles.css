@@ -111,6 +111,13 @@
   /* Film-grain strength — tune to taste; dithers the dark gradient so it
      doesn't band. Set to 0 to disable. */
   --grain-opacity: 0.022;
+
+  /* Inspector panel width — the single source the Sidebar panel and the TopBar
+     repo-identity block both size to. The Sidebar's resize handle rewrites this
+     live (clamped in App: 220px … min(480, window − rail − 360)); App restores
+     the persisted value on launch. Slightly under the old fixed 300px so the
+     workspace gets a touch more room by default. */
+  --panel-w: 272px;
 }
 
 * {
@@ -610,6 +617,21 @@ svg.lucide {
 }
 .animate-fade-in {
   animation: fade-in var(--dur-base) var(--ease-out) both;
+}
+
+/* Compact-mode inspector drawer sliding in from behind the rail. */
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-slide-in {
+  animation: slide-in-left var(--dur-base) var(--ease-out) both;
 }
 .animate-scale-in {
   transform-origin: var(--origin, top right);
