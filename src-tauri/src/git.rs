@@ -242,13 +242,19 @@ fn sanitize(name: &str) -> String {
 }
 
 /// Where swarm keeps its worktrees: `~/.swarm/worktrees/<repo>/<branch>`.
-/// Deliberately *outside* the repo so the user's tree stays clean.
+/// Deliberately *outside* the repo so the user's tree stays clean. Ensures the
+/// `~/.swarm` root exists and is owner-only (`0700`) on Unix — `create_worktree`
+/// may be the first thing to create it, before `swarm_dir()` in `lib.rs` runs.
 fn worktrees_root(repo: &Repository) -> AppResult<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home directory".into()))?;
-    Ok(home
-        .join(".swarm")
-        .join("worktrees")
-        .join(repo_basename(repo)))
+    let swarm = home.join(".swarm");
+    std::fs::create_dir_all(&swarm)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&swarm, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(swarm.join("worktrees").join(repo_basename(repo)))
 }
 
 /// Create a new branch (from `base_ref` or HEAD) and add a worktree for it.

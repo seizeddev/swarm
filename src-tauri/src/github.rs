@@ -1,7 +1,67 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::error::AppResult;
 use serde::Serialize;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+/// Hard cap on any `gh` invocation. A hung subprocess (network stall, auth
+/// prompt slipping through) must never wedge the off-thread pool indefinitely.
+const GH_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Run `gh` non-interactively and return its stdout on success, or `None` on any
+/// failure (spawn error, non-zero exit, or timeout) so every caller degrades
+/// gracefully to an empty result — exactly the prior behaviour, now bounded.
+///
+/// Hardening: stdin is `/dev/null` and the prompt/update/colour env is forced
+/// off, so `gh` can never block waiting for a human; a watchdog kills it past
+/// `GH_TIMEOUT`. stdout is drained on a side thread so a large `--json` payload
+/// can't deadlock against the pipe buffer while we wait.
+fn run_gh(args: &[&str], cwd: Option<&str>) -> Option<Vec<u8>> {
+    let mut cmd = Command::new("gh");
+    cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+
+    let mut child = cmd.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if start.elapsed() >= GH_TIMEOUT {
+                    let _ = child.kill();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break None,
+        }
+    };
+    let _ = child.wait(); // reap; the reader thread ends as the pipe closes
+
+    match status {
+        Some(status) if status.success() => rx.recv_timeout(Duration::from_secs(1)).ok(),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,8 +109,8 @@ fn rollup_status(v: &serde_json::Value) -> Option<String> {
 }
 
 pub fn pr_list(repo_path: &str) -> AppResult<Vec<PrSummary>> {
-    let output = Command::new("gh")
-        .args([
+    let stdout = match run_gh(
+        &[
             "pr",
             "list",
             "--state",
@@ -59,15 +119,13 @@ pub fn pr_list(repo_path: &str) -> AppResult<Vec<PrSummary>> {
             "50",
             "--json",
             "number,title,url,state,isDraft,author,headRefName,reviewDecision,statusCheckRollup",
-        ])
-        .current_dir(repo_path)
-        .output();
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return Ok(vec![]),
+        ],
+        Some(repo_path),
+    ) {
+        Some(o) => o,
+        None => return Ok(vec![]),
     };
-    let arr: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let arr: serde_json::Value = serde_json::from_slice(&stdout).unwrap_or_default();
     let items = match arr.as_array() {
         Some(a) => a,
         None => return Ok(vec![]),
@@ -115,14 +173,8 @@ pub fn pr_list(repo_path: &str) -> AppResult<Vec<PrSummary>> {
 }
 
 pub fn gh_login() -> Option<String> {
-    let output = Command::new("gh")
-        .args(["api", "user", "-q", ".login"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = run_gh(&["api", "user", "-q", ".login"], None)?;
+    let s = String::from_utf8_lossy(&stdout).trim().to_string();
     if s.is_empty() {
         None
     } else {
@@ -131,31 +183,32 @@ pub fn gh_login() -> Option<String> {
 }
 
 pub fn gh_available() -> bool {
-    Command::new("gh")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    run_gh(&["--version"], None).is_some()
 }
 
 pub fn pr_for_branch(repo_path: &str, branch: &str) -> AppResult<Option<PrInfo>> {
-    let output = Command::new("gh")
-        .args([
+    // A ref starting with `-` would be parsed as a flag; reject it outright, and
+    // additionally pass the branch after a `--` separator so `gh` always treats
+    // it as the positional PR selector (argument-injection defence, M-1).
+    if branch.starts_with('-') {
+        return Ok(None);
+    }
+    let stdout = match run_gh(
+        &[
             "pr",
             "view",
-            branch,
             "--json",
             "number,title,state,url,isDraft,statusCheckRollup",
-        ])
-        .current_dir(repo_path)
-        .output();
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return Ok(None),
+            "--",
+            branch,
+        ],
+        Some(repo_path),
+    ) {
+        Some(o) => o,
+        None => return Ok(None),
     };
 
-    let v: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+    let v: serde_json::Value = match serde_json::from_slice(&stdout) {
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
@@ -274,5 +327,15 @@ mod tests {
     fn pr_for_branch_returns_none_when_gh_unavailable() {
         let out = pr_for_branch("/nonexistent-path-xyz", "main").unwrap();
         assert!(out.is_none());
+    }
+
+    #[test]
+    fn pr_for_branch_rejects_dash_prefixed_ref() {
+        // A ref that looks like a flag must short-circuit to None and never be
+        // handed to `gh` (argument-injection guard, M-1).
+        assert!(pr_for_branch("/nonexistent-path-xyz", "--repo")
+            .unwrap()
+            .is_none());
+        assert!(pr_for_branch(".", "-x").unwrap().is_none());
     }
 }

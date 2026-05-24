@@ -3,14 +3,25 @@ mod agents;
 mod error;
 mod git;
 mod github;
+mod guard;
 mod terminal;
 mod watcher;
 
 use error::AppResult;
+use guard::WorkspaceRegistry;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
 use terminal::{SpawnOpts, TerminalManager, UpdateChannel};
 use watcher::WatcherManager;
+
+/// Fuzz entrypoint (G-3): drive the OSC notification parser over arbitrary bytes.
+/// `#[doc(hidden)]` and underscore-prefixed — it exists only so the out-of-tree
+/// `fuzz/` crate can reach the otherwise-private parser. Never called by the app.
+#[doc(hidden)]
+pub fn __fuzz_parse_notifications(data: &[u8]) {
+    let mut st = terminal::NotifState::default();
+    let _ = terminal::parse_notifications(data, &mut st);
+}
 
 /// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
 /// run on the main thread and would freeze the UI on a slow libgit2 walk or a `gh`
@@ -25,116 +36,210 @@ where
         .map_err(|e| error::AppError::Other(e.to_string()))?
 }
 
+/// Record a repository root the frontend has explicitly opened. Every
+/// path-taking command below is gated on the registry (see `guard.rs`), so this
+/// must be called — by the open-repo dialog flow and session restore — before
+/// any git/PTY operation on that root.
 #[tauri::command]
-async fn repo_info(path: String) -> AppResult<git::RepoInfo> {
+fn register_root(reg: State<WorkspaceRegistry>, path: String) -> AppResult<()> {
+    reg.register(&path)
+}
+
+#[tauri::command]
+async fn repo_info(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<git::RepoInfo> {
+    reg.ensure_within_root(&path)?;
     off_thread(move || git::repo_info(&path)).await
 }
 
 #[tauri::command]
-async fn list_worktrees(path: String) -> AppResult<Vec<git::WorktreeInfo>> {
+async fn list_worktrees(
+    reg: State<'_, WorkspaceRegistry>,
+    path: String,
+) -> AppResult<Vec<git::WorktreeInfo>> {
+    reg.ensure_within_root(&path)?;
     off_thread(move || git::list_worktrees(&path)).await
 }
 
 #[tauri::command]
 async fn create_worktree(
+    reg: State<'_, WorkspaceRegistry>,
     repo_path: String,
     branch_name: String,
     base_ref: Option<String>,
 ) -> AppResult<git::WorktreeInfo> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::create_worktree(&repo_path, &branch_name, base_ref.as_deref())).await
 }
 
 #[tauri::command]
-async fn remove_worktree(repo_path: String, name: String, force: bool) -> AppResult<()> {
+async fn remove_worktree(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    name: String,
+    force: bool,
+) -> AppResult<()> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::remove_worktree(&repo_path, &name, force)).await
 }
 
 #[tauri::command]
-async fn changes(worktree_path: String) -> AppResult<Vec<git::FileChange>> {
+async fn changes(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+) -> AppResult<Vec<git::FileChange>> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::changes(&worktree_path)).await
 }
 
 #[tauri::command]
-async fn file_diff(worktree_path: String, file: String, staged: bool) -> AppResult<String> {
+async fn file_diff(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    file: String,
+    staged: bool,
+) -> AppResult<String> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::file_diff(&worktree_path, &file, staged)).await
 }
 
 #[tauri::command]
 async fn file_diff_hunks(
+    reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
     file: String,
     staged: bool,
 ) -> AppResult<Vec<git::DiffHunk>> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::file_diff_hunks(&worktree_path, &file, staged)).await
 }
 
 #[tauri::command]
-async fn diff_stats(worktree_path: String) -> AppResult<git::DiffStatsInfo> {
+async fn diff_stats(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+) -> AppResult<git::DiffStatsInfo> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::diff_stats(&worktree_path)).await
 }
 
 #[tauri::command]
-async fn status_and_stats(worktree_path: String) -> AppResult<git::StatusAndStats> {
+async fn status_and_stats(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+) -> AppResult<git::StatusAndStats> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::status_and_stats(&worktree_path)).await
 }
 
 #[tauri::command]
-async fn list_branches(repo_path: String) -> AppResult<Vec<git::BranchInfo>> {
+async fn list_branches(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+) -> AppResult<Vec<git::BranchInfo>> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::list_branches(&repo_path)).await
 }
 
 #[tauri::command]
-async fn git_log(repo_path: String, limit: usize) -> AppResult<Vec<git::CommitInfo>> {
+async fn git_log(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    limit: usize,
+) -> AppResult<Vec<git::CommitInfo>> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::git_log(&repo_path, limit)).await
 }
 
 #[tauri::command]
-async fn commit_detail(repo_path: String, oid: String) -> AppResult<git::CommitDetail> {
+async fn commit_detail(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+) -> AppResult<git::CommitDetail> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::commit_detail(&repo_path, &oid)).await
 }
 
 #[tauri::command]
-async fn commit_file_diff(repo_path: String, oid: String, file: String) -> AppResult<String> {
+async fn commit_file_diff(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+    file: String,
+) -> AppResult<String> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::commit_file_diff(&repo_path, &oid, &file)).await
 }
 
 #[tauri::command]
-async fn commit_diff(repo_path: String, oid: String) -> AppResult<String> {
+async fn commit_diff(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+) -> AppResult<String> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::commit_diff(&repo_path, &oid)).await
 }
 
 #[tauri::command]
-async fn commit_all(worktree_path: String, message: String) -> AppResult<String> {
+async fn commit_all(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    message: String,
+) -> AppResult<String> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::commit_all(&worktree_path, &message)).await
 }
 
 #[tauri::command]
-async fn stage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
+async fn stage(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    paths: Vec<String>,
+) -> AppResult<()> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::stage_paths(&worktree_path, paths)).await
 }
 
 #[tauri::command]
-async fn unstage(worktree_path: String, paths: Vec<String>) -> AppResult<()> {
+async fn unstage(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    paths: Vec<String>,
+) -> AppResult<()> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::unstage_paths(&worktree_path, paths)).await
 }
 
 #[tauri::command]
-async fn stage_all(worktree_path: String) -> AppResult<()> {
+async fn stage_all(reg: State<'_, WorkspaceRegistry>, worktree_path: String) -> AppResult<()> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::stage_all(&worktree_path)).await
 }
 
 #[tauri::command]
-async fn unstage_all(worktree_path: String) -> AppResult<()> {
+async fn unstage_all(reg: State<'_, WorkspaceRegistry>, worktree_path: String) -> AppResult<()> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::unstage_all(&worktree_path)).await
 }
 
 #[tauri::command]
-async fn commit(worktree_path: String, message: String) -> AppResult<String> {
+async fn commit(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    message: String,
+) -> AppResult<String> {
+    reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::commit(&worktree_path, &message)).await
 }
 
 #[tauri::command]
-async fn pr_for_branch(repo_path: String, branch: String) -> AppResult<Option<github::PrInfo>> {
+async fn pr_for_branch(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    branch: String,
+) -> AppResult<Option<github::PrInfo>> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || github::pr_for_branch(&repo_path, &branch)).await
 }
 
@@ -146,7 +251,11 @@ async fn gh_available() -> bool {
 }
 
 #[tauri::command]
-async fn pr_list(repo_path: String) -> AppResult<Vec<github::PrSummary>> {
+async fn pr_list(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+) -> AppResult<Vec<github::PrSummary>> {
+    reg.ensure_within_root(&repo_path)?;
     off_thread(move || github::pr_list(&repo_path)).await
 }
 
@@ -157,17 +266,37 @@ async fn gh_login() -> Option<String> {
         .unwrap_or(None)
 }
 
+/// The `~/.swarm` directory, created if absent. On Unix it is locked to `0700`
+/// (owner-only): it holds the session snapshot and a copy of the user's Codex
+/// config, neither of which other local accounts should read.
 fn swarm_dir() -> AppResult<std::path::PathBuf> {
-    dirs::home_dir()
+    let dir = dirs::home_dir()
         .map(|h| h.join(".swarm"))
-        .ok_or_else(|| error::AppError::Other("no home directory".into()))
+        .ok_or_else(|| error::AppError::Other("no home directory".into()))?;
+    std::fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
 }
+
+/// Tighten a just-written file to owner read/write only (`0600`) on Unix. No-op
+/// elsewhere. Best-effort: a perms failure shouldn't fail the whole write.
+#[cfg(unix)]
+fn restrict_file(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn restrict_file(_path: &std::path::Path) {}
 
 #[tauri::command]
 fn save_session(data: String) -> AppResult<()> {
-    let dir = swarm_dir()?;
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("session.json"), data)?;
+    let path = swarm_dir()?.join("session.json");
+    std::fs::write(&path, data)?;
+    restrict_file(&path);
     Ok(())
 }
 
@@ -210,7 +339,10 @@ fn prepare_codex_home() -> AppResult<String> {
             "\n# swarm-notify\nnotify = [\"bash\", \"-c\", \"echo 'Turn complete' >> \\\"$SWARM_EVENT_FILE\\\"\", \"--\"]\n",
         );
     }
-    std::fs::write(dst.join("config.toml"), cfg)?;
+    let cfg_path = dst.join("config.toml");
+    std::fs::write(&cfg_path, cfg)?;
+    // Holds a copy of the user's Codex config (may carry auth-adjacent settings).
+    restrict_file(&cfg_path);
     Ok(dst.to_string_lossy().into_owned())
 }
 
@@ -228,9 +360,16 @@ fn claude_session_exists(id: String) -> bool {
 fn pty_spawn(
     app: AppHandle,
     state: State<TerminalManager>,
+    reg: State<WorkspaceRegistry>,
     opts: SpawnOpts,
     on_update: UpdateChannel,
 ) -> AppResult<String> {
+    // A PTY is the most direct path to code execution, so harden the inputs:
+    // non-empty command, and a cwd that resolves inside an opened workspace.
+    if opts.command.trim().is_empty() {
+        return Err(error::AppError::Invalid("empty command".into()));
+    }
+    reg.ensure_within_root(&opts.cwd)?;
     let id = uuid::Uuid::new_v4().to_string();
     state.spawn(app, id.clone(), opts, on_update)?;
     Ok(id)
@@ -264,9 +403,11 @@ fn pty_set_visible(state: State<TerminalManager>, id: String, visible: bool) -> 
 fn watch_worktree(
     app: AppHandle,
     state: State<WatcherManager>,
+    reg: State<WorkspaceRegistry>,
     workspace_id: String,
     path: String,
 ) -> AppResult<()> {
+    reg.ensure_within_root(&path)?;
     state.watch_worktree(app, workspace_id, path)
 }
 
@@ -307,6 +448,7 @@ pub fn run() {
     builder
         .manage(TerminalManager::default())
         .manage(WatcherManager::default())
+        .manage(WorkspaceRegistry::default())
         .menu(|app| {
             let app_menu = SubmenuBuilder::new(app, "swarm")
                 .about(None)
@@ -438,6 +580,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            register_root,
             repo_info,
             list_worktrees,
             create_worktree,

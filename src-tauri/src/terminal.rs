@@ -30,6 +30,11 @@ const FG: i32 = 256; // NamedColor::Foreground
 const BG: i32 = 257; // NamedColor::Background
 const RGB_FLAG: i32 = 0x0100_0000;
 
+/// Max concurrent PTY sessions (see `spawn`). A generous ceiling, not a UX limit.
+const MAX_SESSIONS: usize = 64;
+/// Bounded reader→render queue depth: ~256 × 8 KiB ≈ 2 MB of backpressure.
+const CHUNK_QUEUE_CAP: usize = 256;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnOpts {
@@ -103,8 +108,11 @@ impl EventListener for Proxy {
 }
 
 /// OSC 99 chunk buffers, carried across reads.
+///
+/// `pub(crate)` so the crate-root fuzz entrypoint (`__fuzz_parse_notifications`)
+/// can construct one; fields stay private.
 #[derive(Default)]
-struct NotifState {
+pub(crate) struct NotifState {
     id: Option<String>,
     title: String,
     body: String,
@@ -112,8 +120,9 @@ struct NotifState {
 
 /// Parse OSC 9 / 99 / 777 desktop-notification sequences from a chunk and
 /// return the completed `(title, body)` pairs. OSC 99 (kitty) chunks are
-/// buffered across calls in `st`. Pure — no side effects, so it's unit-tested.
-fn parse_notifications(bytes: &[u8], st: &mut NotifState) -> Vec<(String, String)> {
+/// buffered across calls in `st`. Pure — no side effects, so it's unit-tested
+/// (and fuzzed: see `fuzz/fuzz_targets/parse_notifications.rs`).
+pub(crate) fn parse_notifications(bytes: &[u8], st: &mut NotifState) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let n = bytes.len();
     let mut i = 0;
@@ -404,6 +413,15 @@ impl TerminalManager {
         opts: SpawnOpts,
         on_update: UpdateChannel,
     ) -> AppResult<()> {
+        // Cap concurrent sessions: each PTY holds three OS threads and an emulator,
+        // so an unbounded spawn loop (buggy or hostile frontend) could exhaust file
+        // descriptors / memory. 64 is far beyond any real pane count.
+        if self.sessions.lock().len() >= MAX_SESSIONS {
+            return Err(AppError::Pty(format!(
+                "terminal session limit reached ({MAX_SESSIONS})"
+            )));
+        }
+
         let cols = opts.cols.max(1);
         let rows = opts.rows.max(1);
         let pty_system = portable_pty::native_pty_system();
@@ -486,7 +504,12 @@ impl TerminalManager {
         // Reader thread: pure blocking I/O. It only drains the PTY into a queue —
         // no parsing, no locking the emulator — so read latency never waits on a
         // render. On EOF it reaps the child and announces the exit.
-        let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<u8>>();
+        //
+        // Bounded (sync) channel: under flooding output (`yes`, a huge build log)
+        // the render thread can fall behind. A bounded queue (~2 MB of 8 KiB
+        // chunks) makes the reader block instead of buffering without limit —
+        // the block propagates as OS PTY backpressure, capping memory.
+        let (chunk_tx, chunk_rx) = mpsc::sync_channel::<Vec<u8>>(CHUNK_QUEUE_CAP);
         let sessions = self.sessions.clone();
         let reader_app = app.clone();
         let reader_id = id.clone();
@@ -572,9 +595,12 @@ impl TerminalManager {
                     }
                     last_body = body.clone();
                     last_at = Some(now);
+                    // `source` flags the untrusted origin: this text came from a
+                    // PTY's OSC sequence (any program in the terminal can emit it),
+                    // so the UI labels it and never treats the body as actionable.
                     let _ = app.emit(
                         "term:notify",
-                        serde_json::json!({ "id": id, "title": title, "body": body }),
+                        serde_json::json!({ "id": id, "title": title, "body": body, "source": "terminal" }),
                     );
                     let _ = app.emit("term:attention", serde_json::json!({ "id": id }));
                 }

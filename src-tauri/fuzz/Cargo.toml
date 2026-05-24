@@ -1,0 +1,27 @@
+# Out-of-tree fuzzing crate (cargo-fuzz). NOT a member of the src-tauri package
+# build — `cargo build`/`clippy`/`cargo-deny` in src-tauri never descend here, so
+# the libfuzzer/nightly toolchain stays isolated to the scheduled fuzz workflow.
+[package]
+name = "swarm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.swarm]
+path = ".."
+
+[[bin]]
+name = "parse_notifications"
+path = "fuzz_targets/parse_notifications.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
