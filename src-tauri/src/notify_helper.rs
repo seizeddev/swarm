@@ -17,7 +17,11 @@
 use serde_json::Value;
 use std::io::Read;
 
-const AGENT_NAME: &str = "Claude Code";
+// OSC 777 title for our Claude Stop-hook notification. A sentinel (not the
+// display name) so the frontend can accept *only* our notification on a Claude
+// pane and drop Claude Code's own — see CLAUDE_NOTIF_SENTINEL in store.ts. The
+// UI shows the pane title ("Claude Code"), not this token.
+const AGENT_NAME: &str = "swarm-claude";
 const FALLBACK: &str = "Turn complete";
 const MAX_LEN: usize = 200;
 

@@ -114,6 +114,11 @@ export function __resetNetworkCaches() {
 // Redirect Claude Code's notifications into our terminal: disable its built-in
 // (desktop) channel, and make the Stop hook emit an OSC 777 our parser catches.
 // So notifications fire on turn-completion only — never on startup or the bell.
+// Our Claude Stop hook tags its OSC 777 with this sentinel title (see
+// notify_helper.rs). On a Claude pane we accept only notifications carrying it,
+// dropping Claude Code's *own* terminal notifications so a turn notifies once.
+export const CLAUDE_NOTIF_SENTINEL = "swarm-claude";
+
 function claudeSettings(bin: string): string {
   return JSON.stringify({
     preferredNotifChannel: "notifications_disabled",
@@ -334,7 +339,16 @@ export const useStore = create<State>((set, get) => {
     },
 
     setWindowFocused(v) {
-      if (get().windowFocused !== v) set({ windowFocused: v });
+      if (get().windowFocused === v) return;
+      set({ windowFocused: v });
+      // Regaining focus = you're now looking at the visible pane(s): clear their
+      // attention + mark their notifications read, without needing a pane click.
+      if (v) {
+        const ws = active();
+        if (ws && ws.editor.type === "terminal") {
+          clearAttn((p) => p.workspaceId === ws.id && p.tabId === ws.activeTab);
+        }
+      }
     },
 
     cycleWorkspace(dir) {
@@ -741,11 +755,16 @@ export const useStore = create<State>((set, get) => {
       // in front AND this is the visible pane). Otherwise record it in-app, and
       // if the window is backgrounded, escalate to an OS banner with sound.
       if (!pane || lookingAtPane(pane)) return;
+      // On a Claude pane our Stop hook is the source of truth (sentinel title);
+      // drop Claude Code's own terminal notifications so a turn fires once, with
+      // our real-last-message body — not a duplicate / an intermediate preamble.
+      if (pane.agentId === "claude" && title !== CLAUDE_NOTIF_SENTINEL) return;
+      const shownTitle = pane.agentId === "claude" ? pane.title : title || pane.title;
       const notif: Notif = {
         id: uid("n"),
         workspaceId: pane.workspaceId,
         paneId: pane.paneId,
-        title: title || pane.title,
+        title: shownTitle,
         body,
         ts: Date.now(),
         source: "terminal",

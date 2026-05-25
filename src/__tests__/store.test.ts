@@ -59,7 +59,7 @@ vi.mock("../lib/notify", () => ({
 import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
 import { notifyOS } from "../lib/notify";
-import { __resetNetworkCaches, useActiveWorkspace, useStore } from "../store";
+import { __resetNetworkCaches, CLAUDE_NOTIF_SENTINEL, useActiveWorkspace, useStore } from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -433,6 +433,28 @@ describe("notifications + attention", () => {
     const aiderPane = s().panes.find((p) => p.agentId === "aider")!;
     expect(aiderPane.args).toContain("--notifications-command");
     expect(aiderPane.args).toContain('"/path/to/swarm" --notify-helper event');
+  });
+
+  it("clears the visible pane's attention + marks read when the window regains focus", () => {
+    s().setWindowFocused(false);
+    s().onNotify(ptyId, "Build", "Done"); // visible pane, but window backgrounded
+    expect(s().panes[0].attention).toBe(true);
+    expect(s().notifications[0].read).toBe(false);
+    s().setWindowFocused(true); // alt-tab back into swarm, no pane click
+    expect(s().panes[0].attention).toBe(false);
+    expect(s().notifications[0].read).toBe(true);
+  });
+
+  it("drops Claude's own terminal notifications, keeping only the sentinel-tagged one", () => {
+    s().addPane(CLAUDE);
+    const claudePane = s().panes.find((p) => p.agentId === "claude")!;
+    s().bindPty(claudePane.paneId, "pty-claude");
+    s().openDiff("a.txt", false); // panes not visible
+    s().onNotify("pty-claude", "No response requested.", "noise"); // Claude's own → dropped
+    s().onNotify("pty-claude", CLAUDE_NOTIF_SENTINEL, "Hi 👋"); // ours → kept
+    const mine = s().notifications.filter((n) => n.paneId === claudePane.paneId);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ title: claudePane.title, body: "Hi 👋" });
   });
 
   it("marks a notification read but keeps it in history when its pane is focused", () => {
