@@ -563,6 +563,11 @@ pub fn run() {
                         .build(app)?,
                 )
                 .item(
+                    &MenuItemBuilder::with_id("close_workspace", "Close Project")
+                        .accelerator("CmdOrCtrl+Shift+W")
+                        .build(app)?,
+                )
+                .item(
                     &MenuItemBuilder::with_id("ws_next", "Next Project")
                         .accelerator("CmdOrCtrl+Shift+]")
                         .build(app)?,

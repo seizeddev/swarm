@@ -11,8 +11,9 @@ import {
   Loader2,
   Plus,
   RotateCw,
+  X,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useActiveWorkspace, useStore, type Panel } from "../store";
 import { NotificationsPanel, PullRequestsPanel, SourceControlPanel } from "./panels";
 import { GraphPanel } from "./GraphPanel";
@@ -49,7 +50,15 @@ async function pickRepo(addWorkspace: (p: string) => void) {
   if (typeof dir === "string") addWorkspace(dir);
 }
 
-function WorkspaceSquare({ id, name }: { id: string; name: string }) {
+function WorkspaceSquare({
+  id,
+  name,
+  onMenu,
+}: {
+  id: string;
+  name: string;
+  onMenu: (e: React.MouseEvent, id: string) => void;
+}) {
   const { activeWorkspaceId, setActiveWorkspace } = useStore(
     useShallow((s) => ({
       activeWorkspaceId: s.activeWorkspaceId,
@@ -62,6 +71,7 @@ function WorkspaceSquare({ id, name }: { id: string; name: string }) {
   return (
     <button
       onClick={() => setActiveWorkspace(id)}
+      onContextMenu={(e) => onMenu(e, id)}
       title={name}
       className="relative grid h-8 w-8 place-items-center rounded-[8px] text-[11px] font-bold transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]"
       style={{
@@ -295,18 +305,61 @@ function DevUpdatePreview() {
 
 export function Sidebar() {
   const ws = useActiveWorkspace();
-  const { workspaces, addWorkspace, notifications, error, sidebarVisible, compact, toggleSidebar } =
-    useStore(
-      useShallow((s) => ({
-        workspaces: s.workspaces,
-        addWorkspace: s.addWorkspace,
-        notifications: s.notifications,
-        error: s.error,
-        sidebarVisible: s.sidebarVisible,
-        compact: s.compact,
-        toggleSidebar: s.toggleSidebar,
-      })),
-    );
+  const {
+    workspaces,
+    addWorkspace,
+    closeWorkspaceWithConfirm,
+    notifications,
+    error,
+    sidebarVisible,
+    compact,
+    toggleSidebar,
+  } = useStore(
+    useShallow((s) => ({
+      workspaces: s.workspaces,
+      addWorkspace: s.addWorkspace,
+      closeWorkspaceWithConfirm: s.closeWorkspaceWithConfirm,
+      notifications: s.notifications,
+      error: s.error,
+      sidebarVisible: s.sidebarVisible,
+      compact: s.compact,
+      toggleSidebar: s.toggleSidebar,
+    })),
+  );
+
+  // Right-click context menu for a workspace square. The only entry is "Close
+  // Project"; closing tears down the workspace (kills its PTYs, stops the git
+  // watcher) via the store's closeWorkspace. Positioned at the cursor (fixed),
+  // clamped to stay on-screen, and dismissed on outside-click / Escape / blur.
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuName = menu ? (workspaces.find((w) => w.id === menu.id)?.repo.name ?? "") : "";
+
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    const dismiss = () => setMenu(null);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [menu]);
+
+  // Tear-down with a confirm prompt when an agent is running — see the store's
+  // closeWorkspaceWithConfirm. Shared with the Project ▸ Close Project menu item.
+  const requestClose = (id: string) => {
+    setMenu(null);
+    closeWorkspaceWithConfirm(id);
+  };
 
   // Drag the invisible handle on the panel's right edge to resize it (regular
   // mode only). Writes --panel-w straight to the DOM for a jank-free drag, then
@@ -315,7 +368,8 @@ export function Sidebar() {
     e.preventDefault();
     const startX = e.clientX;
     const root = document.documentElement;
-    const startW = parseFloat(getComputedStyle(root).getPropertyValue("--panel-w")) || PANEL_DEFAULT;
+    const startW =
+      parseFloat(getComputedStyle(root).getPropertyValue("--panel-w")) || PANEL_DEFAULT;
     const onMove = (ev: MouseEvent) => {
       const w = clampPanelWidth(startW + (ev.clientX - startX), window.innerWidth);
       root.style.setProperty("--panel-w", `${w}px`);
@@ -325,7 +379,10 @@ export function Sidebar() {
       window.removeEventListener("mouseup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      localStorage.setItem("panelW", String(parseInt(getComputedStyle(root).getPropertyValue("--panel-w"), 10)));
+      localStorage.setItem(
+        "panelW",
+        String(parseInt(getComputedStyle(root).getPropertyValue("--panel-w"), 10)),
+      );
     };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -343,7 +400,15 @@ export function Sidebar() {
         <div className="divider my-1 w-7" />
 
         {workspaces.map((w) => (
-          <WorkspaceSquare key={w.id} id={w.id} name={w.repo.name} />
+          <WorkspaceSquare
+            key={w.id}
+            id={w.id}
+            name={w.repo.name}
+            onMenu={(e, id) => {
+              e.preventDefault();
+              setMenu({ id, x: e.clientX, y: e.clientY });
+            }}
+          />
         ))}
         <button
           className="icon-btn h-8 w-8"
@@ -461,6 +526,33 @@ export function Sidebar() {
         >
           <div className="absolute -left-1.5 top-0 h-full w-3" />
           <div className="absolute -left-px top-0 h-full w-px bg-transparent transition-colors duration-[var(--dur-fast)] group-hover:bg-[var(--color-border-strong)]" />
+        </div>
+      )}
+
+      {/* Workspace context menu (right-click a rail square). Fixed at the cursor,
+          clamped so it never spills off the viewport edge. Monochrome by design
+          — destructive intent reads through the icon + copy, not hue. */}
+      {menu && (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="surface animate-scale-in fixed z-[70] w-44 p-1.5"
+          style={{
+            left: Math.min(menu.x, window.innerWidth - 188),
+            top: Math.min(menu.y, window.innerHeight - 88),
+          }}
+        >
+          <p className="truncate px-2 py-1.5 text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
+            {menuName}
+          </p>
+          <button
+            role="menuitem"
+            onClick={() => requestClose(menu.id)}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+          >
+            <X size={14} className="text-[var(--color-muted)]" />
+            <span className="flex-1">Close Project</span>
+          </button>
         </div>
       )}
     </>

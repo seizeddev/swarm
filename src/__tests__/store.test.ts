@@ -59,7 +59,12 @@ vi.mock("../lib/notify", () => ({
 import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
 import { notifyOS } from "../lib/notify";
-import { __resetNetworkCaches, CLAUDE_NOTIF_SENTINEL, useActiveWorkspace, useStore } from "../store";
+import {
+  __resetNetworkCaches,
+  CLAUDE_NOTIF_SENTINEL,
+  useActiveWorkspace,
+  useStore,
+} from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -565,6 +570,60 @@ describe("workspace navigation", () => {
     // The worktree watcher for the closed workspace is torn down.
     expect(m.unwatchWorktree).toHaveBeenCalledWith(ids[1]);
   });
+
+  it("closeWorkspaceWithConfirm closes a shell-only workspace without prompting", () => {
+    const ids = s().workspaces.map((w) => w.id);
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    s().closeWorkspaceWithConfirm(ids[1]);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
+    vi.unstubAllGlobals();
+  });
+
+  it("closeWorkspaceWithConfirm prompts when a running agent would be killed", () => {
+    const ids = s().workspaces.map((w) => w.id);
+    m.ptyKill.mockResolvedValue(undefined);
+    // Promote ids[1]'s pane to a live Claude agent (non-shell + a PTY).
+    useStore.setState((st) => ({
+      panes: st.panes.map((p) =>
+        p.workspaceId === ids[1] ? { ...p, agentId: "claude", ptyId: "pty-1" } : p,
+      ),
+    }));
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    s().closeWorkspaceWithConfirm(ids[1]);
+    // Declined → nothing closes.
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(s().workspaces.map((w) => w.id)).toEqual(ids);
+
+    confirm.mockReturnValue(true);
+    s().closeWorkspaceWithConfirm(ids[1]);
+    // Accepted → closed, and its live PTY reaped.
+    expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
+    expect(m.ptyKill).toHaveBeenCalledWith("pty-1");
+    vi.unstubAllGlobals();
+  });
+
+  it("closeWorkspace persists immediately so the close survives a quit", () => {
+    const ids = s().workspaces.map((w) => w.id);
+    useStore.setState({ hydrated: true });
+    m.saveSession.mockClear();
+    s().closeWorkspace(ids[0]);
+    // Written eagerly (not via the debounced autosave), without the closed one.
+    expect(m.saveSession).toHaveBeenCalled();
+    const snap = JSON.parse(m.saveSession.mock.lastCall![0] as string);
+    expect(snap.workspaces.map((w: { id: string }) => w.id)).toEqual([ids[1], ids[2]]);
+  });
+
+  it("closeWorkspaceWithConfirm is a no-op for an unknown id", () => {
+    const confirm = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    s().closeWorkspaceWithConfirm("nope");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(s().workspaces).toHaveLength(3);
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("staging + commit", () => {
@@ -788,7 +847,9 @@ describe("persist + hydrate", () => {
             repoPath: "/repo",
             panel: "scm",
             activeTab: "tab-1",
-            tabs: [{ id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" }],
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
             panes: [
               {
                 paneId: "pane-1",
@@ -815,6 +876,41 @@ describe("persist + hydrate", () => {
     expect(pane.args).toContain("uuid-1");
   });
 
+  it("restores an empty workspace shell, and closing it removes it for good", async () => {
+    // Repro of the resurrecting-workspace bug: closing every terminal leaves a
+    // workspace with no tabs/panes (a valid state — you can still view diffs/PRs),
+    // and hydrate faithfully restores it. Before the close-workspace action there
+    // was no way to drop the shell, so it came back on every launch. Closing must
+    // persist the removal immediately so it stays gone after a quit / reload.
+    m.repoInfo.mockImplementation(async (p: string) => repo(p));
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-empty",
+        workspaces: [
+          {
+            id: "ws-empty",
+            repoPath: "/kairo",
+            panel: "prs",
+            activeTab: null,
+            tabs: [],
+            panes: [],
+          },
+          { id: "ws-2", repoPath: "/auther", panel: "scm", activeTab: null, tabs: [], panes: [] },
+        ],
+      }),
+    );
+    await s().hydrate();
+    // The empty shell is restored — exactly the resurrection users saw.
+    expect(s().workspaces.map((w) => w.id)).toEqual(["ws-empty", "ws-2"]);
+
+    m.saveSession.mockClear();
+    s().closeWorkspace("ws-empty");
+    // Removal is written eagerly (not via the lossy debounce), without the shell.
+    const snap = JSON.parse(m.saveSession.mock.lastCall![0] as string);
+    expect(snap.workspaces.map((w: { id: string }) => w.id)).toEqual(["ws-2"]);
+  });
+
   it("restores an unpersisted Claude session via --session-id, not --resume", async () => {
     // A session opened but never used has no transcript on disk, so `--resume`
     // would fail with "No conversation found". Restore must start it fresh,
@@ -830,7 +926,9 @@ describe("persist + hydrate", () => {
             repoPath: "/repo",
             panel: "scm",
             activeTab: "tab-1",
-            tabs: [{ id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" }],
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
             panes: [
               {
                 paneId: "pane-1",
@@ -875,7 +973,14 @@ describe("persist + hydrate", () => {
         v: 1,
         activeWorkspaceId: "ws-1",
         workspaces: [
-          { id: "ws-1", repoPath: "/repo", panel: "terminals", activeTab: null, tabs: [], panes: [] },
+          {
+            id: "ws-1",
+            repoPath: "/repo",
+            panel: "terminals",
+            activeTab: null,
+            tabs: [],
+            panes: [],
+          },
         ],
       }),
     );
@@ -890,7 +995,14 @@ describe("persist + hydrate", () => {
         v: 1,
         activeWorkspaceId: "ws-gone",
         workspaces: [
-          { id: "ws-gone", repoPath: "/deleted", panel: "terminals", activeTab: null, tabs: [], panes: [] },
+          {
+            id: "ws-gone",
+            repoPath: "/deleted",
+            panel: "terminals",
+            activeTab: null,
+            tabs: [],
+            panes: [],
+          },
         ],
       }),
     );

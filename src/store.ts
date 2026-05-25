@@ -126,7 +126,9 @@ function claudeSettings(bin: string): string {
       Stop: [
         {
           matcher: "",
-          hooks: [{ type: "command", command: `"${bin}" --notify-helper claude-stop`, timeout: 10 }],
+          hooks: [
+            { type: "command", command: `"${bin}" --notify-helper claude-stop`, timeout: 10 },
+          ],
         },
       ],
     },
@@ -150,7 +152,12 @@ function launchArgs(
   // Aider has no hook config; it takes a completion command via launch flag.
   // No assistant text is passed, so the body is the "Turn complete" fallback.
   if (agent.id === "aider") {
-    return [...base, "--notifications", "--notifications-command", `"${bin}" --notify-helper event`];
+    return [
+      ...base,
+      "--notifications",
+      "--notifications-command",
+      `"${bin}" --notify-helper event`,
+    ];
   }
   return base;
 }
@@ -185,6 +192,7 @@ interface State {
   hydrate(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   closeWorkspace(id: string): void;
+  closeWorkspaceWithConfirm(id: string): void;
   setActiveWorkspace(id: string): void;
   cycleWorkspace(dir: number): void;
   focusWorkspaceIndex(i: number): void;
@@ -407,7 +415,10 @@ export const useStore = create<State>((set, get) => {
           api.swarmBin().catch(() => null),
         ]);
         set({ agents, ghAvailable: gh, eventsDir, swarmBin });
-        api.prepareCodexHome().then((p) => set({ codexHome: p })).catch(() => {});
+        api
+          .prepareCodexHome()
+          .then((p) => set({ codexHome: p }))
+          .catch(() => {});
         // Install completion-notification hooks for agents without an isolated
         // config (Gemini/Cursor/OpenCode/Amp). Best-effort, gated on PATH in Rust.
         api.installAgentHooks().catch(() => {});
@@ -431,7 +442,13 @@ export const useStore = create<State>((set, get) => {
               id: sw.id,
               repo,
               // Migrate the retired "terminals" panel (and any unknown) to scm.
-              panel: sw.panel === "scm" || sw.panel === "prs" || sw.panel === "notifications" || sw.panel === "history" ? sw.panel : "scm",
+              panel:
+                sw.panel === "scm" ||
+                sw.panel === "prs" ||
+                sw.panel === "notifications" ||
+                sw.panel === "history"
+                  ? sw.panel
+                  : "scm",
               editor: { type: "terminal" },
               tabs: sw.tabs,
               activeTab: sw.activeTab,
@@ -450,9 +467,7 @@ export const useStore = create<State>((set, get) => {
               const agent = agents.find((a) => a.id === sp.agentId);
               let resume = true;
               if (agent?.id === "claude") {
-                resume = sp.sessionId
-                  ? await api.claudeSessionExists(sp.sessionId)
-                  : false;
+                resume = sp.sessionId ? await api.claudeSessionExists(sp.sessionId) : false;
               }
               const args = agent
                 ? launchArgs(agent, sp.sessionId, resume, swarmBin ?? "swarm")
@@ -474,7 +489,9 @@ export const useStore = create<State>((set, get) => {
             }
           }
           const activeWorkspaceId =
-            workspaces.find((w) => w.id === snap.activeWorkspaceId)?.id ?? workspaces[0]?.id ?? null;
+            workspaces.find((w) => w.id === snap.activeWorkspaceId)?.id ??
+            workspaces[0]?.id ??
+            null;
           set({ workspaces, panes, activeWorkspaceId });
           for (const w of workspaces) {
             api.watchWorktree(w.id, w.repo.path).catch(() => {});
@@ -547,6 +564,33 @@ export const useStore = create<State>((set, get) => {
             s.activeWorkspaceId === id ? (workspaces[0]?.id ?? null) : s.activeWorkspaceId,
         };
       });
+      // Persist *immediately*, don't wait for the debounced autosave. Closing is
+      // a deliberate, structural change, and it's commonly the last thing done
+      // before quitting — the 400ms debounce (App.tsx) would lose it if the
+      // window closed first, and the workspace would resurrect on next launch.
+      get().persist();
+    },
+
+    // Close, but prompt first when the workspace has a *running agent* (a
+    // non-shell pane with a live PTY) — the case where closing silently kills
+    // work (a Claude / Codex session). A bare shell, or an empty workspace,
+    // closes without a prompt. Shared by the rail's context menu and the
+    // Project ▸ Close Project menu item (Cmd+Shift+W).
+    closeWorkspaceWithConfirm(id) {
+      const ws = get().workspaces.find((w) => w.id === id);
+      if (!ws) return;
+      const running = get().panes.filter(
+        (p) => p.workspaceId === id && p.agentId !== "shell" && p.ptyId,
+      );
+      if (running.length) {
+        const kinds = [...new Set(running.map((p) => p.agentId))].join(", ");
+        const plural = running.length > 1 ? "s" : "";
+        const ok = globalThis.confirm(
+          `Close “${ws.repo.name}”?\n\n${running.length} running agent${plural} (${kinds}) will be stopped.`,
+        );
+        if (!ok) return;
+      }
+      get().closeWorkspace(id);
     },
 
     setActiveWorkspace(id) {
