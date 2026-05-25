@@ -92,6 +92,18 @@ export function Workspace() {
               }
             >
               <Terminal pane={p} visible={shown} focused={shown && focused} />
+              {/* Dim the unfocused panes in a split so the active one reads as
+                  in focus. A background-tinted overlay (not CSS opacity) keeps
+                  the cell grid crisp while it recedes — mirrors cmux's
+                  unfocused-split overlay (~0.3 alpha). pointer-events-none so a
+                  click still falls through to select the pane. */}
+              {split && shown && !focused && (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 z-10 transition-opacity duration-[var(--dur-fast)]"
+                  style={{ background: "var(--color-bg)", opacity: 0.3 }}
+                />
+              )}
               {split && shown && (
                 <button
                   onMouseDown={(e) => e.stopPropagation()}

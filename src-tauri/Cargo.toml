@@ -46,6 +46,21 @@ fix-path-env = { version = "0.0.0", git = "https://github.com/tauri-apps/fix-pat
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 
+# We emit native notifications ourselves (instead of tauri-plugin-notification)
+# so a click can focus the window + jump to the right pane — no desktop backend
+# in the plugin exposes a click callback. Each OS needs its own crate:
+#   macOS   — mac-notification-sys: send_notification blocks, returns the click.
+#   Linux   — notify-rust: a "default" action + wait_for_action (zbus, async).
+#   Windows — tauri-winrt-notification: Toast::on_activated callback.
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-winrt-notification = "0.7"
+
 [profile.release]
 codegen-units = 1
 lto = true

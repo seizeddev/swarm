@@ -51,6 +51,15 @@ export const api = {
     invoke<void>("unwatch_worktree", { workspaceId }),
   listAgents: () => invoke<AgentDef[]>("list_agents"),
   claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
+  swarmBin: () => invoke<string>("swarm_bin"),
+  installAgentHooks: () => invoke<void>("install_agent_hooks"),
+  notifyOs: (
+    title: string,
+    body: string,
+    sound: string | undefined,
+    paneId: string,
+    workspaceId: string,
+  ) => invoke<void>("notify_os", { title, body, sound, paneId, workspaceId }),
 
   ptySpawn: (
     opts: {

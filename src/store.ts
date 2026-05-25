@@ -12,6 +12,7 @@ import {
   splitId,
 } from "./lib/layout";
 import { loadSnap, saveSnap } from "./lib/persist";
+import { notifyOS } from "./lib/notify";
 import { updater } from "./lib/updater";
 import type { AgentDef, DiffStatsInfo, FileChange, PrSummary, RepoInfo } from "./lib/types";
 
@@ -72,6 +73,10 @@ export interface Notif {
   // a program in the terminal ("terminal"), or an agent's Stop hook ("agent").
   // The UI labels terminal-sourced notifications and never acts on their body.
   source: "terminal" | "agent";
+  // Unread until you focus the pane it came from (or click it in the panel).
+  // Read notifications stay in the history list — only the unread *count* (the
+  // Bell badge) clears, so re-focusing a terminal silences it without erasing it.
+  read: boolean;
 }
 
 // Self-update lifecycle. `progress` is 0..1, meaningful only while downloading.
@@ -109,25 +114,40 @@ export function __resetNetworkCaches() {
 // Redirect Claude Code's notifications into our terminal: disable its built-in
 // (desktop) channel, and make the Stop hook emit an OSC 777 our parser catches.
 // So notifications fire on turn-completion only — never on startup or the bell.
-const claudeStopOsc =
-  `printf '%s' '{"terminalSequence":"\\u001b]777;notify;Claude Code;Turn complete\\u0007"}'`;
-const CLAUDE_SETTINGS = JSON.stringify({
-  preferredNotifChannel: "notifications_disabled",
-  hooks: {
-    Stop: [{ matcher: "", hooks: [{ type: "command", command: claudeStopOsc, timeout: 10 }] }],
-  },
-});
+function claudeSettings(bin: string): string {
+  return JSON.stringify({
+    preferredNotifChannel: "notifications_disabled",
+    hooks: {
+      Stop: [
+        {
+          matcher: "",
+          hooks: [{ type: "command", command: `"${bin}" --notify-helper claude-stop`, timeout: 10 }],
+        },
+      ],
+    },
+  });
+}
 
 // Per-agent launch args: instrument Claude (session id + settings), and on
 // restore use each agent's resume command. Other agents that emit OSC
 // notifications are handled generically by the terminal parser.
-function launchArgs(agent: AgentDef, sessionId: string | undefined, resume: boolean): string[] {
+function launchArgs(
+  agent: AgentDef,
+  sessionId: string | undefined,
+  resume: boolean,
+  bin: string,
+): string[] {
   if (agent.id === "claude" && sessionId) {
     const base = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
-    return [...base, "--settings", CLAUDE_SETTINGS];
+    return [...base, "--settings", claudeSettings(bin)];
   }
-  if (resume && agent.resume.length) return agent.resume;
-  return agent.args;
+  const base = resume && agent.resume.length ? agent.resume : agent.args;
+  // Aider has no hook config; it takes a completion command via launch flag.
+  // No assistant text is passed, so the body is the "Turn complete" fallback.
+  if (agent.id === "aider") {
+    return [...base, "--notifications", "--notifications-command", `"${bin}" --notify-helper event`];
+  }
+  return base;
 }
 
 interface State {
@@ -145,6 +165,13 @@ interface State {
   // overlays the workspace as a drawer instead of pushing it. Driven by a
   // matchMedia listener in App; components read it to switch layout mode.
   compact: boolean;
+  // Whether the swarm window is the focused/foreground window. Drives whether a
+  // background notification escalates to an OS banner (see onNotify). Default
+  // true so the app behaves as "in front" until told otherwise.
+  windowFocused: boolean;
+  // Absolute path to our own binary (from the backend), used to build agent
+  // hooks that re-invoke `<swarmBin> --notify-helper …`. Resolved on hydrate.
+  swarmBin: string | null;
   eventsDir: string | null;
   codexHome: string | null;
   update: UpdateState;
@@ -162,6 +189,7 @@ interface State {
   setPanel(p: Panel): void;
   toggleSidebar(): void;
   setCompact(v: boolean): void;
+  setWindowFocused(v: boolean): void;
   closeActivePane(): void;
 
   addPane(agent?: AgentDef, wsId?: string): void;
@@ -207,10 +235,20 @@ export const useStore = create<State>((set, get) => {
         w.id === wsId ? { ...w, tabs: w.tabs.map((t) => (t.id === tabId ? fn(t) : t)) } : w,
       ),
     }));
+  // Focusing a pane both clears its attention dot and marks its notifications
+  // read — they stay in the history list, but the unread Bell badge drops. So
+  // "re-focus the terminal it came from" silences the notification without
+  // erasing it.
   const clearAttn = (predicate: (p: Pane) => boolean) =>
-    set((s) => ({
-      panes: s.panes.map((p) => (predicate(p) ? { ...p, attention: false } : p)),
-    }));
+    set((s) => {
+      const focusedPaneIds = new Set(s.panes.filter(predicate).map((p) => p.paneId));
+      return {
+        panes: s.panes.map((p) => (predicate(p) ? { ...p, attention: false } : p)),
+        notifications: s.notifications.map((n) =>
+          focusedPaneIds.has(n.paneId) && !n.read ? { ...n, read: true } : n,
+        ),
+      };
+    });
   // In compact mode the panel floats over the workspace as a drawer; once the
   // user picks something from it (a file/PR/commit), dismiss it so the chosen
   // view isn't hidden behind it. A no-op in regular mode (push layout).
@@ -227,6 +265,13 @@ export const useStore = create<State>((set, get) => {
       ws.editor.type === "terminal"
     );
   };
+
+  // "Looking at it" = the swarm window is in front AND this pane is the visible
+  // one. Only then is a notification pointless. If the window is backgrounded
+  // (another app, minimized, behind a window), you can't see even the visible
+  // pane — so it still warrants an OS banner. Mirrors cmux's app-focus + active
+  // -pane gate (our own implementation).
+  const lookingAtPane = (pane: Pane) => get().windowFocused && paneVisible(pane);
 
   // Per-pane env: SWARM_EVENT_FILE wires the generic notification watcher;
   // CODEX_HOME redirects Codex onto our notify-enabled config.
@@ -252,7 +297,7 @@ export const useStore = create<State>((set, get) => {
       title: a?.name ?? "Shell",
       agentId,
       command: a?.command ?? "bash",
-      args: a ? launchArgs(a, sessionId, false) : [],
+      args: a ? launchArgs(a, sessionId, false, get().swarmBin ?? "swarm") : [],
       cwd: ws.repo.path,
       attention: false,
       sessionId,
@@ -272,6 +317,8 @@ export const useStore = create<State>((set, get) => {
     hydrated: false,
     sidebarVisible: true,
     compact: false,
+    windowFocused: true,
+    swarmBin: null,
     eventsDir: null,
     codexHome: null,
     update: { status: "idle", progress: 0 },
@@ -284,6 +331,10 @@ export const useStore = create<State>((set, get) => {
 
     setCompact(v) {
       if (get().compact !== v) set({ compact: v });
+    },
+
+    setWindowFocused(v) {
+      if (get().windowFocused !== v) set({ windowFocused: v });
     },
 
     cycleWorkspace(dir) {
@@ -335,13 +386,17 @@ export const useStore = create<State>((set, get) => {
 
     async hydrate() {
       try {
-        const [agents, gh, eventsDir] = await Promise.all([
+        const [agents, gh, eventsDir, swarmBin] = await Promise.all([
           api.listAgents(),
           ghAvailableOnce(),
           api.eventsDir().catch(() => null),
+          api.swarmBin().catch(() => null),
         ]);
-        set({ agents, ghAvailable: gh, eventsDir });
+        set({ agents, ghAvailable: gh, eventsDir, swarmBin });
         api.prepareCodexHome().then((p) => set({ codexHome: p })).catch(() => {});
+        // Install completion-notification hooks for agents without an isolated
+        // config (Gemini/Cursor/OpenCode/Amp). Best-effort, gated on PATH in Rust.
+        api.installAgentHooks().catch(() => {});
         const snap = await loadSnap();
         if (snap?.workspaces.length) {
           const workspaces: Workspace[] = [];
@@ -385,7 +440,9 @@ export const useStore = create<State>((set, get) => {
                   ? await api.claudeSessionExists(sp.sessionId)
                   : false;
               }
-              const args = agent ? launchArgs(agent, sp.sessionId, resume) : sp.args;
+              const args = agent
+                ? launchArgs(agent, sp.sessionId, resume, swarmBin ?? "swarm")
+                : sp.args;
               panes.push({
                 paneId: sp.paneId,
                 workspaceId: sw.id,
@@ -672,7 +729,7 @@ export const useStore = create<State>((set, get) => {
 
     onAttention(ptyId) {
       const pane = get().panes.find((p) => p.ptyId === ptyId);
-      if (!pane || paneVisible(pane)) return;
+      if (!pane || lookingAtPane(pane)) return;
       set((s) => ({
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
       }));
@@ -680,8 +737,10 @@ export const useStore = create<State>((set, get) => {
 
     onNotify(ptyId, title, body) {
       const pane = get().panes.find((p) => p.ptyId === ptyId);
-      // Suppress entirely when you're already looking at the pane (cmux behaviour).
-      if (!pane || paneVisible(pane)) return;
+      // Suppress entirely only when you're already looking at the pane (window
+      // in front AND this is the visible pane). Otherwise record it in-app, and
+      // if the window is backgrounded, escalate to an OS banner with sound.
+      if (!pane || lookingAtPane(pane)) return;
       const notif: Notif = {
         id: uid("n"),
         workspaceId: pane.workspaceId,
@@ -690,16 +749,18 @@ export const useStore = create<State>((set, get) => {
         body,
         ts: Date.now(),
         source: "terminal",
+        read: false,
       };
       set((s) => ({
         notifications: [notif, ...s.notifications].slice(0, 100),
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
       }));
+      if (!get().windowFocused) notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
     },
 
     onPaneNotify(paneId, body) {
       const pane = get().panes.find((p) => p.paneId === paneId);
-      if (!pane || paneVisible(pane)) return;
+      if (!pane || lookingAtPane(pane)) return;
       const notif: Notif = {
         id: uid("n"),
         workspaceId: pane.workspaceId,
@@ -708,11 +769,13 @@ export const useStore = create<State>((set, get) => {
         body,
         ts: Date.now(),
         source: "agent",
+        read: false,
       };
       set((s) => ({
         notifications: [notif, ...s.notifications].slice(0, 100),
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
       }));
+      if (!get().windowFocused) notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
     },
 
     onTitle(ptyId, title) {

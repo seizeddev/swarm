@@ -28,6 +28,9 @@ vi.mock("../lib/ipc", () => ({
     unwatchWorktree: vi.fn(),
     listAgents: vi.fn(),
     claudeSessionExists: vi.fn(),
+    swarmBin: vi.fn(),
+    installAgentHooks: vi.fn(),
+    notifyOs: vi.fn(),
     ptySpawn: vi.fn(),
     ptyWrite: vi.fn(),
     ptyResize: vi.fn(),
@@ -46,12 +49,21 @@ vi.mock("../lib/updater", () => ({
   },
 }));
 
+// Mock the OS-notification boundary: notifyOS becomes a spy we assert on, so
+// tests verify *when* a background notification escalates to an OS banner
+// without touching the real tauri-plugin-notification.
+vi.mock("../lib/notify", () => ({
+  notifyOS: vi.fn(),
+}));
+
 import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
+import { notifyOS } from "../lib/notify";
 import { __resetNetworkCaches, useActiveWorkspace, useStore } from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const notifyOSMock = notifyOS as unknown as ReturnType<typeof vi.fn>;
 
 const SHELL: AgentDef = {
   id: "shell",
@@ -68,6 +80,14 @@ const CLAUDE: AgentDef = {
   args: [],
   installed: true,
   resume: ["--continue"],
+};
+const AIDER: AgentDef = {
+  id: "aider",
+  name: "Aider",
+  command: "aider",
+  args: [],
+  installed: true,
+  resume: [],
 };
 
 const repo = (path = "/repo"): RepoInfo => ({
@@ -91,6 +111,8 @@ const INITIAL = {
   error: null,
   hydrated: false,
   sidebarVisible: true,
+  windowFocused: true,
+  swarmBin: null,
   eventsDir: null,
   codexHome: null,
   update: { status: "idle" as const, progress: 0 },
@@ -105,6 +127,8 @@ beforeEach(() => {
   m.ghAvailable.mockResolvedValue(false);
   m.listAgents.mockResolvedValue([SHELL, CLAUDE]);
   m.claudeSessionExists.mockResolvedValue(true);
+  m.swarmBin.mockResolvedValue("/path/to/swarm");
+  m.installAgentHooks.mockResolvedValue(undefined);
   m.statusAndStats.mockResolvedValue({
     changes: [],
     stats: { filesChanged: 0, insertions: 0, deletions: 0 },
@@ -362,6 +386,63 @@ describe("notifications + attention", () => {
     expect(s().notifications).toHaveLength(1);
     expect(s().notifications[0]).toMatchObject({ paneId, title: "Build", body: "Done" });
     expect(s().panes[0].attention).toBe(true);
+  });
+
+  it("does not raise an OS banner while the window is focused (in-app only)", () => {
+    s().openDiff("a.txt", false); // not visible, but window still focused
+    s().onNotify(ptyId, "Build", "Done");
+    expect(s().notifications).toHaveLength(1);
+    expect(notifyOSMock).not.toHaveBeenCalled();
+  });
+
+  it("raises an OS banner when the window is backgrounded, even for the visible pane", () => {
+    s().setWindowFocused(false); // pane is the visible one, but window is in the background
+    s().onNotify(ptyId, "Build", "Done");
+    expect(s().notifications).toHaveLength(1);
+    expect(s().panes[0].attention).toBe(true);
+    expect(notifyOSMock).toHaveBeenCalledWith("Build", "Done", paneId, s().panes[0].workspaceId);
+  });
+
+  it("escalates onPaneNotify to an OS banner when backgrounded", () => {
+    s().setWindowFocused(false);
+    s().onPaneNotify(paneId, "agent done");
+    expect(notifyOSMock).toHaveBeenCalledWith(
+      s().panes[0].title,
+      "agent done",
+      paneId,
+      s().panes[0].workspaceId,
+    );
+  });
+
+  it("still suppresses entirely while looking at the pane (focused + visible)", () => {
+    s().onNotify(ptyId, "Build", "Done");
+    expect(s().notifications).toHaveLength(0);
+    expect(notifyOSMock).not.toHaveBeenCalled();
+  });
+
+  it("flags attention for the visible pane when the window is backgrounded", () => {
+    s().setWindowFocused(false);
+    s().onAttention(ptyId);
+    expect(s().panes[0].attention).toBe(true);
+  });
+
+  it("wires Aider's completion notification via its launch flag", async () => {
+    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm" });
+    await s().addWorkspace("/repo");
+    s().addPane(AIDER);
+    const aiderPane = s().panes.find((p) => p.agentId === "aider")!;
+    expect(aiderPane.args).toContain("--notifications-command");
+    expect(aiderPane.args).toContain('"/path/to/swarm" --notify-helper event');
+  });
+
+  it("marks a notification read but keeps it in history when its pane is focused", () => {
+    s().openDiff("a.txt", false); // pane not visible → notification recorded unread
+    s().onNotify(ptyId, "Build", "Done");
+    expect(s().notifications[0].read).toBe(false);
+    s().selectPane(paneId); // re-focus the source terminal
+    expect(s().notifications).toHaveLength(1); // still in history
+    expect(s().notifications[0].read).toBe(true); // but read
+    expect(s().panes[0].attention).toBe(false);
   });
 
   it("falls back to the pane title when the notification title is empty", () => {

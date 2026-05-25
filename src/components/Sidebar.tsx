@@ -4,6 +4,7 @@ import {
   ArrowUpCircle,
   Bell,
   Download,
+  FlaskConical,
   GitBranch,
   GitPullRequest,
   History,
@@ -11,6 +12,7 @@ import {
   Plus,
   RotateCw,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useActiveWorkspace, useStore, type Panel } from "../store";
 import { NotificationsPanel, PullRequestsPanel, SourceControlPanel } from "./panels";
 import { GraphPanel } from "./GraphPanel";
@@ -139,14 +141,16 @@ function RailButton({
   );
 }
 
-// Self-update indicator pinned to the bottom of the panel. Monochrome by design
-// — brightness, never hue (status colours are reserved for git state). Idle =
-// renders nothing. Clicking it drives the lifecycle: available → download →
-// ready → relaunch.
-function UpdateBanner() {
-  // Stable per-field selectors: the banner re-renders only when `update`
-  // changes — never on unrelated store churn (panes, git status, …). Actions
-  // are stable refs in zustand, so selecting them costs no extra renders.
+// Self-update indicator pinned to the bottom of the *rail* (main sidebar) as a
+// compact icon — the full dialog reveals on hover. Monochrome by design —
+// brightness, never hue (status colours are reserved for git state). Idle =
+// renders nothing. Clicking the icon drives the lifecycle: available →
+// download → ready → relaunch.
+type UpdateConfig = { icon: ReactNode; title: string; sub: string; onClick?: () => void };
+
+function RailUpdate() {
+  // Stable per-field selectors: re-renders only when `update` changes — never
+  // on unrelated store churn. Actions are stable refs in zustand.
   const update = useStore((s) => s.update);
   const installUpdate = useStore((s) => s.installUpdate);
   const restartForUpdate = useStore((s) => s.restartForUpdate);
@@ -156,27 +160,27 @@ function UpdateBanner() {
   const pct = Math.round(update.progress * 100);
   const busy = update.status === "downloading";
 
-  const config = {
+  const config: UpdateConfig = {
     available: {
-      icon: <Download size={15} />,
+      icon: <Download size={16} />,
       title: "Update available",
       sub: update.version ? `v${update.version}` : "Click to install",
       onClick: installUpdate,
     },
     downloading: {
-      icon: <Loader2 size={15} className="spin" />,
+      icon: <Loader2 size={16} className="spin" />,
       title: "Downloading update…",
       sub: `${pct}%`,
       onClick: undefined,
     },
     ready: {
-      icon: <RotateCw size={15} />,
+      icon: <RotateCw size={16} />,
       title: "Restart to update",
       sub: update.version ? `v${update.version} ready` : "Ready",
       onClick: restartForUpdate,
     },
     error: {
-      icon: <ArrowUpCircle size={15} />,
+      icon: <ArrowUpCircle size={16} />,
       title: "Update failed",
       sub: "Click to retry",
       onClick: checkForUpdate,
@@ -184,39 +188,107 @@ function UpdateBanner() {
   }[update.status];
 
   return (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={config.onClick}
-      title={update.notes || config.title}
-      className="relative m-3 flex items-center gap-2.5 overflow-hidden rounded-xl px-3 py-2.5 text-left transition disabled:cursor-default"
-      style={{
-        background: "var(--color-surface-2)",
-        border: "0.5px solid rgba(255,255,255,0.12)",
-        boxShadow: "inset 0 0.5px 0 rgba(255,255,255,0.12)",
-      }}
-    >
-      <span
-        className="relative grid h-7 w-7 flex-none place-items-center rounded-[8px] text-[var(--color-text)]"
-        style={{ background: "var(--color-accent-soft)" }}
+    <div className="group relative">
+      {/* The rail icon. A pulsing dot flags an available update; while
+          downloading, a thin progress arc lives at the icon's foot. */}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={config.onClick}
+        aria-label={config.title}
+        className="icon-btn relative h-8 w-8 overflow-hidden disabled:cursor-default"
+        data-active={update.status === "available" || update.status === "ready"}
       >
         {config.icon}
         {update.status === "available" && (
-          <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text)] ring-2 ring-[var(--color-surface-2)]" />
+          <span className="absolute right-1 top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text)] ring-2 ring-[var(--color-panel)]" />
         )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] font-semibold text-[var(--color-text)]">
-          {config.title}
-        </span>
-        <span className="nums block truncate text-[11px] text-[var(--color-muted)]">{config.sub}</span>
-      </span>
-      {busy && (
-        <span
-          className="absolute inset-x-0 bottom-0 h-0.5 transition-[width] duration-200"
-          style={{ width: `${pct}%`, background: "var(--color-text)" }}
-        />
-      )}
+        {busy && (
+          <span
+            className="absolute inset-x-0 bottom-0 h-0.5 transition-[width] duration-200"
+            style={{ width: `${pct}%`, background: "var(--color-text)" }}
+          />
+        )}
+      </button>
+
+      {/* Hover popover — the full dialog, revealed to the right of the rail.
+          The pl-2 wrapper is a hover bridge (abuts the icon, no dead gap), so
+          the mouse can travel from icon to card without the popover flickering.
+          pointer-events flip on so links/buttons inside are clickable. */}
+      <div className="pointer-events-none absolute bottom-0 left-full z-50 pl-2 opacity-0 transition-opacity duration-[var(--dur-fast)] group-hover:pointer-events-auto group-hover:opacity-100">
+        <div className="surface animate-scale-in w-64 p-3">
+          <div className="flex items-center gap-2.5">
+            <span
+              className="grid h-7 w-7 flex-none place-items-center rounded-[8px] text-[var(--color-text)]"
+              style={{ background: "var(--color-accent-soft)" }}
+            >
+              {config.icon}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-semibold text-[var(--color-text)]">
+                {config.title}
+              </span>
+              <span className="nums block truncate text-[11px] text-[var(--color-muted)]">
+                {config.sub}
+              </span>
+            </span>
+          </div>
+
+          {busy && (
+            <div className="mt-3 h-1 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+              <div
+                className="h-full transition-[width] duration-200"
+                style={{ width: `${pct}%`, background: "var(--color-text)" }}
+              />
+            </div>
+          )}
+
+          {update.notes && !busy && (
+            <p className="mt-2.5 max-h-32 overflow-y-auto whitespace-pre-line text-[11.5px] leading-relaxed text-[var(--color-muted)]">
+              {update.notes}
+            </p>
+          )}
+
+          {config.onClick && (
+            <button type="button" onClick={config.onClick} className="btn btn-accent mt-3 w-full">
+              {config.title}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Dev-only: cycle the update lifecycle so the dialog + hover popover can be
+// previewed in `tauri dev` / the Vite server, where no real update ever fires.
+// Stripped from production builds (import.meta.env.DEV is false there).
+function DevUpdatePreview() {
+  if (!import.meta.env.DEV) return null;
+  const states = ["idle", "available", "downloading", "ready", "error"] as const;
+  const cycle = () => {
+    const cur = useStore.getState().update.status;
+    const next = states[(states.indexOf(cur) + 1) % states.length];
+    useStore.setState({
+      update: {
+        status: next,
+        version: next === "idle" ? undefined : "9.9.9",
+        notes:
+          next === "idle"
+            ? undefined
+            : "Dev preview — release notes render here.\n\n• A multi-line body\n• scrolls if it gets long\n• and wraps naturally.",
+        progress: next === "downloading" ? 0.42 : next === "ready" ? 1 : 0,
+      },
+    });
+  };
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      title="Dev: cycle update state"
+      className="icon-btn h-8 w-8 opacity-40 transition hover:opacity-100"
+    >
+      <FlaskConical size={15} />
     </button>
   );
 }
@@ -294,13 +366,22 @@ export function Sidebar() {
             <RailButton panel="prs" title="Pull Requests" badge={ws.prs.length}>
               <GitPullRequest size={16} />
             </RailButton>
-            <RailButton panel="notifications" title="Notifications" badge={notifications.length}>
+            <RailButton
+              panel="notifications"
+              title="Notifications"
+              badge={notifications.filter((n) => !n.read).length}
+            >
               <Bell size={16} />
             </RailButton>
           </div>
         )}
 
         <div className="flex-1" />
+
+        {/* Pinned to the rail's foot: the self-update icon (hover for the full
+            dialog) and, in dev only, the preview cycler. */}
+        <RailUpdate />
+        <DevUpdatePreview />
       </div>
 
       {/* Scrim — only in compact mode, where the panel floats over the
@@ -366,10 +447,6 @@ export function Sidebar() {
             {error}
           </div>
         )}
-
-        <div className="flex-none">
-          <UpdateBanner />
-        </div>
       </div>
 
       {/* Invisible resize handle straddling the panel's right edge (regular mode

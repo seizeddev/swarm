@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  X,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useActiveWorkspace, useStore } from "../store";
@@ -255,14 +256,26 @@ export function NotificationsPanel() {
             <div
               key={n.id}
               onClick={() => {
+                // Navigate to the source terminal (selectPane restores the
+                // terminal editor even if you're on a PR/diff) and mark it read
+                // — but keep it in the history list rather than dismissing it.
                 setActiveWorkspace(n.workspaceId);
-                selectPane(n.paneId); // also restores the terminals panel
-                dismissNotification(n.id);
+                selectPane(n.paneId);
               }}
-              className="row animate-fade-rise mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"
+              // Read entries stay in the list but recede — the unread ones carry
+              // the solid leading dot and full contrast.
+              style={{ opacity: n.read ? 0.55 : 1 }}
+              className="group row animate-fade-rise mb-1.5 flex cursor-pointer flex-col gap-0.5 px-3 py-2.5"
             >
               <div className="flex items-center gap-2">
-                <span className="h-2 w-2 flex-none rounded-full" style={{ background: "var(--color-text)" }} />
+                <span
+                  className="h-2 w-2 flex-none rounded-full"
+                  style={
+                    n.read
+                      ? { boxShadow: "inset 0 0 0 1px var(--color-faint)" }
+                      : { background: "var(--color-text)" }
+                  }
+                />
                 <span className="flex-1 truncate text-[13px] font-medium">{n.title}</span>
                 {n.source === "terminal" && (
                   // Untrusted origin: this text came from a program in the
@@ -278,6 +291,16 @@ export function NotificationsPanel() {
                 <span className="nums text-[11px] text-[var(--color-faint)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dismissNotification(n.id);
+                  }}
+                  title="Remove from history"
+                  className="icon-btn h-5 w-5 flex-none opacity-0 transition group-hover:opacity-100"
+                >
+                  <X size={12} />
+                </button>
               </div>
               {n.body && (
                 <span className="truncate pl-4 text-[12px] text-[var(--color-muted)]">{n.body}</span>

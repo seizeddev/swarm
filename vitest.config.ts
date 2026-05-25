@@ -14,6 +14,7 @@ export default defineConfig({
         "src/lib/types.ts",
         "src/lib/ipc.ts",
         "src/lib/updater.ts",
+        "src/lib/notify.ts",
         "src/lib/panel.ts",
         "src/vite-env.d.ts",
       ],

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+mod agent_hooks;
 mod agents;
 mod error;
 mod git;
 mod github;
 mod guard;
+mod notify_helper;
 mod osc;
 mod terminal;
 mod watcher;
@@ -214,6 +216,120 @@ fn events_dir() -> AppResult<String> {
     Ok(d.to_string_lossy().into_owned())
 }
 
+/// Emit a native notification and, on click, focus the window and tell the
+/// frontend which pane to open (`notif:activate`). macOS only: `send_notification`
+/// blocks until the user interacts, so it runs on a detached thread — one cheap
+/// parked thread per banner, freed when it's clicked or cleared. Other platforms
+/// stay on the JS plugin (no desktop click callback there either, but at least a
+/// banner). The window is brought to front in Rust; the frontend does the nav.
+/// Bring the main window to the front and tell the frontend which pane to open.
+/// Shared by every platform's notification-click path below.
+#[cfg(desktop)]
+fn focus_and_activate(app: &AppHandle, pane_id: &str, workspace_id: &str) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    let _ = app.emit(
+        "notif:activate",
+        serde_json::json!({ "paneId": pane_id, "workspaceId": workspace_id }),
+    );
+}
+
+/// Emit a native OS notification and, when the user clicks it, focus the window
+/// and open the originating pane (`notif:activate`). Every platform has its own
+/// click mechanism, so each is handled separately; on macOS/Linux the call
+/// blocks until interaction, so it runs on a detached thread.
+#[tauri::command]
+fn notify_os(
+    app: AppHandle,
+    title: String,
+    body: String,
+    sound: Option<String>,
+    pane_id: String,
+    workspace_id: String,
+) {
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || {
+        let mut opts = mac_notification_sys::Notification::new();
+        if let Some(s) = &sound {
+            opts.sound(s.as_str());
+        }
+        let resp = mac_notification_sys::send_notification(&title, None, &body, Some(&opts));
+        // A click on the banner body (or its default action) means "take me
+        // there"; close/none/reply/error → nothing.
+        if matches!(
+            resp,
+            Ok(mac_notification_sys::NotificationResponse::Click)
+                | Ok(mac_notification_sys::NotificationResponse::ActionButton(_))
+        ) {
+            focus_and_activate(&app, &pane_id, &workspace_id);
+        }
+    });
+
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(move || {
+        let mut n = notify_rust::Notification::new();
+        n.summary(&title).body(&body).action("default", "Open");
+        if let Some(s) = &sound {
+            n.sound_name(s);
+        }
+        if let Ok(handle) = n.show() {
+            // The freedesktop backend is async (zbus); clicking the body fires
+            // the "default" action. Drive it on Tauri's runtime.
+            tauri::async_runtime::block_on(handle.wait_for_action(
+                |res: &notify_rust::ActionResponse| {
+                    if let notify_rust::ActionResponse::Custom(a) = res {
+                        if *a == "default" {
+                            focus_and_activate(&app, &pane_id, &workspace_id);
+                        }
+                    }
+                },
+            ));
+        }
+    });
+
+    #[cfg(target_os = "windows")]
+    {
+        // Toast activation fires the callback on click; show() returns at once.
+        let app_id = app.config().identifier.clone();
+        let _ = sound; // the toast uses the system default sound
+        let _ = tauri_winrt_notification::Toast::new(&app_id)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_action| {
+                focus_and_activate(&app, &pane_id, &workspace_id);
+                Ok(())
+            })
+            .show();
+    }
+}
+
+/// Absolute path to our own executable — handed to agent hooks so they can
+/// re-invoke us as the cross-platform `--notify-helper`. Falls back to the bare
+/// name (resolved on PATH) if the exe path can't be determined.
+fn swarm_bin_path() -> String {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "swarm".into())
+}
+
+/// Exposed to the frontend so it can build Claude Code's Stop-hook command
+/// (`<bin> --notify-helper claude-stop`).
+#[tauri::command]
+fn swarm_bin() -> String {
+    swarm_bin_path()
+}
+
+/// Install turn-completion notification hooks into the real configs of agents
+/// without an isolated-config override (Gemini, Cursor, OpenCode, Amp). Gated
+/// on each binary being on PATH; idempotent + defensive. Best-effort.
+#[tauri::command]
+fn install_agent_hooks() {
+    agent_hooks::install_all(&swarm_bin_path());
+}
+
 /// Prepare an isolated CODEX_HOME that mirrors the user's ~/.codex (so auth/
 /// settings carry over) but adds a `notify` program writing to SWARM_EVENT_FILE.
 /// The user's real config is never modified.
@@ -235,11 +351,16 @@ fn prepare_codex_home() -> AppResult<String> {
             }
         }
     }
+    // Codex's `notify` invokes our cross-platform helper with the turn JSON as
+    // an argv arg; it forwards the agent's *actual last message* into
+    // SWARM_EVENT_FILE, where the events watcher turns it into a `pane:notify`.
     let mut cfg = std::fs::read_to_string(src.join("config.toml")).unwrap_or_default();
     if !cfg.contains("swarm-notify") {
-        cfg.push_str(
-            "\n# swarm-notify\nnotify = [\"bash\", \"-c\", \"echo 'Turn complete' >> \\\"$SWARM_EVENT_FILE\\\"\", \"--\"]\n",
-        );
+        // TOML basic strings: backslashes (Windows paths) must be escaped.
+        let bin = swarm_bin_path().replace('\\', "\\\\");
+        cfg.push_str(&format!(
+            "\n# swarm-notify\nnotify = [\"{bin}\", \"--notify-helper\", \"event\"]\n",
+        ));
     }
     let cfg_path = dst.join("config.toml");
     std::fs::write(&cfg_path, cfg)?;
@@ -330,6 +451,14 @@ fn pty_alive(state: State<TerminalManager>, id: String) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Agent completion hooks re-invoke us as `swarm --notify-helper <mode>`: do
+    // that work and exit before any GUI/Tauri setup. Pure Rust, cross-platform.
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(i) = argv.iter().position(|a| a == "--notify-helper") {
+        notify_helper::run(&argv[i + 1..]);
+        return;
+    }
+
     // Repair $PATH before anything spawns. A bundled .app launched from Finder/Dock
     // inherits only launchd's minimal PATH, so agent CLIs (claude, codex, …) resolved
     // by bare name in agents::on_path and the PTY CommandBuilder would not be found.
@@ -472,6 +601,10 @@ pub fn run() {
             let _ = app.emit("menu", event.id().0.clone());
         })
         .setup(|app| {
+            // Deliver notifications under our own bundle id (not the Finder
+            // default mac-notification-sys would otherwise pick). Once-guarded.
+            #[cfg(target_os = "macos")]
+            let _ = mac_notification_sys::set_application(&app.config().identifier);
             // Watch ~/.swarm/events (one file per pane) event-driven: an agent
             // appending a line fires `pane:notify` with no interval polling.
             if let Some(home) = dirs::home_dir() {
@@ -502,6 +635,9 @@ pub fn run() {
             load_session,
             events_dir,
             prepare_codex_home,
+            notify_os,
+            swarm_bin,
+            install_agent_hooks,
             commit_detail,
             commit_diff,
             pty_spawn,

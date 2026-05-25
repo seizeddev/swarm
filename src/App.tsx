@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "./store";
 import { Sidebar } from "./components/Sidebar";
@@ -88,6 +89,9 @@ export default function App() {
     // feel instant when you return to the app. Standard production cadence.
     let lastCheck = 0;
     const checkUpdate = () => {
+      // No real update endpoint in dev — skip the check so the DevUpdatePreview
+      // cycler's state isn't wiped by a background "no update" result.
+      if (import.meta.env.DEV) return;
       const now = Date.now();
       if (now - lastCheck < 60 * 1000) return;
       lastCheck = now;
@@ -100,6 +104,20 @@ export default function App() {
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
+
+    // Window-focus tracking drives whether a background agent notification
+    // escalates to an OS banner (see store.onNotify). onFocusChanged is the
+    // authoritative OS-level signal (covers other-app focus, minimize, and
+    // window hide); visibilitychange catches occlusion the same way. Seed from
+    // the live state so we don't assume "focused" on launch.
+    const win = getCurrentWindow();
+    const setFocused = (v: boolean) => useStore.getState().setWindowFocused(v);
+    win.isFocused().then(setFocused).catch(() => {});
+    const unlistenFocus = win.onFocusChanged(({ payload }) => setFocused(payload));
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") setFocused(false);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     // Live git status: the backend's per-worktree notify watcher fires
     // `fs:changed`; coalesce bursts per workspace before refreshing.
@@ -116,6 +134,13 @@ export default function App() {
       listen<{ paneId: string; body: string }>("pane:notify", (e) =>
         useStore.getState().onPaneNotify(e.payload.paneId, e.payload.body),
       ),
+      // Clicking a native OS notification (Rust focuses the window) — open the
+      // pane it came from, restoring the terminal view even from a PR/diff.
+      listen<{ paneId: string; workspaceId: string }>("notif:activate", (e) => {
+        const s = useStore.getState();
+        s.setActiveWorkspace(e.payload.workspaceId);
+        s.selectPane(e.payload.paneId);
+      }),
       listen<{ workspaceId: string }>("fs:changed", (e) => {
         const id = e.payload.workspaceId;
         clearTimeout(fsTimers.get(id));
@@ -134,6 +159,8 @@ export default function App() {
       clearInterval(updateTimer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      unlistenFocus.then((f) => f()).catch(() => {});
       fsTimers.forEach((t) => clearTimeout(t));
       events.then((fns) => fns.forEach((f) => f()));
     };

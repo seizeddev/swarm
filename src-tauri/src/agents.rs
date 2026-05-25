@@ -56,7 +56,7 @@ const fn default_shell() -> &'static str {
     }
 }
 
-fn on_path(cmd: &str) -> bool {
+pub(crate) fn on_path(cmd: &str) -> bool {
     if cmd.contains('/') || cmd.contains('\\') {
         return Path::new(cmd).exists();
     }
