@@ -5,6 +5,8 @@ mod error;
 mod git;
 mod github;
 mod guard;
+#[cfg(target_os = "macos")]
+mod macos_notify;
 mod notify_helper;
 mod osc;
 mod terminal;
@@ -223,8 +225,9 @@ fn events_dir() -> AppResult<String> {
 /// stay on the JS plugin (no desktop click callback there either, but at least a
 /// banner). The window is brought to front in Rust; the frontend does the nav.
 /// Bring the main window to the front and tell the frontend which pane to open.
-/// Shared by every platform's notification-click path below.
-#[cfg(desktop)]
+/// Shared by the Linux/Windows notification-click paths below (macOS does its
+/// own focus + emit inside macos_notify's delegate).
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn focus_and_activate(app: &AppHandle, pane_id: &str, workspace_id: &str) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -238,9 +241,9 @@ fn focus_and_activate(app: &AppHandle, pane_id: &str, workspace_id: &str) {
 }
 
 /// Emit a native OS notification and, when the user clicks it, focus the window
-/// and open the originating pane (`notif:activate`). Every platform has its own
-/// click mechanism, so each is handled separately; on macOS/Linux the call
-/// blocks until interaction, so it runs on a detached thread.
+/// and open the originating pane (`notif:activate`). Each platform uses its own
+/// current native API: macOS UNUserNotificationCenter (macos_notify), Linux
+/// notify-rust + a "default" action, Windows a WinRT toast with on_activated.
 #[tauri::command]
 fn notify_os(
     app: AppHandle,
@@ -251,22 +254,10 @@ fn notify_os(
     workspace_id: String,
 ) {
     #[cfg(target_os = "macos")]
-    std::thread::spawn(move || {
-        let mut opts = mac_notification_sys::Notification::new();
-        if let Some(s) = &sound {
-            opts.sound(s.as_str());
-        }
-        let resp = mac_notification_sys::send_notification(&title, None, &body, Some(&opts));
-        // A click on the banner body (or its default action) means "take me
-        // there"; close/none/reply/error → nothing.
-        if matches!(
-            resp,
-            Ok(mac_notification_sys::NotificationResponse::Click)
-                | Ok(mac_notification_sys::NotificationResponse::ActionButton(_))
-        ) {
-            focus_and_activate(&app, &pane_id, &workspace_id);
-        }
-    });
+    {
+        let _ = &app; // window focus + emit happen in the delegate
+        macos_notify::notify(&title, &body, sound.as_deref(), &pane_id, &workspace_id);
+    }
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
@@ -601,10 +592,10 @@ pub fn run() {
             let _ = app.emit("menu", event.id().0.clone());
         })
         .setup(|app| {
-            // Deliver notifications under our own bundle id (not the Finder
-            // default mac-notification-sys would otherwise pick). Once-guarded.
+            // Register the UNUserNotificationCenter delegate (click handling) and
+            // request notification authorization. No-op unless bundled.
             #[cfg(target_os = "macos")]
-            let _ = mac_notification_sys::set_application(&app.config().identifier);
+            macos_notify::init(app.handle().clone());
             // Watch ~/.swarm/events (one file per pane) event-driven: an agent
             // appending a line fires `pane:notify` with no interval polling.
             if let Some(home) = dirs::home_dir() {

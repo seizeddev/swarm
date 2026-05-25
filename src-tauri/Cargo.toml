@@ -48,12 +48,17 @@ tauri-plugin-updater = "2"
 
 # We emit native notifications ourselves (instead of tauri-plugin-notification)
 # so a click can focus the window + jump to the right pane — no desktop backend
-# in the plugin exposes a click callback. Each OS needs its own crate:
-#   macOS   — mac-notification-sys: send_notification blocks, returns the click.
+# in the plugin exposes a click callback. Each OS uses its current, non-deprecated
+# native API:
+#   macOS   — UNUserNotificationCenter (UserNotifications.framework) via objc2,
+#             with a delegate for the click. (NOT the deprecated NSUserNotification.)
 #   Linux   — notify-rust: a "default" action + wait_for_action (zbus, async).
 #   Windows — tauri-winrt-notification: Toast::on_activated callback.
 [target.'cfg(target_os = "macos")'.dependencies]
-mac-notification-sys = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-user-notifications = "0.3"
+block2 = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = "4"

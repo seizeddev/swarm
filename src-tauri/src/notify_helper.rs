@@ -66,9 +66,20 @@ pub fn run(args: &[String]) {
     }
 }
 
-/// For Claude's Stop hook: read `transcript_path` from the payload, then the last
-/// assistant message out of that JSONL transcript. Falls back to "Turn complete".
+/// For Claude's Stop hook. Like cmux (`summarizeClaudeHookStop`): prefer the
+/// assistant message Claude hands us in the payload — that's the correct final
+/// message and sidesteps transcript races (picking the first text) and Claude's
+/// internal "Continue from where you left off." → "No response requested."
+/// continuation turn. Only fall back to scanning the transcript.
 fn claude_stop_message(payload: &str) -> String {
+    // Documented Stop-hook field `last_assistant_message` (Claude Code v2.1.145+)
+    // — the final response text, no transcript parsing needed. field_message
+    // covers it (+ camel/preamble variants for other agents reusing this path).
+    if let Some(m) = field_message(payload) {
+        return m;
+    }
+    // Fallback only if the field is somehow absent (older Claude): scan the
+    // transcript, skipping internal meta-continuation turns.
     serde_json::from_str::<Value>(payload)
         .ok()
         .and_then(|v| {
@@ -80,17 +91,29 @@ fn claude_stop_message(payload: &str) -> String {
         .unwrap_or_else(|| FALLBACK.to_string())
 }
 
-/// Last assistant turn's text from a Claude transcript JSONL: scan every line,
-/// keep the last `type == "assistant"` entry, and join its `text` content blocks.
+/// Last *real* assistant turn's text from a Claude transcript JSONL: keep the
+/// last `assistant` entry's joined `text` blocks, but skip entries that answer a
+/// `user` message flagged `isMeta: true` (Claude's internal "Continue from where
+/// you left off." → "No response requested." continuation), which are not the
+/// user-visible reply.
 fn last_assistant_from_transcript(path: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut last: Option<String> = None;
+    let mut prev_user_meta = false;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if v.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
+        match v.get("type").and_then(Value::as_str) {
+            Some("user") => {
+                prev_user_meta = v.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
+                continue;
+            }
+            Some("assistant") => {}
+            _ => continue,
+        }
+        if prev_user_meta {
+            continue; // internal continuation turn — not the visible reply
         }
         let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
             continue;
@@ -179,9 +202,13 @@ mod tests {
             "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n\
              {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"First.\"}]}}\n\
              {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}\n\
-             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Done; all\\ntests pass.\"}]}}\n",
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Done; all\\ntests pass.\"}]}}\n\
+             {\"type\":\"user\",\"isMeta\":true,\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Continue from where you left off.\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"No response requested.\"}]}}\n",
         )
         .unwrap();
+        // The internal "No response requested." (answer to an isMeta user turn)
+        // is skipped; the real last reply is returned.
         assert_eq!(
             last_assistant_from_transcript(p.to_str().unwrap()).as_deref(),
             Some("Done; all tests pass.")
