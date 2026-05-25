@@ -267,17 +267,15 @@ fn notify_os(
             n.sound_name(s);
         }
         if let Ok(handle) = n.show() {
-            // The freedesktop backend is async (zbus); clicking the body fires
-            // the "default" action. Drive it on Tauri's runtime.
-            tauri::async_runtime::block_on(handle.wait_for_action(
-                |res: &notify_rust::ActionResponse| {
-                    if let notify_rust::ActionResponse::Custom(a) = res {
-                        if *a == "default" {
-                            focus_and_activate(&app, &pane_id, &workspace_id);
-                        }
-                    }
-                },
-            ));
+            // `wait_for_action` is synchronous — it blocks this (already
+            // spawned) thread on the dbus event loop until the user acts, and
+            // hands the closure the action key. Clicking the body fires the
+            // "default" action we registered above.
+            handle.wait_for_action(|action| {
+                if action == "default" {
+                    focus_and_activate(&app, &pane_id, &workspace_id);
+                }
+            });
         }
     });
 

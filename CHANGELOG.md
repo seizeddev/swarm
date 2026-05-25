@@ -6,7 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-05-25
+## [0.3.1] - 2026-05-25
 
 A notifications release. No data migration required; the persisted session
 format is unchanged.
@@ -26,6 +26,7 @@ format is unchanged.
 
 - **Exactly one clean Claude notification per turn.** Claude Code emits its own intermediate terminal notifications alongside swarm's Stop hook, which could double-notify or show a non-final message; the Stop hook now tags its notification with a sentinel so a Claude pane keeps only that one, carrying the true last assistant message.
 - **Regaining window focus** now clears the visible pane's attention state and marks its notifications read, without needing an extra click into the terminal.
+- **Linux build.** The freedesktop notification click handler called `notify-rust`'s `wait_for_action` against the wrong (async/`ActionResponse`) signature, breaking the Linux build; it now uses the synchronous `FnOnce(&str)` API. macOS and Windows were unaffected.
 
 ### Internal
 

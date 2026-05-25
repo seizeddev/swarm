@@ -1,6 +1,6 @@
 [package]
 name = "swarm"
-version = "0.3.0"
+version = "0.3.1"
 description = "An agentic development environment, built around the terminal — run AI coding agents in parallel, with git and pull requests built in."
 authors = ["swarm contributors"]
 license = "GPL-3.0-or-later"
