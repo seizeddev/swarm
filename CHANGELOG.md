@@ -6,6 +6,31 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-25
+
+A notifications release. No data migration required; the persisted session
+format is unchanged.
+
+### Added
+
+- **Background OS notifications.** When the swarm window is in the background (or a pane is hidden), an agent finishing a turn now raises a native desktop banner with a "Pop"-style sound. Clicking the banner focuses the window and opens the originating pane. Notifications are platform-native on macOS, Linux, and Windows.
+- **Real last-message bodies.** A notification now carries the agent's actual final reply rather than a generic "done". Claude reads the documented Stop-hook `last_assistant_message` field; Codex and the other supported agents (Gemini, Cursor, OpenCode, Amp, Aider) surface their real last assistant message via a pure-Rust `swarm --notify-helper` (no bash/jq dependency).
+- **In-app notification history.** Notifications are kept in an in-app list with an unread badge on the Bell. Focusing a source pane marks its notifications read while keeping them in history; clicking an entry navigates to its pane.
+
+### Changed
+
+- **Self-update control moved to a hover-popover icon** at the foot of the main rail (previously in the panel), with a dev-only state cycler for previewing every update state.
+- **Unfocused split panes are now dimmed** with a background-tinted overlay so the active leaf stands out in a tiled layout.
+
+### Fixed
+
+- **Exactly one clean Claude notification per turn.** Claude Code emits its own intermediate terminal notifications alongside swarm's Stop hook, which could double-notify or show a non-final message; the Stop hook now tags its notification with a sentinel so a Claude pane keeps only that one, carrying the true last assistant message.
+- **Regaining window focus** now clears the visible pane's attention state and marks its notifications read, without needing an extra click into the terminal.
+
+### Internal
+
+- macOS notifications migrated from the deprecated `NSUserNotification` to the current `UNUserNotificationCenter` (objc2), with a delegate handling banner-click activation. OS notifications are now Rust-owned (dropped `tauri-plugin-notification`, whose desktop backend offers no click callback).
+
 ## [0.2.2] - 2026-05-24
 
 ### Fixed
