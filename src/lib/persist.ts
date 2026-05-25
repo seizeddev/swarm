@@ -5,7 +5,7 @@
 import type { Layout } from "./layout";
 import { api } from "./ipc";
 
-export interface SnapPane {
+interface SnapPane {
   paneId: string;
   tabId: string;
   agentId: string;
@@ -15,12 +15,12 @@ export interface SnapPane {
   title: string;
   sessionId?: string;
 }
-export interface SnapTab {
+interface SnapTab {
   id: string;
   layout: Layout;
   activeLeaf: string;
 }
-export interface SnapWorkspace {
+interface SnapWorkspace {
   id: string;
   repoPath: string;
   panel: string;

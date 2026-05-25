@@ -3,10 +3,6 @@ export interface RepoInfo {
   path: string;
   name: string;
   headBranch: string | null;
-  headShort: string | null;
-  isDetached: boolean;
-  remoteUrl: string | null;
-  dirty: boolean;
 }
 
 export type ChangeStatus =
@@ -61,7 +57,7 @@ export interface CommitInfo {
   isHead: boolean;
 }
 
-export interface CommitFile {
+interface CommitFile {
   path: string;
   status: ChangeStatus;
 }
@@ -71,7 +67,6 @@ export interface CommitDetail {
   short: string;
   message: string;
   author: string;
-  email: string;
   time: number;
   parents: string[];
   files: CommitFile[];
@@ -89,7 +84,7 @@ export interface PrSummary {
   checks: "passing" | "failing" | "pending" | null;
 }
 
-export interface PrFile {
+interface PrFile {
   path: string;
   additions: number;
   deletions: number;

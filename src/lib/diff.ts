@@ -56,7 +56,7 @@ export function wordDiff(a: string, b: string): { a: Seg[]; b: Seg[] } {
   return { a: aSegs, b: bSegs };
 }
 
-export type TokKind = "comment" | "string" | "number" | "keyword" | "plain";
+type TokKind = "comment" | "string" | "number" | "keyword" | "plain";
 export type Tok = { text: string; kind: TokKind };
 
 // A pragmatic cross-language keyword set — enough to give code rhythm without

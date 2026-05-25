@@ -16,10 +16,6 @@ pub struct RepoInfo {
     pub path: String,
     pub name: String,
     pub head_branch: Option<String>,
-    pub head_short: Option<String>,
-    pub is_detached: bool,
-    pub remote_url: Option<String>,
-    pub dirty: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,36 +61,16 @@ fn repo_basename(repo: &Repository) -> String {
         .unwrap_or_else(|| "repo".into())
 }
 
-fn is_dirty(repo: &Repository) -> bool {
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-    repo.statuses(Some(&mut opts))
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
-}
-
 pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
     let repo = open_main(path)?;
     let wd = workdir(&repo)?;
     let head = repo.head().ok();
-    let is_detached = repo.head_detached().unwrap_or(false);
-    let remote_url = repo
-        .find_remote("origin")
-        .ok()
-        .and_then(|r| r.url().ok().map(str::to_owned));
     Ok(RepoInfo {
         path: wd.to_string_lossy().into_owned(),
         name: repo_basename(&repo),
         head_branch: head
             .as_ref()
             .and_then(|h| h.shorthand().ok().map(str::to_owned)),
-        head_short: head
-            .as_ref()
-            .and_then(|h| h.target())
-            .map(|o| short_oid(&o)),
-        is_detached,
-        remote_url,
-        dirty: is_dirty(&repo),
     })
 }
 
@@ -378,7 +354,6 @@ pub struct CommitDetail {
     pub short: String,
     pub message: String,
     pub author: String,
-    pub email: String,
     pub time: i64,
     pub parents: Vec<String>,
     pub files: Vec<CommitFile>,
@@ -420,7 +395,6 @@ pub fn commit_detail(repo_path: &str, oid_str: &str) -> AppResult<CommitDetail> 
     }
     let sig = c.author();
     let author = sig.name().unwrap_or("").to_string();
-    let email = sig.email().unwrap_or("").to_string();
     let message = c.message().unwrap_or("").to_string();
     let time = c.time().seconds();
     let parents: Vec<String> = c.parent_ids().map(|p| p.to_string()).collect();
@@ -429,7 +403,6 @@ pub fn commit_detail(repo_path: &str, oid_str: &str) -> AppResult<CommitDetail> 
         short: short_oid(&oid),
         message,
         author,
-        email,
         time,
         parents,
         files,
@@ -592,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_info_reports_branch_dirty_and_name() {
+    fn repo_info_reports_branch_and_name() {
         let dir = scratch();
         let _repo = init_repo(&dir);
         let path = dir.to_str().unwrap();
@@ -600,12 +573,6 @@ mod tests {
         let info = repo_info(path).unwrap();
         assert_eq!(info.name, dir.file_name().unwrap().to_string_lossy());
         assert!(info.head_branch.is_some());
-        assert!(!info.is_detached);
-        assert!(!info.dirty, "fresh checkout should be clean");
-        assert_eq!(info.head_short.as_ref().map(|s| s.len()), Some(8));
-
-        fs::write(dir.join("a.txt"), "dirty now\n").unwrap();
-        assert!(repo_info(path).unwrap().dirty, "edit makes it dirty");
     }
 
     #[test]
@@ -734,7 +701,6 @@ mod tests {
         let detail = commit_detail(path, &oid.to_string()).unwrap();
         assert_eq!(detail.message.trim(), "edit a");
         assert_eq!(detail.author, "swarm-test");
-        assert_eq!(detail.email, "test@swarm.local");
         assert!(detail.files.iter().any(|f| f.path == "a.txt"));
 
         let full = commit_diff(path, &oid.to_string()).unwrap();

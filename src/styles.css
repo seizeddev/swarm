@@ -74,9 +74,8 @@
   --radius-row: 12px; /* list rows */
   --radius-card: 16px; /* panels, menus, cards */
 
-  /* Interaction tints — white over the dark surface, three stops only. */
+  /* Interaction tints — white over the dark surface, two stops. */
   --tint-hover: rgba(255, 255, 255, 0.06);
-  --tint-press: rgba(255, 255, 255, 0.1);
   --tint-active: rgba(255, 255, 255, 0.12);
 
   /* Motion — one easing curve, two durations. Everything decelerates the
@@ -87,26 +86,6 @@
 
   /* Keyboard focus only: a gap ring that reads on any surface. */
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 3.5px rgba(255, 255, 255, 0.55);
-
-  /* 4pt spatial scale (Wave 1). Components snap to these as each wave rebuilds
-     them — the single source of rhythm. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
-  --space-8: 64px;
-
-  /* Type ramp (Wave 1) — a fixed 6-step ladder. Migrated into components as
-     waves rebuild them, replacing the 12 ad-hoc one-off sizes. */
-  --text-caption: 11px; /* uppercase labels, meta */
-  --text-meta: 12px; /* secondary, timestamps */
-  --text-body: 13px; /* default UI text */
-  --text-emphasis: 15px; /* row titles, lead-ins */
-  --text-title: 18px; /* view titles */
-  --text-display: 24px; /* hero titles */
 
   /* Film-grain strength — tune to taste; dithers the dark gradient so it
      doesn't band. Set to 0 to disable. */
@@ -397,16 +376,6 @@ svg.lucide {
     background: #58544e;
   }
 
-  .btn-ghost {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    color: var(--color-muted);
-  }
-  .btn-ghost:hover {
-    background: var(--tint-hover);
-    color: var(--color-text);
-  }
   .btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
@@ -463,20 +432,6 @@ svg.lucide {
     background: #242220;
     color: var(--color-muted);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
-  }
-
-  .icon-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-chip);
-    background: var(--color-surface-2);
-    border: 0.5px solid rgba(255, 255, 255, 0.1);
-    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
-    color: var(--color-text);
-    flex: none;
   }
 
   /* ── Inputs (the #222 amount field) ──────────────────────────────── */

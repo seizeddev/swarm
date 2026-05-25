@@ -99,10 +99,6 @@ const repo = (path = "/repo"): RepoInfo => ({
   path,
   name: path.split("/").pop()!,
   headBranch: "main",
-  headShort: "abc1234",
-  isDetached: false,
-  remoteUrl: null,
-  dirty: false,
 });
 
 const INITIAL = {

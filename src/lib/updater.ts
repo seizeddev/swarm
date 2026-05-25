@@ -24,7 +24,7 @@ function parseVersion(v: string): [number, number, number] {
 }
 
 /** True iff `candidate` is a strictly higher version than `current`. */
-export function isNewerVersion(candidate: string, current: string): boolean {
+function isNewerVersion(candidate: string, current: string): boolean {
   const a = parseVersion(candidate);
   const b = parseVersion(current);
   for (let i = 0; i < 3; i++) {

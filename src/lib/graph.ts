@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { CommitInfo } from "./types";
 
-export interface GraphRow {
+interface GraphRow {
   commit: CommitInfo;
   col: number;
 }

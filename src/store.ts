@@ -42,7 +42,7 @@ export interface Tab {
 // put while you work, instead of snapping back to a terminal list.
 export type Panel = "scm" | "prs" | "notifications" | "history";
 
-export type Editor =
+type Editor =
   | { type: "terminal" }
   | { type: "diff"; file: string; staged: boolean }
   | { type: "pr"; pr: PrSummary }
@@ -80,7 +80,7 @@ export interface Notif {
 }
 
 // Self-update lifecycle. `progress` is 0..1, meaningful only while downloading.
-export interface UpdateState {
+interface UpdateState {
   status: "idle" | "available" | "downloading" | "ready" | "error";
   version?: string;
   notes?: string;
@@ -196,7 +196,6 @@ interface State {
   setActiveWorkspace(id: string): void;
   cycleWorkspace(dir: number): void;
   focusWorkspaceIndex(i: number): void;
-  patchWorkspace(id: string, p: Partial<Workspace>): void;
 
   refreshStatus(wsId?: string): Promise<void>;
   setPanel(p: Panel): void;
@@ -335,8 +334,6 @@ export const useStore = create<State>((set, get) => {
     eventsDir: null,
     codexHome: null,
     update: { status: "idle", progress: 0 },
-
-    patchWorkspace: patch,
 
     toggleSidebar() {
       set((s) => ({ sidebarVisible: !s.sidebarVisible }));
