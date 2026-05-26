@@ -226,7 +226,11 @@ export function TopBar() {
                     ids.forEach((id) => removePane(id));
                   }}
                   title="Close terminal"
-                  className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
+                  // The active tab keeps its × visible (you can always close the
+                  // current terminal at a glance); inactive tabs reveal it on hover.
+                  className={`icon-btn h-5 w-5 transition ${
+                    active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                  }`}
                 >
                   <X size={13} />
                 </button>

@@ -845,6 +845,74 @@ describe("setNotificationRead", () => {
     s().setNotificationRead("n1", false);
     expect(s().notifications[0].read).toBe(false);
   });
+
+  it("lifts a notification to the front when marking it unread", () => {
+    const mk = (id: string, read: boolean) => ({
+      id,
+      workspaceId: "w",
+      paneId: "p",
+      title: id,
+      body: "b",
+      ts: 0,
+      source: "agent" as const,
+      read,
+    });
+    // Newest-first: n3, n2, n1. Mark the oldest (n1) unread → it jumps to front.
+    useStore.setState({ notifications: [mk("n3", true), mk("n2", true), mk("n1", true)] });
+    s().setNotificationRead("n1", false);
+    expect(s().notifications.map((n) => n.id)).toEqual(["n1", "n3", "n2"]);
+    expect(s().notifications[0].read).toBe(false);
+  });
+
+  it("does not reorder when marking a notification read", () => {
+    const mk = (id: string) => ({
+      id,
+      workspaceId: "w",
+      paneId: "p",
+      title: id,
+      body: "b",
+      ts: 0,
+      source: "agent" as const,
+      read: false,
+    });
+    useStore.setState({ notifications: [mk("n2"), mk("n1")] });
+    s().setNotificationRead("n1", true);
+    expect(s().notifications.map((n) => n.id)).toEqual(["n2", "n1"]);
+  });
+});
+
+describe("renameWorkspace", () => {
+  beforeEach(async () => {
+    await s().addWorkspace("/repo");
+  });
+
+  it("sets a display-name override without touching repo.name", () => {
+    const id = s().workspaces[0].id;
+    s().renameWorkspace(id, "  My App  ");
+    expect(s().workspaces[0].name).toBe("My App"); // trimmed
+    expect(s().workspaces[0].repo.name).toBe("repo"); // canonical name preserved
+  });
+
+  it("clears the override when renamed to blank or the repo name", () => {
+    const id = s().workspaces[0].id;
+    s().renameWorkspace(id, "Custom");
+    expect(s().workspaces[0].name).toBe("Custom");
+    s().renameWorkspace(id, "   ");
+    expect(s().workspaces[0].name).toBeUndefined();
+    s().renameWorkspace(id, "Custom");
+    s().renameWorkspace(id, "repo"); // equals repo.name → also clears
+    expect(s().workspaces[0].name).toBeUndefined();
+  });
+
+  it("persists and restores the name override across hydrate", async () => {
+    const id = s().workspaces[0].id;
+    s().renameWorkspace(id, "Renamed");
+    useStore.setState({ hydrated: true });
+    s().persist();
+    const calls = m.saveSession.mock.calls;
+    const saved = JSON.parse(calls[calls.length - 1][0]);
+    expect(saved.workspaces[0].name).toBe("Renamed");
+  });
 });
 
 describe("misc workspace actions", () => {

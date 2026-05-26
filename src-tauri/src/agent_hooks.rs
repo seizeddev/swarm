@@ -1,21 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Turn-completion notification hooks for agents that have no isolated-config
-//! override (Gemini, Cursor, OpenCode, Amp) — so, unlike Codex (CODEX_HOME), we
-//! must write into the user's *real* config. Each hook re-invokes
-//! `<swarm> --notify-helper event`, which forwards the agent's last message (or
-//! "Turn complete") into SWARM_EVENT_FILE; outside swarm that var is unset and
-//! the helper is a no-op, so a globally-installed hook is harmless.
+//! Turn-completion + session-capture hooks for agents that have no isolated-config
+//! override (Claude, Gemini, Cursor, OpenCode, Amp) — so, unlike Codex (CODEX_HOME),
+//! we must write into the user's *real* config. Each hook re-invokes
+//! `<swarm> --notify-helper …`, which forwards the agent's last message (or "Turn
+//! complete") into SWARM_EVENT_FILE / records the session for resume; outside swarm
+//! those env vars are unset and the helper is a no-op, so a globally-installed hook
+//! is harmless.
 //!
-//! Writes are: gated on the agent's binary being on PATH (don't create config
-//! for tools you don't have); idempotent (skip if our command is already
-//! present); and defensive (never clobber an unparseable file or unrelated
-//! keys). The OpenCode/Amp plugin files are ours, so we just (over)write them.
-//! Claude/Codex are wired elsewhere. Best-effort: every failure is ignored.
+//! Writes are: gated on the agent's binary being on PATH (don't create config for
+//! tools you don't have); idempotent (skip if our command is already present); and
+//! defensive (never clobber an unparseable file or unrelated keys). The OpenCode/Amp
+//! plugin files are ours, so we just (over)write them. Claude/Codex notify is wired
+//! elsewhere (per-launch `--settings` / CODEX_HOME). Best-effort: failures are ignored.
+//!
+//! The install is also **inspectable and reversible** through the Agent Integrations
+//! UI: `integrations_status` reports which are present, `integration_preview` returns
+//! a real before/after of the config file, and `integration_apply`/`integration_remove`
+//! toggle a single agent's hooks (removal strips only swarm's `--notify-helper`
+//! entries, leaving unrelated hooks intact). Apply reuses the exact same plan the
+//! best-effort install uses, so the two paths can never diverge.
 
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 const MARKER: &str = "--notify-helper";
+
+/// The agents we wire into a real (non-isolated) config: `(id, display name, binary)`.
+/// The binary name is what we check on PATH (cursor's CLI is `cursor-agent`).
+pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
+    ("claude", "Claude Code", "claude"),
+    ("gemini", "Gemini", "gemini"),
+    ("cursor", "Cursor CLI", "cursor-agent"),
+    ("opencode", "OpenCode", "opencode"),
+    ("amp", "Amp", "amp"),
+];
 
 /// `"<bin>" --notify-helper event` — quoted so a path with spaces survives the
 /// shell these agents run hook commands through.
@@ -23,26 +42,21 @@ fn hook_cmd(bin: &str) -> String {
     format!("\"{bin}\" --notify-helper event")
 }
 
-/// Install every supported agent's hook (those whose binary is on PATH).
+/// `"<bin>" --notify-helper session-start <agent>` — an agent session-capture hook.
+fn session_capture_cmd(bin: &str, agent: &str) -> String {
+    format!("\"{bin}\" --notify-helper session-start {agent}")
+}
+
+/// Install every supported agent's hook (those whose binary is on PATH). Best-effort.
 pub fn install_all(bin: &str) {
-    if crate::agents::on_path("claude") {
-        let _ = install_claude_session_capture(bin);
-    }
-    if crate::agents::on_path("gemini") {
-        let _ = install_gemini(bin);
-        let _ = install_gemini_session_capture(bin);
-    }
-    if crate::agents::on_path("cursor-agent") {
-        let _ = install_cursor(bin);
-        let _ = install_cursor_session_capture(bin);
-    }
-    if crate::agents::on_path("opencode") {
-        let _ = install_opencode(bin);
-    }
-    if crate::agents::on_path("amp") {
-        let _ = install_amp(bin);
+    for (id, _name, binary) in INTEGRATIONS {
+        if crate::agents::on_path(binary) {
+            let _ = integration_apply(bin, id);
+        }
     }
 }
+
+// ── JSON file helpers ────────────────────────────────────────────────────────
 
 /// Read a JSON file into an object, or `{}` if missing. Returns None (skip) if
 /// the file exists but isn't a JSON object — we won't risk clobbering it.
@@ -54,81 +68,369 @@ fn read_object(path: &PathBuf) -> Option<serde_json::Map<String, Value>> {
     }
 }
 
-/// True if any `command` string under `arr` already contains our marker.
-fn already_present(arr: &[Value]) -> bool {
-    arr.iter().any(|v| {
-        // Either a flat {command} entry, or a nested {hooks:[{command}]} group.
-        let direct = v.get("command").and_then(Value::as_str);
-        let nested = v.get("hooks").and_then(Value::as_array).map(|h| {
-            h.iter().any(|e| {
-                e.get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(|c| c.contains(MARKER))
-            })
-        });
-        direct.is_some_and(|c| c.contains(MARKER)) || nested.unwrap_or(false)
-    })
+fn pretty(obj: &serde_json::Map<String, Value>) -> String {
+    serde_json::to_string_pretty(&Value::Object(obj.clone())).unwrap_or_default()
 }
 
 fn write_pretty(path: &PathBuf, obj: &serde_json::Map<String, Value>) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(
-        path,
-        serde_json::to_string_pretty(&Value::Object(obj.clone()))?,
-    )
+    std::fs::write(path, pretty(obj))
 }
 
-/// `"<bin>" --notify-helper session-start <agent>` — an agent session-capture hook.
-fn session_capture_cmd(bin: &str, agent: &str) -> String {
-    format!("\"{bin}\" --notify-helper session-start {agent}")
+/// Navigate (creating intermediate objects) to the array at `path`, returning a
+/// mutable handle. The last segment is the array key; the rest are object keys.
+fn ensure_array<'a>(
+    root: &'a mut serde_json::Map<String, Value>,
+    path: &[&str],
+) -> Option<&'a mut Vec<Value>> {
+    let (last, dirs) = path.split_last()?;
+    let mut cur = root;
+    for key in dirs {
+        cur = cur
+            .entry((*key).to_string())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()?;
+    }
+    cur.entry((*last).to_string())
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+}
+
+/// Like `ensure_array` but never creates: returns None if the path is absent.
+fn array_at<'a>(
+    root: &'a mut serde_json::Map<String, Value>,
+    path: &[&str],
+) -> Option<&'a mut Vec<Value>> {
+    let (last, dirs) = path.split_last()?;
+    let mut cur = root;
+    for key in dirs {
+        cur = cur.get_mut(*key)?.as_object_mut()?;
+    }
+    cur.get_mut(*last)?.as_array_mut()
+}
+
+/// True if any `command` string under `arr` already contains our marker (flat
+/// `{command}` entry or a nested `{hooks:[{command}]}` group).
+fn already_present(arr: &[Value]) -> bool {
+    arr.iter().any(entry_is_swarm)
 }
 
 /// True if a session-capture command is already wired in this hook array (match on
-/// `session-start`, not the generic `--notify-helper` marker the notify hooks share).
+/// `session-start`, not the generic marker the notify hooks share).
 fn has_session_capture(arr: &[Value]) -> bool {
-    arr.iter().any(|v| {
-        let direct = v.get("command").and_then(Value::as_str);
-        let nested = v.get("hooks").and_then(Value::as_array).map(|h| {
+    arr.iter().any(|v| entry_contains(v, "session-start"))
+}
+
+/// Does this hook entry (flat or nested) carry a command containing `needle`?
+fn entry_contains(v: &Value, needle: &str) -> bool {
+    let direct = v
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(needle));
+    let nested = v
+        .get("hooks")
+        .and_then(Value::as_array)
+        .map(|h| {
             h.iter().any(|e| {
                 e.get("command")
                     .and_then(Value::as_str)
-                    .is_some_and(|c| c.contains("session-start"))
+                    .is_some_and(|c| c.contains(needle))
             })
-        });
-        direct.is_some_and(|c| c.contains("session-start")) || nested.unwrap_or(false)
+        })
+        .unwrap_or(false);
+    direct || nested
+}
+
+fn entry_is_swarm(v: &Value) -> bool {
+    entry_contains(v, MARKER)
+}
+
+/// Strip swarm's hooks from a hook array, defensively: a flat `{command}` entry is
+/// dropped if it's ours; a nested `{hooks:[…]}` group keeps its non-swarm hooks and
+/// is dropped only if it empties — so a group the user co-owns is never lost.
+fn strip_swarm_entries(arr: &mut Vec<Value>) {
+    arr.retain_mut(|v| {
+        if v.get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|c| c.contains(MARKER))
+        {
+            return false;
+        }
+        if let Some(hooks) = v.get_mut("hooks").and_then(Value::as_array_mut) {
+            hooks.retain(|e| {
+                !e.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|c| c.contains(MARKER))
+            });
+            return !hooks.is_empty();
+        }
+        true
+    });
+}
+
+// ── Per-agent plans (add) and strips (remove) ────────────────────────────────
+
+/// The would-be config object after installing `agent`'s hooks — idempotent, so
+/// running it on an already-installed config returns it unchanged (that equality
+/// is exactly how `json_installed` detects the installed state).
+fn plan_json(
+    agent: &str,
+    bin: &str,
+    mut root: serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    match agent {
+        "claude" => {
+            // Capture only: Claude's turn-completion notify is wired per-launch via
+            // `--settings`, not a global hook.
+            if let Some(starts) = ensure_array(&mut root, &["hooks", "SessionStart"]) {
+                if !has_session_capture(starts) {
+                    starts.push(json!({
+                        "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "claude"), "timeout": 10 }]
+                    }));
+                }
+            }
+        }
+        "gemini" => {
+            if let Some(after) = ensure_array(&mut root, &["hooks", "AfterAgent"]) {
+                if !already_present(after) {
+                    after.push(json!({
+                        "hooks": [{ "type": "command", "command": hook_cmd(bin), "timeout": 10000 }]
+                    }));
+                }
+            }
+            if let Some(starts) = ensure_array(&mut root, &["hooks", "SessionStart"]) {
+                if !has_session_capture(starts) {
+                    starts.push(json!({
+                        "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "gemini"), "timeout": 10000 }]
+                    }));
+                }
+            }
+        }
+        "cursor" => {
+            root.entry("version".to_string())
+                .or_insert_with(|| json!(1));
+            if let Some(stop) = ensure_array(&mut root, &["hooks", "stop"]) {
+                if !already_present(stop) {
+                    stop.push(json!({ "command": hook_cmd(bin) }));
+                }
+            }
+            if let Some(arr) = ensure_array(&mut root, &["hooks", "beforeSubmitPrompt"]) {
+                if !has_session_capture(arr) {
+                    arr.push(json!({ "command": session_capture_cmd(bin, "cursor") }));
+                }
+            }
+        }
+        _ => {}
+    }
+    root
+}
+
+/// The config object after removing `agent`'s swarm hooks (leaving everything else).
+fn strip_json(
+    agent: &str,
+    mut root: serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    let arrays: &[&[&str]] = match agent {
+        "claude" => &[&["hooks", "SessionStart"]],
+        "gemini" => &[&["hooks", "AfterAgent"], &["hooks", "SessionStart"]],
+        "cursor" => &[&["hooks", "stop"], &["hooks", "beforeSubmitPrompt"]],
+        _ => &[],
+    };
+    for path in arrays {
+        if let Some(arr) = array_at(&mut root, path) {
+            strip_swarm_entries(arr);
+        }
+    }
+    root
+}
+
+fn is_json_agent(agent: &str) -> bool {
+    matches!(agent, "claude" | "gemini" | "cursor")
+}
+
+// ── Plugin-file agents (OpenCode / Amp) ──────────────────────────────────────
+
+fn opencode_plugin(bin: &str) -> Option<String> {
+    Some(OPENCODE_PLUGIN.replace("__SWARM_BIN__", &serde_json::to_string(bin).ok()?))
+}
+fn amp_plugin(bin: &str) -> Option<String> {
+    Some(AMP_PLUGIN.replace("__SWARM_BIN__", &serde_json::to_string(bin).ok()?))
+}
+
+/// The generated plugin-file content for a plugin agent, or None for a JSON agent.
+fn plugin_content(agent: &str, bin: &str) -> Option<String> {
+    match agent {
+        "opencode" => opencode_plugin(bin),
+        "amp" => amp_plugin(bin),
+        _ => None,
+    }
+}
+
+// ── Paths / metadata ─────────────────────────────────────────────────────────
+
+fn config_path(agent: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    Some(match agent {
+        "claude" => home.join(".claude").join("settings.json"),
+        "gemini" => home.join(".gemini").join("settings.json"),
+        "cursor" => home.join(".cursor").join("hooks.json"),
+        "opencode" => home
+            .join(".config")
+            .join("opencode")
+            .join("plugins")
+            .join("swarm-session.js"),
+        "amp" => home
+            .join(".config")
+            .join("amp")
+            .join("plugins")
+            .join("swarm-session.ts"),
+        _ => return None,
     })
 }
 
-/// Claude: install a `SessionStart` hook into the user's *global*
-/// `~/.claude/settings.json`. Unlike the per-invocation `--settings` swarm passes
-/// to its own Claude launches, this fires for *any* `claude` started in a swarm
-/// pane — including one typed by hand into a shell — so swarm can capture its
-/// session id + flags and resume it (with `--dangerously-skip-permissions` etc.)
-/// after a restart, the way cmux does. The helper is a no-op when `SWARM_PANE_ID`
-/// is unset (i.e. outside swarm), so a globally-installed hook is harmless.
-/// Idempotent (skips if our `session-start` command is already present) and
-/// defensive (never clobbers an unparseable file or unrelated hooks).
-fn install_claude_session_capture(bin: &str) -> Option<()> {
-    let path = dirs::home_dir()?.join(".claude").join("settings.json");
-    let mut root = read_object(&path)?;
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()?;
-    let starts = hooks
-        .entry("SessionStart")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()?;
-    if has_session_capture(starts) {
-        return Some(());
-    }
-    starts.push(json!({
-        "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "claude"), "timeout": 10 }]
-    }));
-    write_pretty(&path, &root).ok()
+// ── Public API: status / preview / apply / remove ────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationStatus {
+    pub id: String,
+    pub name: String,
+    /// Whether the agent's binary is on PATH (we only auto-install for those).
+    pub on_path: bool,
+    /// Whether swarm's hooks are currently present in the agent's config.
+    pub installed: bool,
+    pub config_path: String,
+    /// True for the OpenCode/Amp plugin files (a whole-file create/remove, not a
+    /// JSON merge) — the UI labels the action honestly.
+    pub is_plugin: bool,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationPreview {
+    pub path: String,
+    pub installed: bool,
+    pub is_plugin: bool,
+    /// Current file content (pretty-printed for a clean diff), "" if the file is absent.
+    pub current: String,
+    /// File content after Apply.
+    pub applied: String,
+    /// File content after Remove ("" when removal deletes the plugin file).
+    pub removed: String,
+}
+
+/// Is swarm's hook currently present? For JSON agents, the file must exist, parse
+/// to an object, and already equal its planned (post-install) form. For plugin
+/// agents, the plugin file existing is the install.
+fn is_installed(agent: &str, bin: &str) -> bool {
+    let Some(path) = config_path(agent) else {
+        return false;
+    };
+    if is_json_agent(agent) {
+        match read_object(&path) {
+            Some(root) if path.exists() => plan_json(agent, bin, root.clone()) == root,
+            _ => false,
+        }
+    } else {
+        path.exists()
+    }
+}
+
+pub fn integrations_status(bin: &str) -> Vec<IntegrationStatus> {
+    INTEGRATIONS
+        .iter()
+        .filter_map(|(id, name, binary)| {
+            let path = config_path(id)?;
+            Some(IntegrationStatus {
+                id: (*id).to_string(),
+                name: (*name).to_string(),
+                on_path: crate::agents::on_path(binary),
+                installed: is_installed(id, bin),
+                config_path: path.to_string_lossy().into_owned(),
+                is_plugin: !is_json_agent(id),
+            })
+        })
+        .collect()
+}
+
+pub fn integration_preview(bin: &str, agent: &str) -> Option<IntegrationPreview> {
+    let path = config_path(agent)?;
+    let installed = is_installed(agent, bin);
+    let (current, applied, removed) = if is_json_agent(agent) {
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        match read_object(&path) {
+            // Valid object (or missing → {}): show pretty before/after diffs.
+            Some(root) => {
+                let current = if path.exists() {
+                    pretty(&root)
+                } else {
+                    String::new()
+                };
+                let applied = pretty(&plan_json(agent, bin, root.clone()));
+                let removed = if path.exists() {
+                    pretty(&strip_json(agent, root))
+                } else {
+                    String::new()
+                };
+                (current, applied, removed)
+            }
+            // Unparseable: we refuse to touch it — every state is the file as-is.
+            None => (raw.clone(), raw.clone(), raw),
+        }
+    } else {
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let applied = plugin_content(agent, bin).unwrap_or_default();
+        (current, applied, String::new())
+    };
+    Some(IntegrationPreview {
+        path: path.to_string_lossy().into_owned(),
+        installed,
+        is_plugin: !is_json_agent(agent),
+        current,
+        applied,
+        removed,
+    })
+}
+
+/// Install (or re-assert) `agent`'s hooks. Idempotent + defensive.
+pub fn integration_apply(bin: &str, agent: &str) -> Option<()> {
+    let path = config_path(agent)?;
+    if is_json_agent(agent) {
+        let root = read_object(&path)?; // None → unparseable, skip (don't clobber)
+        let planned = plan_json(agent, bin, root);
+        write_pretty(&path, &planned).ok()
+    } else {
+        let content = plugin_content(agent, bin)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        std::fs::write(&path, content).ok()
+    }
+}
+
+/// Remove `agent`'s swarm hooks. JSON: strip our entries, keep the rest. Plugin:
+/// delete the (entirely-ours) plugin file.
+pub fn integration_remove(agent: &str) -> Option<()> {
+    let path = config_path(agent)?;
+    if is_json_agent(agent) {
+        let root = read_object(&path)?;
+        if !path.exists() {
+            return Some(()); // nothing to remove
+        }
+        let stripped = strip_json(agent, root);
+        write_pretty(&path, &stripped).ok()
+    } else {
+        match std::fs::remove_file(&path) {
+            Ok(()) => Some(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(()),
+            Err(_) => None,
+        }
+    }
+}
+
+// ── Codex (isolated CODEX_HOME) ───────────────────────────────────────────────
 
 /// Codex session-capture `hooks.json` content (nested format, `SessionStart` →
 /// session-start). Written into swarm's isolated `CODEX_HOME` by `prepare_codex_home`.
@@ -168,116 +470,6 @@ fn codex_command_hook_hash(command: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect();
     format!("sha256:{hex}")
-}
-
-/// Gemini: a `SessionStart` capture hook in `~/.gemini/settings.json` (nested
-/// format, like its existing notify hook). Gemini's hook stdin carries `session_id`.
-fn install_gemini_session_capture(bin: &str) -> Option<()> {
-    let path = dirs::home_dir()?.join(".gemini").join("settings.json");
-    let mut root = read_object(&path)?;
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()?;
-    let starts = hooks
-        .entry("SessionStart")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()?;
-    if has_session_capture(starts) {
-        return Some(());
-    }
-    starts.push(json!({
-        "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "gemini"), "timeout": 10000 }]
-    }));
-    write_pretty(&path, &root).ok()
-}
-
-/// Cursor: `~/.cursor/hooks.json`, flat format. cursor-agent has no SessionStart
-/// event, so we capture on `beforeSubmitPrompt` (the earliest event); its stdin
-/// carries `conversation_id`, which is what `cursor-agent --resume` takes.
-fn install_cursor_session_capture(bin: &str) -> Option<()> {
-    let path = dirs::home_dir()?.join(".cursor").join("hooks.json");
-    let mut root = read_object(&path)?;
-    root.entry("version").or_insert_with(|| json!(1));
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()?;
-    let arr = hooks
-        .entry("beforeSubmitPrompt")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()?;
-    if has_session_capture(arr) {
-        return Some(());
-    }
-    arr.push(json!({ "command": session_capture_cmd(bin, "cursor") }));
-    write_pretty(&path, &root).ok()
-}
-
-/// Gemini: `~/.gemini/settings.json`, nested format, completion = `AfterAgent`.
-fn install_gemini(bin: &str) -> Option<()> {
-    let path = dirs::home_dir()?.join(".gemini").join("settings.json");
-    let mut root = read_object(&path)?;
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()?;
-    let after = hooks
-        .entry("AfterAgent")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()?;
-    if already_present(after) {
-        return Some(());
-    }
-    after.push(json!({
-        "hooks": [{ "type": "command", "command": hook_cmd(bin), "timeout": 10000 }]
-    }));
-    write_pretty(&path, &root).ok()
-}
-
-/// Cursor: `~/.cursor/hooks.json`, flat format (`version: 1`), completion = `stop`.
-fn install_cursor(bin: &str) -> Option<()> {
-    let path = dirs::home_dir()?.join(".cursor").join("hooks.json");
-    let mut root = read_object(&path)?;
-    root.entry("version").or_insert_with(|| json!(1));
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()?;
-    let stop = hooks
-        .entry("stop")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()?;
-    if already_present(stop) {
-        return Some(());
-    }
-    stop.push(json!({ "command": hook_cmd(bin) }));
-    write_pretty(&path, &root).ok()
-}
-
-/// OpenCode: a plugin we own at `~/.config/opencode/plugins/swarm-session.js`.
-/// It fires our helper when a session goes idle. OpenCode's idle event carries
-/// no assistant text, so the body is the "Turn complete" fallback.
-fn install_opencode(bin: &str) -> Option<()> {
-    let dir = dirs::home_dir()?
-        .join(".config")
-        .join("opencode")
-        .join("plugins");
-    std::fs::create_dir_all(&dir).ok()?;
-    let js = OPENCODE_PLUGIN.replace("__SWARM_BIN__", &serde_json::to_string(bin).ok()?);
-    std::fs::write(dir.join("swarm-session.js"), js).ok()
-}
-
-/// Amp: a plugin we own at `~/.config/amp/plugins/swarm-session.ts`. Fires on
-/// `agent.end`; no assistant text available → "Turn complete" fallback.
-fn install_amp(bin: &str) -> Option<()> {
-    let dir = dirs::home_dir()?
-        .join(".config")
-        .join("amp")
-        .join("plugins");
-    std::fs::create_dir_all(&dir).ok()?;
-    let ts = AMP_PLUGIN.replace("__SWARM_BIN__", &serde_json::to_string(bin).ok()?);
-    std::fs::write(dir.join("swarm-session.ts"), ts).ok()
 }
 
 // OpenCode's idle event carries no assistant text, so — like cmux — we track it
@@ -386,7 +578,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gemini_merge_is_idempotent_and_nonclobbering() {
+    fn gemini_plan_is_idempotent_and_nonclobbering() {
         let dir = std::env::temp_dir().join(format!("swarm-gemini-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join(".gemini").join("settings.json");
@@ -394,30 +586,111 @@ mod tests {
         // Pre-existing unrelated user setting must survive.
         std::fs::write(&path, r#"{"theme":"dark","hooks":{"AfterAgent":[]}}"#).unwrap();
 
-        let merge = |p: &PathBuf| -> Option<()> {
-            let mut root = read_object(p)?;
-            let hooks = root
-                .entry("hooks")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()?;
-            let after = hooks
-                .entry("AfterAgent")
-                .or_insert_with(|| json!([]))
-                .as_array_mut()?;
-            if already_present(after) {
-                return Some(());
-            }
-            after.push(json!({ "hooks": [{ "type": "command", "command": hook_cmd("/b"), "timeout": 10000 }] }));
-            write_pretty(p, &root).ok()
+        let apply = |p: &PathBuf| {
+            let root = read_object(p).unwrap();
+            write_pretty(p, &plan_json("gemini", "/b", root)).unwrap();
         };
-        merge(&path).unwrap();
-        merge(&path).unwrap(); // second run: idempotent
+        apply(&path);
+        apply(&path); // second run: idempotent
 
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(v["theme"], "dark"); // unrelated key preserved
         let after = v["hooks"]["AfterAgent"].as_array().unwrap();
         assert_eq!(after.len(), 1); // not duplicated
+        let starts = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(starts.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_removes_swarm_hooks_but_keeps_unrelated() {
+        // A SessionStart array with the user's own hook plus swarm's: only ours goes.
+        let raw = r#"{
+            "hooks": {
+                "SessionStart": [
+                    { "hooks": [{ "type": "command", "command": "my-own-hook" }] },
+                    { "hooks": [{ "type": "command", "command": "\"/b\" --notify-helper session-start claude" }] }
+                ]
+            }
+        }"#;
+        let root: serde_json::Map<String, Value> = serde_json::from_str::<Value>(raw)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        let stripped = strip_json("claude", root);
+        let starts = stripped["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(starts.len(), 1);
+        assert!(
+            starts[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("my-own-hook"),
+            "the user's own hook must survive a remove"
+        );
+    }
+
+    #[test]
+    fn strip_keeps_a_group_that_co_owns_a_user_hook() {
+        // A single group containing BOTH the user's hook and swarm's: the group
+        // survives, only swarm's hook inside it is dropped.
+        let raw = r#"{"hooks":{"AfterAgent":[{"hooks":[
+            {"type":"command","command":"user-thing"},
+            {"type":"command","command":"\"/b\" --notify-helper event"}
+        ]}]}}"#;
+        let root: serde_json::Map<String, Value> = serde_json::from_str::<Value>(raw)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        let stripped = strip_json("gemini", root);
+        let after = stripped["hooks"]["AfterAgent"].as_array().unwrap();
+        assert_eq!(after.len(), 1);
+        let hooks = after[0]["hooks"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0]["command"], "user-thing");
+    }
+
+    #[test]
+    fn apply_then_remove_round_trips_to_original() {
+        let dir = std::env::temp_dir().join(format!("swarm-rt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Drive config_path at a temp HOME so the round-trip never touches the real one.
+        let path = dir.join(".cursor").join("hooks.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"version":1,"hooks":{"stop":[{"command":"keep-me"}]}}"#,
+        )
+        .unwrap();
+
+        // Apply via the plan, then strip via the plan — the user's hook must remain
+        // and swarm's must be gone.
+        let root = read_object(&path).unwrap();
+        let applied = plan_json("cursor", "/b", root);
+        assert!(already_present(
+            applied["hooks"]["stop"].as_array().unwrap()
+        ));
+        let removed = strip_json("cursor", applied);
+        let stop = removed["hooks"]["stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 1);
+        assert_eq!(stop[0]["command"], "keep-me");
+        // beforeSubmitPrompt held only swarm's capture → now empty.
+        assert!(removed["hooks"]["beforeSubmitPrompt"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_installed_detection_via_plan_equality() {
+        // Not installed: planning changes the object.
+        let empty = serde_json::Map::new();
+        assert_ne!(plan_json("claude", "/b", empty.clone()), empty);
+        // Installed: planning is a no-op.
+        let installed = plan_json("claude", "/b", empty);
+        assert_eq!(plan_json("claude", "/b", installed.clone()), installed);
     }
 
     #[test]
@@ -447,5 +720,13 @@ mod tests {
         std::fs::write(&path, "[1,2,3]").unwrap();
         assert!(read_object(&path).is_none()); // array → skip, don't clobber
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plugin_content_embeds_quoted_bin() {
+        let js = plugin_content("opencode", "/path/to swarm").unwrap();
+        // The bin is JSON-encoded into the source, so a space-bearing path is safe.
+        assert!(js.contains("\"/path/to swarm\""));
+        assert!(plugin_content("claude", "/b").is_none()); // JSON agent → no plugin
     }
 }

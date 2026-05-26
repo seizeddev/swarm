@@ -7,6 +7,8 @@ import type {
   CommitInfo,
   DiffHunk,
   PrDetail,
+  IntegrationPreview,
+  IntegrationStatus,
   PrSummary,
   RepoInfo,
   ResumeCommand,
@@ -63,6 +65,14 @@ export const api = {
   claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
   swarmBin: () => invoke<string>("swarm_bin"),
   installAgentHooks: () => invoke<void>("install_agent_hooks"),
+  agentIntegrationsStatus: () =>
+    invoke<IntegrationStatus[]>("agent_integrations_status"),
+  agentIntegrationPreview: (agent: string) =>
+    invoke<IntegrationPreview>("agent_integration_preview", { agent }),
+  agentIntegrationApply: (agent: string) =>
+    invoke<void>("agent_integration_apply", { agent }),
+  agentIntegrationRemove: (agent: string) =>
+    invoke<void>("agent_integration_remove", { agent }),
   notifyOs: (
     title: string,
     body: string,

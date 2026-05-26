@@ -132,6 +132,30 @@ export interface WireLine {
   runs: WireRun[];
 }
 
+// ── Agent integrations (inspectable/removable hook install) ───────────────────
+// One row per agent swarm can wire into a real config (Claude/Gemini/Cursor JSON,
+// OpenCode/Amp plugin file). Mirrors agent_hooks.rs::IntegrationStatus.
+export interface IntegrationStatus {
+  id: string;
+  name: string;
+  onPath: boolean;
+  installed: boolean;
+  configPath: string;
+  // Plugin agents are a whole-file create/remove, not a JSON merge.
+  isPlugin: boolean;
+}
+
+// Before/after of an agent's config for the review diff. Mirrors
+// agent_hooks.rs::IntegrationPreview.
+export interface IntegrationPreview {
+  path: string;
+  installed: boolean;
+  isPlugin: boolean;
+  current: string;
+  applied: string;
+  removed: string;
+}
+
 // A streamed terminal frame (wire v2). `full` replaces every row; `delta` patches
 // only the rows in `lines` (the ones the emulator reported as damaged).
 export interface WireUpdate {

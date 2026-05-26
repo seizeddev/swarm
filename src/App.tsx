@@ -1,67 +1,108 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "./store";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
 import { TopBar } from "./components/TopBar";
+import { CommandPalette } from "./components/CommandPalette";
+import { Shortcuts } from "./components/Shortcuts";
+import { AgentIntegrations } from "./components/AgentIntegrations";
+import { buildCommands, type CommandHandlers } from "./lib/commands";
+import { dispatchDrop } from "./lib/drop";
 import { applyPanelWidth, currentPanelWidth } from "./lib/panel";
 
+// Zoom is a document-level CSS mutation with no React state — kept module-level so
+// the command handlers stay stable references.
 let zoom = 1;
-async function handleMenu(id: string) {
-  const s = useStore.getState();
-  switch (id) {
-    case "toggle_sidebar":
-      return s.toggleSidebar();
-    case "panel_scm":
-      return s.setPanel("scm");
-    case "panel_prs":
-      return s.setPanel("prs");
-    case "panel_notifications":
-      return s.setPanel("notifications");
-    case "new_terminal":
-      return s.addPane();
-    case "split_right":
-      return s.splitActive("row");
-    case "split_down":
-      return s.splitActive("col");
-    case "close_pane":
-      return s.closeActivePane();
-    case "ws_next":
-      return s.cycleWorkspace(1);
-    case "ws_prev":
-      return s.cycleWorkspace(-1);
-    case "zoom_in":
-      zoom = Math.min(1.8, zoom + 0.1);
-      document.documentElement.style.zoom = String(zoom);
-      return;
-    case "zoom_out":
-      zoom = Math.max(0.6, zoom - 0.1);
-      document.documentElement.style.zoom = String(zoom);
-      return;
-    case "zoom_reset":
-      zoom = 1;
-      document.documentElement.style.zoom = "1";
-      return;
-    case "new_workspace": {
-      const dir = await open({ directory: true, multiple: false, title: "Open a git repository" });
-      if (typeof dir === "string") s.addWorkspace(dir);
-      return;
-    }
-    case "close_workspace":
-      if (s.activeWorkspaceId) s.closeWorkspaceWithConfirm(s.activeWorkspaceId);
-      return;
-    default:
-      if (id.startsWith("ws_")) {
-        const n = parseInt(id.slice(3), 10);
-        if (n) s.focusWorkspaceIndex(n);
-      }
-  }
+const setZoom = (v: number) => {
+  zoom = Math.min(1.8, Math.max(0.6, v));
+  document.documentElement.style.zoom = String(zoom);
+};
+
+async function pickAndAddWorkspace() {
+  const dir = await open({ directory: true, multiple: false, title: "Open a git repository" });
+  if (typeof dir === "string") useStore.getState().addWorkspace(dir);
 }
 
 export default function App() {
+  // Overlay modals. Palette is also opened from the native menu (⌘⇧P); shortcuts
+  // from the rail's `?` icon (and the menu); integrations from the palette/menu.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
+
+  // The injected (DOM/dialog/modal) handlers the shared command registry needs.
+  // Stable for the app's lifetime — store actions are read fresh inside each run.
+  const handlers = useMemo<CommandHandlers>(
+    () => ({
+      newWorkspace: pickAndAddWorkspace,
+      closeWorkspace: () => {
+        const s = useStore.getState();
+        if (s.activeWorkspaceId) s.closeWorkspaceWithConfirm(s.activeWorkspaceId);
+      },
+      zoomIn: () => setZoom(zoom + 0.1),
+      zoomOut: () => setZoom(zoom - 0.1),
+      zoomReset: () => setZoom(1),
+      openShortcuts: () => setShortcutsOpen(true),
+      openIntegrations: () => setIntegrationsOpen(true),
+    }),
+    [],
+  );
+
+  // Native-menu dispatch shares the command registry, so a menu item and its
+  // palette twin run the exact same path (one behaviour, one path). A few ids
+  // aren't registry commands: the palette toggle and the numbered project jumps.
+  // Held in a ref so the (single, mount-time) event listener never re-subscribes.
+  const handleMenuRef = useRef<(id: string) => void>(() => {});
+  handleMenuRef.current = (id: string) => {
+    if (id === "command_palette") {
+      setPaletteOpen(true);
+      return;
+    }
+    const cmd = buildCommands(handlers).find((c) => c.id === id);
+    if (cmd) {
+      cmd.run();
+      return;
+    }
+    if (id.startsWith("ws_")) {
+      const n = parseInt(id.slice(3), 10);
+      if (n) useStore.getState().focusWorkspaceIndex(n);
+    }
+  };
+
+  // App-shortcut keys, owned in JS rather than as native-menu accelerators. The
+  // native menu items (Command Palette / Keyboard Shortcuts) deliberately carry
+  // NO accelerator: a macOS Shift+letter key-equivalent is consumed by AppKit
+  // before the webview *and* matches unreliably in tao/muda, so the keystroke
+  // could be eaten with nothing opening. Here the keystroke always reaches the
+  // webview. Matched on `event.code` (the physical key — layout/Shift independent,
+  // unlike `key`), captured at the window so it beats the terminal's handler
+  // (which ignores ⌘ combos anyway). Toggles, so the same chord closes it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.code === "KeyP" && e.shiftKey) {
+        // P sits in the same place on every Latin layout, so the physical code is
+        // the reliable match (Shift-independent).
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (e.key === "/" || e.key === "?") {
+        // Slash is layout-dependent — US ⌘/ vs German ⌘⇧7 are different physical
+        // keys — so match the produced *character*, not `code`. `?` is accepted
+        // as a friendly alias (Shift+/ on US).
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, []);
+
   // Compact breakpoint + persisted/clamped panel width. Kept out of the main
   // effect so it owns its own listeners and runs before first paint matters.
   useEffect(() => {
@@ -160,6 +201,21 @@ export default function App() {
     };
     document.addEventListener("contextmenu", onContextMenu);
 
+    // OS file drag-and-drop. Tauri's webview event is global and carries real
+    // absolute paths + a physical-pixel drop position; hit-test that point to the
+    // pane under it and hand its handler the paths (Terminal pastes them as one
+    // bracketed paste). A real file already has a path, so — unlike a clipboard
+    // image — no temp-file write is needed.
+    const dnd = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type !== "drop") return;
+      const { paths, position } = e.payload;
+      if (!paths?.length) return;
+      const dpr = window.devicePixelRatio || 1;
+      const el = document.elementFromPoint(position.x / dpr, position.y / dpr) as HTMLElement | null;
+      const paneId = el?.closest<HTMLElement>("[data-pane-id]")?.getAttribute("data-pane-id");
+      if (paneId) dispatchDrop(paneId, paths);
+    });
+
     // Live git status: the backend's per-worktree notify watcher fires
     // `fs:changed`; coalesce bursts per workspace before refreshing.
     const fsTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -173,7 +229,7 @@ export default function App() {
       listen<{ id: string; title: string }>("term:title", (e) =>
         useStore.getState().onTitle(e.payload.id, e.payload.title),
       ),
-      listen<string>("menu", (e) => handleMenu(e.payload)),
+      listen<string>("menu", (e) => handleMenuRef.current(e.payload)),
       listen<{ paneId: string; body: string }>("pane:notify", (e) =>
         useStore.getState().onPaneNotify(e.payload.paneId, e.payload.body),
       ),
@@ -206,6 +262,7 @@ export default function App() {
       document.removeEventListener("contextmenu", onContextMenu);
       unlistenFocus.then((f) => f()).catch(() => {});
       unlistenResize.then((f) => f()).catch(() => {});
+      dnd.then((f) => f()).catch(() => {});
       fsTimers.forEach((t) => clearTimeout(t));
       events.then((fns) => fns.forEach((f) => f()));
     };
@@ -215,9 +272,12 @@ export default function App() {
     <div className="flex h-full flex-col">
       <TopBar />
       <div className="relative flex min-h-0 flex-1">
-        <Sidebar />
+        <Sidebar onShowShortcuts={() => setShortcutsOpen(true)} />
         <Workspace />
       </div>
+      {paletteOpen && <CommandPalette handlers={handlers} onClose={() => setPaletteOpen(false)} />}
+      {shortcutsOpen && <Shortcuts onClose={() => setShortcutsOpen(false)} />}
+      {integrationsOpen && <AgentIntegrations onClose={() => setIntegrationsOpen(false)} />}
     </div>
   );
 }

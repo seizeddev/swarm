@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { tokenize, wordDiff } from "../diff";
+import { lineDiff, tokenize, wordDiff } from "../diff";
 
 const text = (segs: { text: string }[]) => segs.map((s) => s.text).join("");
 const changed = (segs: { text: string; changed: boolean }[]) =>
@@ -62,5 +62,40 @@ describe("tokenize", () => {
   it("keeps a string with an embedded keyword as one string", () => {
     expect(kinds('"return value"', "string")).toEqual(['"return value"']);
     expect(kinds('"return value"', "keyword")).toHaveLength(0);
+  });
+});
+
+describe("lineDiff", () => {
+  it("marks added and removed lines, keeping common ones as context", () => {
+    const out = lineDiff("a\nb\nc", "a\nB\nc");
+    expect(out).toEqual([
+      { kind: "ctx", text: "a" },
+      { kind: "del", text: "b" },
+      { kind: "add", text: "B" },
+      { kind: "ctx", text: "c" },
+    ]);
+  });
+
+  it("treats an empty before as a pure creation", () => {
+    const out = lineDiff("", "x\ny");
+    expect(out).toEqual([
+      { kind: "add", text: "x" },
+      { kind: "add", text: "y" },
+    ]);
+  });
+
+  it("treats an empty after as a pure removal", () => {
+    const out = lineDiff("x\ny", "");
+    expect(out.every((l) => l.kind === "del")).toBe(true);
+    expect(out).toHaveLength(2);
+  });
+
+  it("ignores a trailing newline (no spurious blank line)", () => {
+    const out = lineDiff("a\n", "a\n");
+    expect(out).toEqual([{ kind: "ctx", text: "a" }]);
+  });
+
+  it("reports no changes for identical content", () => {
+    expect(lineDiff("a\nb", "a\nb").every((l) => l.kind === "ctx")).toBe(true);
   });
 });

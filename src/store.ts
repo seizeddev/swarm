@@ -51,6 +51,10 @@ type Editor =
 export interface Workspace {
   id: string;
   repo: RepoInfo;
+  // User-set display name override. When unset the repo's folder name is shown
+  // (`name ?? repo.name`). We don't mutate `repo.name` so the original is kept
+  // for re-resolution; an empty rename clears the override back to the repo name.
+  name?: string;
   panel: Panel;
   editor: Editor;
   tabs: Tab[];
@@ -203,6 +207,7 @@ interface State {
   setActiveWorkspace(id: string): void;
   cycleWorkspace(dir: number): void;
   focusWorkspaceIndex(i: number): void;
+  renameWorkspace(id: string, name: string): void;
 
   refreshStatus(wsId?: string): Promise<void>;
   setPanel(p: Panel): void;
@@ -431,6 +436,16 @@ export const useStore = create<State>((set, get) => {
       if (ws) get().setActiveWorkspace(ws.id);
     },
 
+    // Override the rail/tooltip display name. A blank (or repo-name-equal) value
+    // clears the override so it falls back to the repo's folder name. Stored on
+    // the workspace, not `repo`, so the canonical name is never lost.
+    renameWorkspace(id, name) {
+      const clean = name.trim();
+      const ws = get().workspaces.find((w) => w.id === id);
+      const next = !clean || clean === ws?.repo.name ? undefined : clean;
+      patch(id, { name: next });
+    },
+
     closeActivePane() {
       const ws = active();
       const tab = ws?.tabs.find((t) => t.id === ws.activeTab);
@@ -446,6 +461,7 @@ export const useStore = create<State>((set, get) => {
         workspaces: workspaces.map((w) => ({
           id: w.id,
           repoPath: w.repo.path,
+          name: w.name,
           panel: w.panel,
           activeTab: w.activeTab,
           tabs: w.tabs.map((t) => ({ id: t.id, layout: t.layout, activeLeaf: t.activeLeaf })),
@@ -500,6 +516,7 @@ export const useStore = create<State>((set, get) => {
             workspaces.push({
               id: sw.id,
               repo,
+              name: sw.name,
               // Migrate the retired "terminals" panel (and any unknown) to scm.
               panel:
                 sw.panel === "scm" ||
@@ -999,9 +1016,17 @@ export const useStore = create<State>((set, get) => {
     },
 
     setNotificationRead(id, read) {
-      set((s) => ({
-        notifications: s.notifications.map((n) => (n.id === id ? { ...n, read } : n)),
-      }));
+      set((s) => {
+        const updated = s.notifications.map((n) => (n.id === id ? { ...n, read } : n));
+        // Marking unread re-surfaces it: lift it to the front (the list is
+        // otherwise newest-first by prepend) so it's visible again, mirroring how
+        // a fresh notification arrives at the top.
+        if (!read) {
+          const hit = updated.find((n) => n.id === id);
+          if (hit) return { notifications: [hit, ...updated.filter((n) => n.id !== id)] };
+        }
+        return { notifications: updated };
+      });
     },
 
     // Background check — fires on startup and on an interval. Stays silent on

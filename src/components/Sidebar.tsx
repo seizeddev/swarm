@@ -10,14 +10,17 @@ import {
   GitBranch,
   GitPullRequest,
   History,
+  Keyboard,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCw,
   TerminalSquare,
   X,
 } from "lucide-react";
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Modal } from "./Modal";
 import { useActiveWorkspace, useStore, type Panel } from "../store";
 import { NotificationsPanel, PullRequestsPanel, SourceControlPanel } from "./panels";
 import { GraphPanel } from "./GraphPanel";
@@ -309,7 +312,7 @@ function DevUpdatePreview() {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
   const ws = useActiveWorkspace();
   const {
     workspaces,
@@ -319,6 +322,7 @@ export function Sidebar() {
     addPane,
     refreshStatus,
     revealPath,
+    renameWorkspace,
     notifications,
     error,
     sidebarVisible,
@@ -333,6 +337,7 @@ export function Sidebar() {
       addPane: s.addPane,
       refreshStatus: s.refreshStatus,
       revealPath: s.revealPath,
+      renameWorkspace: s.renameWorkspace,
       notifications: s.notifications,
       error: s.error,
       sidebarVisible: s.sidebarVisible,
@@ -340,6 +345,10 @@ export function Sidebar() {
       toggleSidebar: s.toggleSidebar,
     })),
   );
+
+  // The workspace currently being renamed (its id), or null. Drives the rename
+  // modal below the rail.
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   // Right-click context menu for a workspace square — shared <ContextMenu>. The
   // tear-down item prompts when an agent is running (closeWorkspaceWithConfirm),
@@ -350,7 +359,7 @@ export function Sidebar() {
     const w = workspaces.find((x) => x.id === id);
     if (!w) return [];
     return [
-      { kind: "header", label: w.repo.name },
+      { kind: "header", label: w.name ?? w.repo.name },
       {
         label: "New Terminal",
         icon: <TerminalSquare size={14} />,
@@ -358,6 +367,11 @@ export function Sidebar() {
           setActiveWorkspace(id);
           addPane(undefined, id);
         },
+      },
+      {
+        label: "Rename…",
+        icon: <Pencil size={14} />,
+        onClick: () => setRenaming(id),
       },
       {
         label: "Refresh",
@@ -426,7 +440,7 @@ export function Sidebar() {
           <WorkspaceSquare
             key={w.id}
             id={w.id}
-            name={w.repo.name}
+            name={w.name ?? w.repo.name}
             onMenu={(e, id) => openMenu(e, workspaceMenu(id))}
           />
         ))}
@@ -463,8 +477,17 @@ export function Sidebar() {
 
         <div className="flex-1" />
 
-        {/* Pinned to the rail's foot: the self-update icon (hover for the full
-            dialog) and, in dev only, the preview cycler. */}
+        {/* Pinned to the rail's foot: a keyboard-shortcuts cheatsheet, the
+            self-update icon (hover for the full dialog), and — in dev only — the
+            preview cycler. */}
+        <button
+          type="button"
+          className="icon-btn h-8 w-8"
+          title="Keyboard shortcuts"
+          onClick={onShowShortcuts}
+        >
+          <Keyboard size={16} />
+        </button>
         <RailUpdate />
         <DevUpdatePreview />
       </div>
@@ -551,6 +574,74 @@ export function Sidebar() {
 
       {/* Workspace context menu (right-click a rail square) — shared surface. */}
       <ContextMenu menu={menu} onClose={closeMenu} />
+
+      {renaming &&
+        (() => {
+          const w = workspaces.find((x) => x.id === renaming);
+          if (!w) return null;
+          return (
+            <RenameWorkspaceModal
+              current={w.name ?? w.repo.name}
+              repoName={w.repo.name}
+              onClose={() => setRenaming(null)}
+              onSubmit={(name) => {
+                renameWorkspace(w.id, name);
+                setRenaming(null);
+              }}
+            />
+          );
+        })()}
     </>
+  );
+}
+
+// Tiny rename input for a workspace's display name. Submitting an empty value (or
+// the repo's own name) clears the override — the store handles that; we just pass
+// the raw text through. Esc/backdrop cancels (handled by Modal).
+function RenameWorkspaceModal({
+  current,
+  repoName,
+  onClose,
+  onSubmit,
+}: {
+  current: string;
+  repoName: string;
+  onClose: () => void;
+  onSubmit: (name: string) => void;
+}) {
+  const [value, setValue] = useState(current);
+  return (
+    <Modal onClose={onClose} labelledBy="rename-title">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit(value);
+        }}
+        className="p-4"
+      >
+        <h2 id="rename-title" className="mb-1 text-[14px] font-semibold text-[var(--color-text)]">
+          Rename Project
+        </h2>
+        <p className="mb-3 text-[12px] text-[var(--color-muted)]">
+          Display name only — the folder isn't touched. Leave blank to use “{repoName}”.
+        </p>
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={repoName}
+          spellCheck={false}
+          className="w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-3 py-2 text-[13px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-border-strong)]"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn h-9 text-[13px]">
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-accent h-9 text-[13px]">
+            Save
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

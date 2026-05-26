@@ -482,6 +482,33 @@ fn install_agent_hooks() {
     agent_hooks::install_all(&swarm_bin_path());
 }
 
+/// Inspectable view of the auto-installed agent hooks: which agents are on PATH,
+/// which currently carry swarm's hooks, and where their config lives.
+#[tauri::command]
+fn agent_integrations_status() -> Vec<agent_hooks::IntegrationStatus> {
+    agent_hooks::integrations_status(&swarm_bin_path())
+}
+
+/// Before/after of an agent's config so the UI can show a real diff before the
+/// user applies or removes swarm's hooks.
+#[tauri::command]
+fn agent_integration_preview(agent: String) -> AppResult<agent_hooks::IntegrationPreview> {
+    agent_hooks::integration_preview(&swarm_bin_path(), &agent)
+        .ok_or_else(|| error::AppError::Other(format!("unknown agent: {agent}")))
+}
+
+#[tauri::command]
+fn agent_integration_apply(agent: String) -> AppResult<()> {
+    agent_hooks::integration_apply(&swarm_bin_path(), &agent)
+        .ok_or_else(|| error::AppError::Other(format!("could not write config for {agent}")))
+}
+
+#[tauri::command]
+fn agent_integration_remove(agent: String) -> AppResult<()> {
+    agent_hooks::integration_remove(&agent)
+        .ok_or_else(|| error::AppError::Other(format!("could not update config for {agent}")))
+}
+
 /// Prepare an isolated CODEX_HOME that mirrors the user's ~/.codex (so auth/
 /// settings carry over) but adds a `notify` program writing to SWARM_EVENT_FILE.
 /// The user's real config is never modified.
@@ -746,6 +773,12 @@ pub fn run() {
                 .select_all()
                 .build()?;
             let view = SubmenuBuilder::new(app, "View")
+                // No native accelerator: ⌘⇧P is owned by a JS keydown handler
+                // (App.tsx). A native Shift+letter key-equivalent is consumed by
+                // AppKit before the webview *and* matches unreliably in tao/muda,
+                // so the menu item is click-only and the shortcut lives in JS.
+                .item(&MenuItemBuilder::with_id("command_palette", "Command Palette").build(app)?)
+                .separator()
                 .item(
                     &MenuItemBuilder::with_id("toggle_sidebar", "Toggle Sidebar")
                         .accelerator("CmdOrCtrl+B")
@@ -779,6 +812,13 @@ pub fn run() {
                         .accelerator("CmdOrCtrl+0")
                         .build(app)?,
                 )
+                .separator()
+                .item(
+                    &MenuItemBuilder::with_id("agent_integrations", "Agent Integrations…")
+                        .build(app)?,
+                )
+                // ⌘/ is owned by the JS keydown handler (see command_palette note).
+                .item(&MenuItemBuilder::with_id("shortcuts", "Keyboard Shortcuts").build(app)?)
                 .separator()
                 .fullscreen()
                 .build()?;
@@ -890,6 +930,10 @@ pub fn run() {
             notify_os,
             swarm_bin,
             install_agent_hooks,
+            agent_integrations_status,
+            agent_integration_preview,
+            agent_integration_apply,
+            agent_integration_remove,
             agent_session_resume,
             agent_session_forget,
             commit_detail,

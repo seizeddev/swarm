@@ -94,9 +94,11 @@ Shown with ⌘ for macOS; use **Ctrl** on Windows and Linux.
 
 | Shortcut | Action |
 | --- | --- |
+| ⌘ ⇧ P | Command palette |
 | ⌘ B | Toggle sidebar |
 | ⌘ ⇧ G | Source Control |
 | ⌘ I | Notifications |
+| ⌘ / | Keyboard shortcuts |
 | ⌘ , | Settings |
 | ⌘ ⇧ = · ⌘ - · ⌘ 0 | Zoom in · out · reset |
 

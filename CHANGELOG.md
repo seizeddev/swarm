@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Command palette (⌘/Ctrl+⇧+P).** A searchable, keyboard-driven list of every menu action — new terminal, splits, panel switches, zoom, switch project, agent integrations — backed by a shared command registry so each entry runs the exact same path as its native-menu twin.
+- **Keyboard-shortcuts sheet.** A `?` button at the foot of the rail (and View ▸ Keyboard Shortcuts, ⌘/Ctrl+/) opens a grouped reference, with ⌘ on macOS and Ctrl elsewhere.
+- **Agent Integrations panel.** A transparent view of the hooks swarm installs into agents' real configs (Claude/Gemini/Cursor JSON, OpenCode/Amp plugin files): per-agent status (on PATH? installed?), a real before→after diff of the config file, and Apply / Remove. Removal strips only swarm's own `--notify-helper` entries, never unrelated hooks. The best-effort silent install still runs on launch; this just makes it inspectable and reversible.
+- **Drag a file onto a terminal** to paste its absolute path (quoted, as one bracketed paste) — so a TUI such as Claude Code attaches it. Multiple files are space-joined.
+- **Rename a project.** Right-click a workspace ▸ Rename… sets a display-name override (the folder is never touched; blank restores the repo name); it persists across restart.
+
+### Changed
+
+- **Terminal panes show a brief spinner** until the first frame paints, instead of a blank box on spawn.
+- **Marking a notification unread lifts it back to the top** of the list, the way a fresh one arrives.
+- **The active tab's close button stays visible** (inactive tabs still reveal it on hover).
+
 ## [0.4.0] - 2026-05-26
 
 A terminal and interaction release. No data migration required; sessions

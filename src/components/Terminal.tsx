@@ -15,7 +15,8 @@ import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
-import { ClipboardPaste, Copy, Eraser, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
+import { joinPaths, registerDrop } from "../lib/drop";
+import { ClipboardPaste, Copy, Eraser, Loader2, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
 import type { WireUpdate } from "../lib/types";
 
 // `visible` = this pane is on screen (a split shows every leaf at once, so all of
@@ -71,6 +72,9 @@ export function Terminal({
   // and the fraction→cols/rows maths.
   const cssCell = useRef({ w: 7.5, h: 17 });
   const [exited, setExited] = useState(false);
+  // False until the first frame paints, so a freshly-spawned pane shows a quiet
+  // spinner instead of a blank box for the beat before the PTY's first output.
+  const [ready, setReady] = useState(false);
   const { menu, open: openMenu, close: closeMenu } = useContextMenu();
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -100,6 +104,7 @@ export function Terminal({
 
   const apply = (u: WireUpdate) => {
     gridRef.current.apply(u);
+    setReady(true);
     if (visibleRef.current) scheduleRender();
   };
 
@@ -308,6 +313,9 @@ export function Terminal({
         ptyIdRef.current = existing;
         try {
           await api.ptyAttach(existing, apply);
+          // An already-running PTY has content; the core pushes a full frame on
+          // attach, but mark ready now so there's no spinner flash on re-attach.
+          setReady(true);
           api.ptySetVisible(existing, visibleRef.current).catch(() => {});
           requestFit();
           return;
@@ -366,6 +374,20 @@ export function Terminal({
       un.then((f) => f()).catch(() => {});
     };
   }, []);
+
+  // File drag-and-drop → paste the dropped path(s). App owns the global webview
+  // drop listener and routes paths here by pane id (see lib/drop.ts); we paste
+  // them as one bracketed paste (mode-aware), exactly like a clipboard paste, so
+  // a TUI such as Claude Code attaches the file. Refocus so typing lands at once.
+  useEffect(() => {
+    return registerDrop(pane.paneId, (paths) => {
+      const id = ptyIdRef.current;
+      if (!id || !paths.length) return;
+      api.ptyWrite(id, wrapPaste(joinPaths(paths), gridRef.current.mode));
+      wrapRef.current?.focus();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.paneId]);
 
   // ResizeObserver: window/font changes. Layout changes inside the tab are driven
   // from the fraction effect below (WKWebView misses a %-height grow).
@@ -735,6 +757,7 @@ export function Terminal({
     <div
       ref={wrapRef}
       tabIndex={0}
+      data-pane-id={pane.paneId}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       onMouseDown={onMouseDown}
@@ -756,6 +779,12 @@ export function Terminal({
       <canvas ref={canvasRef} className="term-canvas" />
 
       <div ref={scrollbarRef} className="term-scrollbar" aria-hidden />
+
+      {!ready && !exited && visible && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-[var(--color-faint)]">
+          <Loader2 size={18} className="spin" />
+        </div>
+      )}
 
       {exited && (
         <div className="absolute inset-0 grid place-items-center text-sm text-[var(--color-muted)]">

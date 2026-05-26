@@ -23,6 +23,8 @@ interface SnapTab {
 interface SnapWorkspace {
   id: string;
   repoPath: string;
+  // Optional user-set display-name override (falls back to the repo folder name).
+  name?: string;
   panel: string;
   activeTab: string | null;
   tabs: SnapTab[];
