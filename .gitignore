@@ -28,3 +28,6 @@ coverage
 
 # design scratch (logo concept grids)
 design/
+
+# Claude Code local artifacts (scheduled-task locks, etc.)
+.claude/
