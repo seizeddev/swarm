@@ -21,6 +21,13 @@ vi.mock("../lib/ipc", () => ({
     stageAll: vi.fn(),
     unstageAll: vi.fn(),
     commit: vi.fn(),
+    discard: vi.fn(),
+    checkoutRef: vi.fn(),
+    createBranch: vi.fn(),
+    resetTo: vi.fn(),
+    revertCommit: vi.fn(),
+    revealPath: vi.fn(),
+    prCheckout: vi.fn(),
     prList: vi.fn(),
     ghLogin: vi.fn(),
     ghAvailable: vi.fn(),
@@ -112,6 +119,7 @@ const INITIAL = {
   ghAvailable: false,
   busy: false,
   error: null,
+  gitNonce: 0,
   hydrated: false,
   sidebarVisible: true,
   windowFocused: true,
@@ -155,6 +163,10 @@ beforeEach(() => {
     m[fn].mockResolvedValue(undefined);
   }
   m.commit.mockResolvedValue("deadbee");
+  for (const fn of ["discard", "checkoutRef", "createBranch", "resetTo", "revealPath", "prCheckout"]) {
+    m[fn].mockResolvedValue(undefined);
+  }
+  m.revertCommit.mockResolvedValue("revbee0");
   upd.check.mockResolvedValue(null);
   upd.downloadAndInstall.mockResolvedValue(undefined);
   upd.relaunch.mockResolvedValue(undefined);
@@ -702,6 +714,139 @@ describe("staging + commit", () => {
   });
 });
 
+describe("git write-ops", () => {
+  beforeEach(async () => {
+    await s().addWorkspace("/repo");
+  });
+
+  it("discards files then refreshes status", async () => {
+    await s().discardFiles(["a.txt"]);
+    expect(m.discard).toHaveBeenCalledWith("/repo", ["a.txt"]);
+    expect(m.statusAndStats).toHaveBeenCalledTimes(2); // add + after discard
+  });
+
+  it("ignores an empty discard list", async () => {
+    await s().discardFiles([]);
+    expect(m.discard).not.toHaveBeenCalled();
+  });
+
+  it("checks out a ref, re-fetches repo info, and bumps gitNonce", async () => {
+    const before = s().gitNonce;
+    await s().checkoutRef("feature");
+    expect(m.checkoutRef).toHaveBeenCalledWith("/repo", "feature");
+    expect(m.repoInfo).toHaveBeenCalled();
+    expect(s().gitNonce).toBe(before + 1);
+  });
+
+  it("creates a branch only with a non-empty (trimmed) name", async () => {
+    await s().createBranchAt("   ", "abc");
+    expect(m.createBranch).not.toHaveBeenCalled();
+    await s().createBranchAt("  feat  ", "abc");
+    expect(m.createBranch).toHaveBeenCalledWith("/repo", "feat", "abc");
+  });
+
+  it("resets to a commit in the requested mode", async () => {
+    await s().resetTo("abc123", "hard");
+    expect(m.resetTo).toHaveBeenCalledWith("/repo", "abc123", "hard");
+    expect(s().gitNonce).toBe(1);
+  });
+
+  it("reverts a commit and bumps gitNonce", async () => {
+    await s().revertCommit("abc123");
+    expect(m.revertCommit).toHaveBeenCalledWith("/repo", "abc123");
+    expect(s().gitNonce).toBe(1);
+  });
+
+  it("checks out a PR branch by number", async () => {
+    await s().prCheckout({
+      number: 7,
+      title: "x",
+      url: "https://github.com/o/r/pull/7",
+      state: "OPEN",
+      isDraft: false,
+      author: "octocat",
+      headRef: "feat",
+      reviewDecision: null,
+      checks: null,
+    });
+    expect(m.prCheckout).toHaveBeenCalledWith("/repo", 7);
+  });
+
+  it("surfaces a git write failure as an error and clears busy", async () => {
+    m.checkoutRef.mockRejectedValue(new Error("would be overwritten"));
+    await s().checkoutRef("feature");
+    expect(s().error).toBe("would be overwritten");
+    expect(s().busy).toBe(false);
+  });
+
+  it("reveals a path via the OS", async () => {
+    await s().revealPath("/repo/a.txt");
+    expect(m.revealPath).toHaveBeenCalledWith("/repo/a.txt");
+  });
+
+  it("surfaces a reveal failure as an error", async () => {
+    m.revealPath.mockRejectedValue(new Error("no such path"));
+    await s().revealPath("/repo/a.txt");
+    expect(s().error).toBe("no such path");
+  });
+});
+
+describe("tab close actions", () => {
+  beforeEach(async () => {
+    useStore.setState({ agents: [SHELL] });
+    await s().addWorkspace("/repo");
+  });
+
+  it("closeOtherTabs keeps only the named tab and selects it", () => {
+    s().addPane(SHELL);
+    s().addPane(SHELL);
+    const tabs = s().workspaces[0].tabs;
+    const keep = tabs[1].id;
+    s().closeOtherTabs(keep);
+    const after = s().workspaces[0];
+    expect(after.tabs.map((t) => t.id)).toEqual([keep]);
+    expect(after.activeTab).toBe(keep);
+  });
+
+  it("closeTabsToRight closes only the tabs after the named one", () => {
+    s().addPane(SHELL);
+    s().addPane(SHELL);
+    const tabs = s().workspaces[0].tabs;
+    const pivot = tabs[1].id;
+    s().closeTabsToRight(pivot);
+    expect(s().workspaces[0].tabs.map((t) => t.id)).toEqual([tabs[0].id, pivot]);
+  });
+
+  it("closeTabsToRight is a no-op for an unknown tab id", () => {
+    const before = s().workspaces[0].tabs.length;
+    s().closeTabsToRight("nope");
+    expect(s().workspaces[0].tabs).toHaveLength(before);
+  });
+});
+
+describe("setNotificationRead", () => {
+  it("toggles the read flag on one notification", () => {
+    useStore.setState({
+      notifications: [
+        {
+          id: "n1",
+          workspaceId: "w",
+          paneId: "p",
+          title: "t",
+          body: "b",
+          ts: 0,
+          source: "agent",
+          read: false,
+        },
+      ],
+    });
+    s().setNotificationRead("n1", true);
+    expect(s().notifications[0].read).toBe(true);
+    s().setNotificationRead("n1", false);
+    expect(s().notifications[0].read).toBe(false);
+  });
+});
+
 describe("misc workspace actions", () => {
   beforeEach(async () => {
     await s().addWorkspace("/repo");
@@ -1203,6 +1348,26 @@ describe("actions with no active workspace", () => {
     expect(m.prList).not.toHaveBeenCalled();
   });
 
+  it("git write-ops never reach the backend without a workspace", async () => {
+    await s().discardFiles(["a.txt"]);
+    await s().checkoutRef("feature");
+    await s().createBranchAt("feat", "abc");
+    await s().resetTo("abc", "hard");
+    await s().revertCommit("abc");
+    expect(m.discard).not.toHaveBeenCalled();
+    expect(m.checkoutRef).not.toHaveBeenCalled();
+    expect(m.createBranch).not.toHaveBeenCalled();
+    expect(m.resetTo).not.toHaveBeenCalled();
+    expect(m.revertCommit).not.toHaveBeenCalled();
+    expect(s().gitNonce).toBe(0);
+  });
+
+  it("closeOtherTabs / closeTabsToRight no-op without a workspace", () => {
+    s().closeOtherTabs("x");
+    s().closeTabsToRight("x");
+    expect(s().workspaces).toHaveLength(0);
+  });
+
   it("selectPane / removePane ignore unknown pane ids", () => {
     s().selectPane("ghost");
     s().removePane("ghost");
@@ -1272,5 +1437,155 @@ describe("action edge cases with an active workspace", () => {
     s().onTitle("pty-0", "Renamed");
     s().onTitle("pty-0", "   "); // blank title: ignored
     expect(s().panes.find((p) => p.paneId === first.paneId)?.title).toBe("Renamed");
+  });
+});
+
+describe("git write-ops (context-menu actions)", () => {
+  it("discardFiles calls the backend and refreshes status without moving HEAD", async () => {
+    await s().addWorkspace("/repo");
+    m.statusAndStats.mockClear();
+    await s().discardFiles(["a.txt", "b.txt"]);
+    expect(m.discard).toHaveBeenCalledWith("/repo", ["a.txt", "b.txt"]);
+    expect(m.statusAndStats).toHaveBeenCalled();
+    expect(s().gitNonce).toBe(0); // discard doesn't move HEAD
+    expect(s().busy).toBe(false);
+  });
+
+  it("discardFiles with no paths is a no-op", async () => {
+    await s().addWorkspace("/repo");
+    await s().discardFiles([]);
+    expect(m.discard).not.toHaveBeenCalled();
+  });
+
+  it("checkoutRef moves HEAD: re-fetches repo info and bumps gitNonce", async () => {
+    await s().addWorkspace("/repo");
+    m.repoInfo.mockResolvedValue({ path: "/repo", name: "repo", headBranch: "feature" });
+    await s().checkoutRef("feature");
+    expect(m.checkoutRef).toHaveBeenCalledWith("/repo", "feature");
+    expect(s().gitNonce).toBe(1);
+    expect(s().workspaces[0].repo.headBranch).toBe("feature");
+  });
+
+  it("createBranchAt trims the name and skips an empty one", async () => {
+    await s().addWorkspace("/repo");
+    await s().createBranchAt("   ", "abc123");
+    expect(m.createBranch).not.toHaveBeenCalled();
+    await s().createBranchAt("  feat  ", "abc123");
+    expect(m.createBranch).toHaveBeenCalledWith("/repo", "feat", "abc123");
+  });
+
+  it("resetTo and revertCommit forward to the backend and bump gitNonce", async () => {
+    await s().addWorkspace("/repo");
+    await s().resetTo("abc123", "hard");
+    expect(m.resetTo).toHaveBeenCalledWith("/repo", "abc123", "hard");
+    await s().revertCommit("abc123");
+    expect(m.revertCommit).toHaveBeenCalledWith("/repo", "abc123");
+    expect(s().gitNonce).toBe(2);
+  });
+
+  it("prCheckout passes the PR number and surfaces a failure as an error", async () => {
+    await s().addWorkspace("/repo");
+    const pr = {
+      number: 7,
+      title: "t",
+      url: "u",
+      state: "OPEN",
+      isDraft: false,
+      author: "me",
+      headRef: "feat",
+      reviewDecision: null,
+      checks: null,
+    };
+    await s().prCheckout(pr);
+    expect(m.prCheckout).toHaveBeenCalledWith("/repo", 7);
+
+    m.prCheckout.mockRejectedValueOnce(new Error("dirty worktree"));
+    await s().prCheckout(pr);
+    expect(s().error).toBe("dirty worktree");
+    expect(s().busy).toBe(false);
+  });
+
+  it("a failed git op records the error message and clears busy", async () => {
+    await s().addWorkspace("/repo");
+    m.checkoutRef.mockRejectedValueOnce(new Error("conflicting changes"));
+    await s().checkoutRef("feature");
+    expect(s().error).toBe("conflicting changes");
+    expect(s().busy).toBe(false);
+  });
+
+  it("git ops are a no-op with no active workspace", async () => {
+    await s().discardFiles(["a.txt"]);
+    await s().checkoutRef("x");
+    expect(m.discard).not.toHaveBeenCalled();
+    expect(m.checkoutRef).not.toHaveBeenCalled();
+  });
+
+  it("revealPath forwards the path and reports failures", async () => {
+    await s().addWorkspace("/repo");
+    await s().revealPath("/repo/a.txt");
+    expect(m.revealPath).toHaveBeenCalledWith("/repo/a.txt");
+
+    m.revealPath.mockRejectedValueOnce(new Error("no such file"));
+    await s().revealPath("/repo/missing");
+    expect(s().error).toBe("no such file");
+  });
+});
+
+describe("tab close actions", () => {
+  it("closeOtherTabs keeps only the named tab", async () => {
+    await s().addWorkspace("/repo"); // 1 tab
+    s().addPane(SHELL); // 2
+    s().addPane(SHELL); // 3
+    const tabs = s().workspaces[0].tabs;
+    expect(tabs).toHaveLength(3);
+    const keep = tabs[1].id;
+    s().closeOtherTabs(keep);
+    const after = s().workspaces[0].tabs;
+    expect(after).toHaveLength(1);
+    expect(after[0].id).toBe(keep);
+    expect(s().workspaces[0].activeTab).toBe(keep);
+  });
+
+  it("closeTabsToRight removes every tab after the named one", async () => {
+    await s().addWorkspace("/repo");
+    s().addPane(SHELL);
+    s().addPane(SHELL);
+    const tabs = s().workspaces[0].tabs;
+    s().closeTabsToRight(tabs[0].id);
+    const after = s().workspaces[0].tabs;
+    expect(after).toHaveLength(1);
+    expect(after[0].id).toBe(tabs[0].id);
+  });
+
+  it("close actions are a no-op with no active workspace / unknown tab", async () => {
+    s().closeOtherTabs("nope"); // no active ws
+    await s().addWorkspace("/repo");
+    s().closeTabsToRight("unknown-tab"); // tab not found
+    expect(s().workspaces[0].tabs).toHaveLength(1);
+  });
+});
+
+describe("setNotificationRead", () => {
+  it("toggles a single notification's read flag", async () => {
+    useStore.setState({
+      notifications: [
+        {
+          id: "n1",
+          workspaceId: "w",
+          paneId: "p",
+          title: "T",
+          body: "b",
+          ts: 0,
+          source: "agent",
+          read: false,
+        },
+      ],
+    });
+    s().setNotificationRead("n1", true);
+    expect(s().notifications[0].read).toBe(true);
+    s().setNotificationRead("n1", false);
+    expect(s().notifications[0].read).toBe(false);
+    s().setNotificationRead("missing", true); // unknown id: no throw, no change
+    expect(s().notifications[0].read).toBe(false);
   });
 });

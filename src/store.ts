@@ -172,6 +172,9 @@ interface State {
   busy: boolean;
   error: string | null;
   hydrated: boolean;
+  // Bumped by any HEAD-mutating git op (checkout/branch/reset/revert) so views
+  // that cache git state out of band — the history graph — can re-fetch.
+  gitNonce: number;
   sidebarVisible: boolean;
   // True below the compact breakpoint (<768px), where the inspector panel
   // overlays the workspace as a drawer instead of pushing it. Driven by a
@@ -223,7 +226,17 @@ interface State {
   stageAll(): Promise<void>;
   unstageAll(): Promise<void>;
   commit(): Promise<void>;
+  discardFiles(paths: string[]): Promise<void>;
+  checkoutRef(name: string): Promise<void>;
+  createBranchAt(name: string, start: string): Promise<void>;
+  resetTo(oid: string, mode: "soft" | "mixed" | "hard"): Promise<void>;
+  revertCommit(oid: string): Promise<void>;
+  prCheckout(pr: PrSummary): Promise<void>;
+  revealPath(path: string): Promise<void>;
   loadPrs(wsId?: string, force?: boolean): Promise<void>;
+
+  closeOtherTabs(tabId: string): void;
+  closeTabsToRight(tabId: string): void;
 
   onAttention(ptyId: string): void;
   onNotify(ptyId: string, title: string, body: string): void;
@@ -231,6 +244,7 @@ interface State {
   onTitle(ptyId: string, title: string): void;
   dismissNotification(id: string): void;
   clearNotifications(): void;
+  setNotificationRead(id: string, read: boolean): void;
 
   checkForUpdate(): Promise<void>;
   installUpdate(): Promise<void>;
@@ -266,6 +280,32 @@ export const useStore = create<State>((set, get) => {
   // view isn't hidden behind it. A no-op in regular mode (push layout).
   const closeDrawerIfCompact = () => {
     if (get().compact) set({ sidebarVisible: false });
+  };
+
+  // Run a git write-op against the active workspace with shared bookkeeping:
+  // busy flag + error surfacing (mirrors `commit`), a status refresh, and — when
+  // the op moved HEAD — a repo-info re-fetch (branch name) plus a `gitNonce` bump
+  // so the history graph reloads. Errors are caught and shown, never thrown.
+  const gitMutate = async (
+    fn: (ws: Workspace) => Promise<void>,
+    opts: { movedHead?: boolean } = {},
+  ) => {
+    const ws = active();
+    if (!ws) return;
+    set({ busy: true, error: null });
+    try {
+      await fn(ws);
+      await get().refreshStatus(ws.id);
+      if (opts.movedHead) {
+        const info = await api.repoInfo(ws.repo.path).catch(() => null);
+        if (info) patch(ws.id, { repo: info });
+        set((s) => ({ gitNonce: s.gitNonce + 1 }));
+      }
+    } catch (e: any) {
+      set({ error: e?.message ?? String(e) });
+    } finally {
+      set({ busy: false });
+    }
   };
 
   const paneVisible = (pane: Pane) => {
@@ -337,6 +377,7 @@ export const useStore = create<State>((set, get) => {
     ghAvailable: false,
     busy: false,
     error: null,
+    gitNonce: 0,
     hydrated: false,
     sidebarVisible: true,
     compact: false,
@@ -735,6 +776,28 @@ export const useStore = create<State>((set, get) => {
       patch(ws.id, { activeTab: tabId, editor: { type: "terminal" } });
     },
 
+    // Close every tab except `tabId` (VS Code "Close Others"). Each tab is torn
+    // down by removing all its leaf panes — reusing removePane so the PTY kill +
+    // session-forget bookkeeping runs exactly once per pane.
+    closeOtherTabs(tabId) {
+      const ws = active();
+      if (!ws) return;
+      const doomed = ws.tabs.filter((t) => t.id !== tabId);
+      const paneIds = doomed.flatMap((t) => leaves(t.layout));
+      paneIds.forEach((id) => get().removePane(id));
+      get().selectTab(tabId);
+    },
+
+    // Close every tab to the right of `tabId` (VS Code "Close to the Right").
+    closeTabsToRight(tabId) {
+      const ws = active();
+      if (!ws) return;
+      const idx = ws.tabs.findIndex((t) => t.id === tabId);
+      if (idx < 0) return;
+      const paneIds = ws.tabs.slice(idx + 1).flatMap((t) => leaves(t.layout));
+      paneIds.forEach((id) => get().removePane(id));
+    },
+
     setRatio(splitNodeId, ratio) {
       const ws = active();
       const tab = ws?.tabs.find((t) => t.id === ws.activeTab);
@@ -809,6 +872,33 @@ export const useStore = create<State>((set, get) => {
       } finally {
         set({ busy: false });
       }
+    },
+
+    async discardFiles(paths) {
+      if (!paths.length) return;
+      await gitMutate((ws) => api.discard(ws.repo.path, paths));
+    },
+    async checkoutRef(name) {
+      await gitMutate((ws) => api.checkoutRef(ws.repo.path, name), { movedHead: true });
+    },
+    async createBranchAt(name, start) {
+      const clean = name.trim();
+      if (!clean) return;
+      await gitMutate((ws) => api.createBranch(ws.repo.path, clean, start), { movedHead: true });
+    },
+    async resetTo(oid, mode) {
+      await gitMutate((ws) => api.resetTo(ws.repo.path, oid, mode), { movedHead: true });
+    },
+    async revertCommit(oid) {
+      await gitMutate((ws) => api.revertCommit(ws.repo.path, oid).then(() => {}), {
+        movedHead: true,
+      });
+    },
+    async prCheckout(pr) {
+      await gitMutate((ws) => api.prCheckout(ws.repo.path, pr.number), { movedHead: true });
+    },
+    async revealPath(path) {
+      await api.revealPath(path).catch((e: any) => set({ error: e?.message ?? String(e) }));
     },
 
     async loadPrs(wsId, force = false) {
@@ -896,6 +986,12 @@ export const useStore = create<State>((set, get) => {
 
     clearNotifications() {
       set({ notifications: [] });
+    },
+
+    setNotificationRead(id, read) {
+      set((s) => ({
+        notifications: s.notifications.map((n) => (n.id === id ? { ...n, read } : n)),
+      }));
     },
 
     // Background check — fires on startup and on an interval. Stays silent on

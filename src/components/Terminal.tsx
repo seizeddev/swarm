@@ -13,6 +13,9 @@ import { pixelToCell, orderCells, expandWord, expandLine, rowText, type Cell } f
 import { openExternal } from "../lib/external";
 import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
+import { ContextMenu, useContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../lib/menu";
+import { ClipboardPaste, Copy, Eraser, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
 import type { WireUpdate } from "../lib/types";
 
 // `visible` = this pane is on screen (a split shows every leaf at once, so all of
@@ -68,6 +71,7 @@ export function Terminal({
   // and the fraction→cols/rows maths.
   const cssCell = useRef({ w: 7.5, h: 17 });
   const [exited, setExited] = useState(false);
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
 
   // ── Rendering ──────────────────────────────────────────────────────────────
   const scheduleRender = () => {
@@ -479,6 +483,15 @@ export function Terminal({
       if (image) void pasteImage(id, image.file, image.ext);
       return;
     }
+    pasteText(text);
+  };
+
+  // Write clipboard text to the PTY: bracketed when the program asked for it,
+  // otherwise guarded against accidentally auto-running multi-line content.
+  // Shared by the paste event and the context-menu "Paste" item.
+  const pasteText = (text: string) => {
+    const id = ptyIdRef.current;
+    if (!id || !text) return;
     const mode = gridRef.current.mode;
     const wrapped = wrapPaste(text, mode);
     // Bracketed paste tells the program the bytes are a paste (no per-newline
@@ -493,6 +506,18 @@ export function Terminal({
       }
     }
     api.ptyWrite(id, wrapped);
+  };
+
+  // Menu-triggered paste: the clipboard isn't carried on a synthetic event, so
+  // read it explicitly. Image paste stays on the native event path (the File
+  // ref is only live there); this covers text, which is the common case.
+  const pasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard?.readText();
+      if (text) pasteText(text);
+    } catch {
+      /* clipboard read denied — nothing to paste */
+    }
   };
 
   // Save a pasted image to a temp file via the core, then paste its path. Sent as
@@ -648,6 +673,55 @@ export function Terminal({
     if (fb) api.ptyWrite(id, fb);
   };
 
+  // Right-click menu for the canvas. A mouse-reporting program (a TUI) owns the
+  // right button — onMouseDown forwards it — so we suppress our menu there and
+  // let the program receive the click. In a plain shell, our menu shows.
+  const onContextMenu = (e: React.MouseEvent) => {
+    if (reportsMouse(gridRef.current.mode)) return;
+    const id = ptyIdRef.current;
+    const store = useStore.getState();
+    const items: MenuItem[] = [
+      {
+        label: "Copy",
+        icon: <Copy size={14} />,
+        disabled: !selRef.current,
+        onClick: () => void copySelection(),
+      },
+      { label: "Paste", icon: <ClipboardPaste size={14} />, onClick: () => void pasteFromClipboard() },
+      { kind: "separator" },
+      {
+        label: "Clear",
+        icon: <Eraser size={14} />,
+        // Ctrl+L — the readline/shell clear-screen binding; redraws TUIs too.
+        onClick: () => id && api.ptyWrite(id, "\x0c"),
+      },
+      { kind: "separator" },
+      {
+        label: "Split Right",
+        icon: <SplitSquareHorizontal size={14} />,
+        onClick: () => {
+          store.selectPane(pane.paneId);
+          store.splitActive("row");
+        },
+      },
+      {
+        label: "Split Down",
+        icon: <SplitSquareVertical size={14} />,
+        onClick: () => {
+          store.selectPane(pane.paneId);
+          store.splitActive("col");
+        },
+      },
+      {
+        label: "Close Terminal",
+        icon: <X size={14} />,
+        destructive: true,
+        onClick: () => store.removePane(pane.paneId),
+      },
+    ];
+    openMenu(e, items);
+  };
+
   return (
     <div
       ref={wrapRef}
@@ -658,6 +732,7 @@ export function Terminal({
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onWheel={onWheel}
+      onContextMenu={onContextMenu}
       className="term term-pane relative h-full w-full overflow-hidden outline-none p-2"
     >
       <span
@@ -678,6 +753,8 @@ export function Terminal({
           process exited
         </div>
       )}
+
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }

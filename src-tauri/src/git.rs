@@ -503,6 +503,119 @@ pub fn commit(worktree_path: &str, message: &str) -> AppResult<String> {
     Ok(short_oid(&oid))
 }
 
+/// Discard working-tree changes for `paths` (VS Code "Discard Changes"):
+/// tracked files are restored to their HEAD content (and unstaged if staged),
+/// untracked files are deleted from disk. Destructive — the frontend confirms.
+pub fn discard_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
+    let repo = Repository::open(worktree_path)?;
+    let root = Path::new(worktree_path);
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+
+    // Unstage these paths first so a staged-then-discarded change is fully
+    // dropped (index back to HEAD), letting checkout_head restore the worktree.
+    if let Some(commit) = repo.head().ok().and_then(|h| h.peel_to_commit().ok()) {
+        repo.reset_default(Some(commit.as_object()), paths.iter().map(|s| s.as_str()))?;
+    }
+
+    let mut co = git2::build::CheckoutBuilder::new();
+    co.force();
+    let mut had_tracked = false;
+    for p in &paths {
+        let tracked = head_tree
+            .as_ref()
+            .is_some_and(|t| t.get_path(Path::new(p)).is_ok());
+        if tracked {
+            co.path(p);
+            had_tracked = true;
+        } else {
+            // Untracked (or staged-add): remove the file from the worktree.
+            let _ = std::fs::remove_file(root.join(p));
+        }
+    }
+    if had_tracked {
+        repo.checkout_head(Some(&mut co))?;
+    }
+    Ok(())
+}
+
+/// Check out a local branch (attached HEAD) or any other committish (detached
+/// HEAD). Uses a *safe* checkout, so a dirty worktree that would be overwritten
+/// surfaces an error rather than silently clobbering local edits.
+pub fn checkout_ref(repo_path: &str, name: &str) -> AppResult<()> {
+    let repo = open_main(repo_path)?;
+    let obj = repo.revparse_single(name)?;
+    let commit = obj.peel_to_commit()?;
+    repo.checkout_tree(commit.as_object(), None)?;
+    if repo.find_branch(name, git2::BranchType::Local).is_ok() {
+        repo.set_head(&format!("refs/heads/{name}"))?;
+    } else {
+        repo.set_head_detached(commit.id())?;
+    }
+    Ok(())
+}
+
+/// Create a branch named `name` at `start` (a committish; empty = current HEAD)
+/// and check it out.
+pub fn create_branch(repo_path: &str, name: &str, start: &str) -> AppResult<()> {
+    let repo = open_main(repo_path)?;
+    let target = if start.is_empty() {
+        repo.head()?.peel_to_commit()?
+    } else {
+        repo.revparse_single(start)?.peel_to_commit()?
+    };
+    repo.branch(name, &target, false)?;
+    repo.checkout_tree(target.as_object(), None)?;
+    repo.set_head(&format!("refs/heads/{name}"))?;
+    Ok(())
+}
+
+/// Reset the current branch to `oid`. `mode` is "soft" | "mixed" | "hard"
+/// (anything else falls back to mixed). "hard" is destructive — the frontend
+/// confirms before calling.
+pub fn reset_to(repo_path: &str, oid: &str, mode: &str) -> AppResult<()> {
+    let repo = open_main(repo_path)?;
+    let target = repo.revparse_single(oid)?;
+    let kind = match mode {
+        "soft" => git2::ResetType::Soft,
+        "hard" => git2::ResetType::Hard,
+        _ => git2::ResetType::Mixed,
+    };
+    repo.reset(&target, kind, None)?;
+    Ok(())
+}
+
+/// Revert `oid` and commit the result (like `git revert <oid>`). Conflicts are
+/// surfaced as an error (rather than leaving the repo mid-revert) so the user
+/// can resolve them in a terminal. Returns the new commit's short oid.
+pub fn revert_commit(repo_path: &str, oid: &str) -> AppResult<String> {
+    let repo = open_main(repo_path)?;
+    let commit = repo.revparse_single(oid)?.peel_to_commit()?;
+    repo.revert(&commit, None)?;
+
+    let mut index = repo.index()?;
+    if index.has_conflicts() {
+        // Abandon the half-applied revert and bail — never leave a wedged state.
+        let _ = repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()));
+        let _ = repo.cleanup_state();
+        return Err(AppError::Invalid(
+            "revert hit conflicts; resolve it in a terminal".into(),
+        ));
+    }
+    let tree = repo.find_tree(index.write_tree()?)?;
+    let sig = repo
+        .signature()
+        .or_else(|_| git2::Signature::now("swarm", "swarm@localhost"))?;
+    let head = repo.head()?.peel_to_commit()?;
+    let summary = commit.summary().ok().flatten().unwrap_or("commit");
+    let msg = format!(
+        "Revert \"{summary}\"\n\nThis reverts commit {}.\n",
+        commit.id()
+    );
+    let new = repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&head])?;
+    let _ = repo.cleanup_state();
+    Ok(short_oid(&new))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,5 +923,97 @@ mod tests {
         assert_eq!(delta_label(Delta::Typechange), "typechange");
         assert_eq!(delta_label(Delta::Modified), "modified");
         assert_eq!(delta_label(Delta::Unmodified), "modified");
+    }
+
+    #[test]
+    fn discard_restores_tracked_and_deletes_untracked() {
+        let dir = scratch();
+        let _repo = init_repo(&dir); // a.txt = "hello\nworld\n"
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "hello\nGARBAGE\n").unwrap(); // modify tracked
+        fs::write(dir.join("junk.txt"), "throwaway\n").unwrap(); // untracked
+        stage_paths(path, vec!["a.txt".into()]).unwrap(); // even staged → discarded
+
+        discard_paths(path, vec!["a.txt".into(), "junk.txt".into()]).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "hello\nworld\n"
+        );
+        assert!(!dir.join("junk.txt").exists());
+        assert!(changes(path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn create_branch_then_checkout_roundtrip() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let main = repo.head().unwrap().shorthand().unwrap().to_string();
+
+        create_branch(path, "feature", "").unwrap();
+        assert_eq!(repo.head().unwrap().shorthand().unwrap(), "feature");
+
+        checkout_ref(path, &main).unwrap();
+        assert_eq!(repo.head().unwrap().shorthand().unwrap(), main);
+    }
+
+    #[test]
+    fn checkout_commit_detaches_head() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let first = repo.head().unwrap().peel_to_commit().unwrap().id();
+        commit_file(&repo, "a.txt", "v2\n", "second");
+
+        checkout_ref(path, &first.to_string()).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), first);
+    }
+
+    #[test]
+    fn reset_hard_moves_head_and_resets_worktree() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let first = repo.head().unwrap().peel_to_commit().unwrap().id();
+        commit_file(&repo, "a.txt", "v2\n", "second");
+
+        reset_to(path, &first.to_string(), "hard").unwrap();
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), first);
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "hello\nworld\n"
+        );
+    }
+
+    #[test]
+    fn reset_soft_keeps_worktree_moves_head() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let first = repo.head().unwrap().peel_to_commit().unwrap().id();
+        commit_file(&repo, "a.txt", "v2\n", "second");
+
+        reset_to(path, &first.to_string(), "soft").unwrap();
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), first);
+        // soft leaves the worktree (the "v2" content) untouched.
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "v2\n");
+    }
+
+    #[test]
+    fn revert_creates_inverse_commit() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let bad = commit_file(&repo, "b.txt", "oops\n", "add b");
+        assert!(dir.join("b.txt").exists());
+
+        let short = revert_commit(path, &bad.to_string()).unwrap();
+        assert_eq!(short.len(), 8);
+        // The revert undoes the addition.
+        assert!(!dir.join("b.txt").exists());
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert!(head.summary().unwrap().unwrap().starts_with("Revert"));
     }
 }

@@ -3,17 +3,32 @@ import type { ReactNode } from "react";
 import {
   Bell,
   Check,
+  Copy,
+  ExternalLink,
+  Eye,
+  FileText,
+  FolderOpen,
+  GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
   Minus,
   Plus,
   RefreshCw,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useActiveWorkspace, useStore } from "../store";
+import { ContextMenu, useContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../lib/menu";
+import { openExternal } from "../lib/external";
 import type { ChangeStatus, FileChange } from "../lib/types";
+
+/** Best-effort clipboard write — clipboard may be denied; failure is a no-op. */
+function copy(text: string) {
+  void navigator.clipboard?.writeText(text).catch(() => {});
+}
 
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
@@ -40,16 +55,48 @@ function PanelHeader({ title, children }: { title: string; children?: ReactNode 
 
 function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
   const ws = useActiveWorkspace();
-  const { openDiff, stage, unstage } = useStore(
-    useShallow((s) => ({ openDiff: s.openDiff, stage: s.stage, unstage: s.unstage })),
+  const { openDiff, stage, unstage, discardFiles, revealPath } = useStore(
+    useShallow((s) => ({
+      openDiff: s.openDiff,
+      stage: s.stage,
+      unstage: s.unstage,
+      discardFiles: s.discardFiles,
+      revealPath: s.revealPath,
+    })),
   );
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
   const meta = statusMeta[f.status];
   const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
   const active = ws?.editor.type === "diff" && ws.editor.file === f.path && ws.editor.staged === staged;
+
+  // Absolute path for reveal/copy — repo.path is the canonical workdir.
+  const abs = ws ? `${ws.repo.path}/${f.path}` : f.path;
+  const items: MenuItem[] = [
+    { kind: "header", label: f.path.split("/").pop() ?? f.path },
+    { label: "Open Diff", icon: <FileText size={14} />, onClick: () => openDiff(f.path, staged) },
+    staged
+      ? { label: "Unstage", icon: <Minus size={14} />, onClick: () => unstage(f.path) }
+      : { label: "Stage", icon: <Plus size={14} />, onClick: () => stage(f.path) },
+    {
+      label: "Discard Changes",
+      icon: <Undo2 size={14} />,
+      destructive: true,
+      onClick: () => {
+        if (globalThis.confirm(`Discard changes to “${f.path}”?\n\nThis cannot be undone.`))
+          discardFiles([f.path]);
+      },
+    },
+    { kind: "separator" },
+    { label: "Reveal in Finder", icon: <FolderOpen size={14} />, onClick: () => revealPath(abs) },
+    { label: "Copy Path", icon: <Copy size={14} />, onClick: () => copy(abs) },
+    { label: "Copy Relative Path", icon: <Copy size={14} />, onClick: () => copy(f.path) },
+  ];
+
   return (
     <div
       data-active={active}
       onClick={() => openDiff(f.path, staged)}
+      onContextMenu={(e) => openMenu(e, items)}
       className="group row cv-row mb-1 flex cursor-pointer items-center gap-2 px-2.5 py-1.5"
     >
       <span className="truncate text-[13px]">{f.path.split("/").pop()}</span>
@@ -69,6 +116,7 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
           {meta.letter}
         </span>
       </span>
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }
@@ -167,18 +215,40 @@ function checkColor(checks: string | null) {
 
 export function PullRequestsPanel() {
   const ws = useActiveWorkspace();
-  const { ghAvailable, openPr, loadPrs } = useStore(
-    useShallow((s) => ({ ghAvailable: s.ghAvailable, openPr: s.openPr, loadPrs: s.loadPrs })),
+  const { ghAvailable, openPr, loadPrs, prCheckout } = useStore(
+    useShallow((s) => ({
+      ghAvailable: s.ghAvailable,
+      openPr: s.openPr,
+      loadPrs: s.loadPrs,
+      prCheckout: s.prCheckout,
+    })),
   );
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
   if (!ws) return null;
   const mine = ws.prs.filter((p) => ws.ghLogin && p.author === ws.ghLogin);
   const others = ws.prs.filter((p) => !ws.ghLogin || p.author !== ws.ghLogin);
+
+  const prMenu = (p: (typeof ws.prs)[number]): MenuItem[] => [
+    { kind: "header", label: `#${p.number}` },
+    { label: "Open", icon: <GitPullRequest size={14} />, onClick: () => openPr(p) },
+    { label: "Checkout Branch", icon: <GitBranch size={14} />, onClick: () => prCheckout(p) },
+    { kind: "separator" },
+    {
+      label: "Open on GitHub",
+      icon: <ExternalLink size={14} />,
+      onClick: () => void openExternal(p.url).catch(() => {}),
+    },
+    { label: "Copy PR URL", icon: <Copy size={14} />, onClick: () => copy(p.url) },
+    { label: "Copy Branch Name", icon: <Copy size={14} />, onClick: () => copy(p.headRef) },
+    { label: "Copy Number", icon: <Copy size={14} />, onClick: () => copy(`#${p.number}`) },
+  ];
 
   const Row = (p: (typeof ws.prs)[number]) => (
     <div
       key={p.number}
       data-active={ws.editor.type === "pr" && ws.editor.pr.number === p.number}
       onClick={() => openPr(p)}
+      onContextMenu={(e) => openMenu(e, prMenu(p))}
       className="row mb-1.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5"
     >
       <GitPullRequest size={15} className="mt-0.5 flex-none" style={{ color: checkColor(p.checks) }} />
@@ -223,20 +293,56 @@ export function PullRequestsPanel() {
           </>
         )}
       </div>
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }
 
 export function NotificationsPanel() {
   const notifications = useStore((s) => s.notifications);
-  const { selectPane, setActiveWorkspace, clearNotifications, dismissNotification } = useStore(
+  const {
+    selectPane,
+    setActiveWorkspace,
+    clearNotifications,
+    dismissNotification,
+    setNotificationRead,
+  } = useStore(
     useShallow((s) => ({
       selectPane: s.selectPane,
       setActiveWorkspace: s.setActiveWorkspace,
       clearNotifications: s.clearNotifications,
       dismissNotification: s.dismissNotification,
+      setNotificationRead: s.setNotificationRead,
     })),
   );
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
+
+  const goToPane = (n: (typeof notifications)[number]) => {
+    setActiveWorkspace(n.workspaceId);
+    selectPane(n.paneId);
+  };
+  const notifMenu = (n: (typeof notifications)[number]): MenuItem[] => [
+    { kind: "header", label: n.title },
+    { label: "Go to Pane", icon: <Eye size={14} />, onClick: () => goToPane(n) },
+    {
+      label: n.read ? "Mark as Unread" : "Mark as Read",
+      icon: <Check size={14} />,
+      onClick: () => setNotificationRead(n.id, !n.read),
+    },
+    {
+      label: "Copy Message",
+      icon: <Copy size={14} />,
+      onClick: () => copy([n.title, n.body].filter(Boolean).join("\n")),
+    },
+    { kind: "separator" },
+    {
+      label: "Dismiss",
+      icon: <X size={14} />,
+      destructive: true,
+      onClick: () => dismissNotification(n.id),
+    },
+  ];
+
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Notifications">
@@ -259,9 +365,9 @@ export function NotificationsPanel() {
                 // Navigate to the source terminal (selectPane restores the
                 // terminal editor even if you're on a PR/diff) and mark it read
                 // — but keep it in the history list rather than dismissing it.
-                setActiveWorkspace(n.workspaceId);
-                selectPane(n.paneId);
+                goToPane(n);
               }}
+              onContextMenu={(e) => openMenu(e, notifMenu(n))}
               // Read entries stay in the list but recede — the unread ones carry
               // the solid leading dot and full contrast.
               style={{ opacity: n.read ? 0.55 : 1 }}
@@ -309,6 +415,7 @@ export function NotificationsPanel() {
           ))
         )}
       </div>
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }

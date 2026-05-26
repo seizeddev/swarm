@@ -4,6 +4,8 @@ import { useShallow } from "zustand/react/shallow";
 import { Plus, SplitSquareHorizontal, SplitSquareVertical, TerminalSquare, X } from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
 import { leaves } from "../lib/layout";
+import { ContextMenu, useContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../lib/menu";
 import type { AgentDef } from "../lib/types";
 
 const ATTN = "var(--color-text)";
@@ -76,15 +78,59 @@ export function TopBar() {
   const ws = useActiveWorkspace();
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectTab, removePane, splitActive, sidebarVisible, compact } = useStore(
-    useShallow((s) => ({
-      selectTab: s.selectTab,
-      removePane: s.removePane,
-      splitActive: s.splitActive,
-      sidebarVisible: s.sidebarVisible,
-      compact: s.compact,
-    })),
-  );
+  const { selectTab, removePane, splitActive, closeOtherTabs, closeTabsToRight, sidebarVisible, compact } =
+    useStore(
+      useShallow((s) => ({
+        selectTab: s.selectTab,
+        removePane: s.removePane,
+        splitActive: s.splitActive,
+        closeOtherTabs: s.closeOtherTabs,
+        closeTabsToRight: s.closeTabsToRight,
+        sidebarVisible: s.sidebarVisible,
+        compact: s.compact,
+      })),
+    );
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
+
+  // Build the right-click menu for a tab. Split/close act on this tab; the close
+  // variants mirror VS Code (Close, Close Others, Close to the Right). The last
+  // remaining tab can't "close others", so that item disables itself.
+  const tabMenu = (tabId: string, ids: string[], label: string, tabCount: number): MenuItem[] => [
+    { kind: "header", label },
+    {
+      label: "Split Right",
+      icon: <SplitSquareHorizontal size={14} />,
+      onClick: () => {
+        selectTab(tabId);
+        splitActive("row");
+      },
+    },
+    {
+      label: "Split Down",
+      icon: <SplitSquareVertical size={14} />,
+      onClick: () => {
+        selectTab(tabId);
+        splitActive("col");
+      },
+    },
+    { kind: "separator" },
+    {
+      label: "Close",
+      icon: <X size={14} />,
+      onClick: () => ids.forEach((id) => removePane(id)),
+    },
+    {
+      label: "Close Others",
+      icon: <X size={14} />,
+      disabled: tabCount <= 1,
+      onClick: () => closeOtherTabs(tabId),
+    },
+    {
+      label: "Close to the Right",
+      icon: <X size={14} />,
+      onClick: () => closeTabsToRight(tabId),
+    },
+  ];
 
   // The repo-identity block sits over the in-flow inspector panel and must
   // mirror its width. In compact mode the panel floats (no reserved column), so
@@ -151,6 +197,9 @@ export function TopBar() {
                 aria-selected={active}
                 data-active={active}
                 onClick={() => selectTab(t.id)}
+                onContextMenu={(e) =>
+                  openMenu(e, tabMenu(t.id, ids, head?.title ?? "Shell", ws.tabs.length))
+                }
                 className="group row flex h-8 cursor-pointer items-center gap-2 px-3 text-[12.5px]"
               >
                 <TerminalSquare size={13} className="text-[var(--color-muted)]" />
@@ -194,6 +243,7 @@ export function TopBar() {
           </div>
         )}
       </div>
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }

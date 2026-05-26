@@ -141,6 +141,103 @@ async fn commit(
 }
 
 #[tauri::command]
+async fn discard(
+    reg: State<'_, WorkspaceRegistry>,
+    worktree_path: String,
+    paths: Vec<String>,
+) -> AppResult<()> {
+    reg.ensure_within_root(&worktree_path)?;
+    off_thread(move || git::discard_paths(&worktree_path, paths)).await
+}
+
+#[tauri::command]
+async fn checkout_ref(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    name: String,
+) -> AppResult<()> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || git::checkout_ref(&repo_path, &name)).await
+}
+
+#[tauri::command]
+async fn create_branch(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    name: String,
+    start: String,
+) -> AppResult<()> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || git::create_branch(&repo_path, &name, &start)).await
+}
+
+#[tauri::command]
+async fn reset_to(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+    mode: String,
+) -> AppResult<()> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || git::reset_to(&repo_path, &oid, &mode)).await
+}
+
+#[tauri::command]
+async fn revert_commit(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+) -> AppResult<String> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || git::revert_commit(&repo_path, &oid)).await
+}
+
+/// Reveal a path in the OS file manager (Finder/Explorer/`xdg-open`). The path
+/// is validated against the registered roots first — same blast-radius guard as
+/// every other path-taking command, so the webview can only reveal files inside
+/// an opened workspace.
+#[tauri::command]
+async fn reveal_path(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<()> {
+    let canon = reg.ensure_within_root(&path)?;
+    off_thread(move || {
+        #[cfg(target_os = "macos")]
+        let mut cmd = {
+            let mut c = std::process::Command::new("open");
+            c.arg("-R").arg(&canon);
+            c
+        };
+        #[cfg(target_os = "windows")]
+        let mut cmd = {
+            let mut c = std::process::Command::new("explorer");
+            c.arg("/select,").arg(&canon);
+            c
+        };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut cmd = {
+            // No portable "select the file" on Linux; open its parent directory.
+            let target = canon.parent().unwrap_or(&canon).to_path_buf();
+            let mut c = std::process::Command::new("xdg-open");
+            c.arg(target);
+            c
+        };
+        cmd.spawn()
+            .map(|_| ())
+            .map_err(|e| error::AppError::Other(format!("could not reveal path: {e}")))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pr_checkout(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    number: u64,
+) -> AppResult<()> {
+    reg.ensure_within_root(&repo_path)?;
+    off_thread(move || github::pr_checkout(&repo_path, number)).await
+}
+
+#[tauri::command]
 async fn gh_available() -> bool {
     tauri::async_runtime::spawn_blocking(github::gh_available)
         .await
@@ -757,6 +854,13 @@ pub fn run() {
             stage_all,
             unstage_all,
             commit,
+            discard,
+            checkout_ref,
+            create_branch,
+            reset_to,
+            revert_commit,
+            reveal_path,
+            pr_checkout,
             pr_list,
             pr_detail,
             gh_login,

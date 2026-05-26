@@ -3,20 +3,26 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowUpCircle,
   Bell,
+  Copy,
   Download,
   FlaskConical,
+  FolderOpen,
   GitBranch,
   GitPullRequest,
   History,
   Loader2,
   Plus,
+  RefreshCw,
   RotateCw,
+  TerminalSquare,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { useActiveWorkspace, useStore, type Panel } from "../store";
 import { NotificationsPanel, PullRequestsPanel, SourceControlPanel } from "./panels";
 import { GraphPanel } from "./GraphPanel";
+import { ContextMenu, useContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../lib/menu";
 import { useShallow } from "zustand/react/shallow";
 import { PANEL_DEFAULT, clampPanelWidth } from "../lib/panel";
 
@@ -309,6 +315,10 @@ export function Sidebar() {
     workspaces,
     addWorkspace,
     closeWorkspaceWithConfirm,
+    setActiveWorkspace,
+    addPane,
+    refreshStatus,
+    revealPath,
     notifications,
     error,
     sidebarVisible,
@@ -319,6 +329,10 @@ export function Sidebar() {
       workspaces: s.workspaces,
       addWorkspace: s.addWorkspace,
       closeWorkspaceWithConfirm: s.closeWorkspaceWithConfirm,
+      setActiveWorkspace: s.setActiveWorkspace,
+      addPane: s.addPane,
+      refreshStatus: s.refreshStatus,
+      revealPath: s.revealPath,
       notifications: s.notifications,
       error: s.error,
       sidebarVisible: s.sidebarVisible,
@@ -327,38 +341,47 @@ export function Sidebar() {
     })),
   );
 
-  // Right-click context menu for a workspace square. The only entry is "Close
-  // Project"; closing tears down the workspace (kills its PTYs, stops the git
-  // watcher) via the store's closeWorkspace. Positioned at the cursor (fixed),
-  // clamped to stay on-screen, and dismissed on outside-click / Escape / blur.
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuName = menu ? (workspaces.find((w) => w.id === menu.id)?.repo.name ?? "") : "";
+  // Right-click context menu for a workspace square — shared <ContextMenu>. The
+  // tear-down item prompts when an agent is running (closeWorkspaceWithConfirm),
+  // and is set apart as the only destructive entry.
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
 
-  useEffect(() => {
-    if (!menu) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
-    const dismiss = () => setMenu(null);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("blur", dismiss);
-    window.addEventListener("resize", dismiss);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", dismiss);
-      window.removeEventListener("resize", dismiss);
-    };
-  }, [menu]);
-
-  // Tear-down with a confirm prompt when an agent is running — see the store's
-  // closeWorkspaceWithConfirm. Shared with the Project ▸ Close Project menu item.
-  const requestClose = (id: string) => {
-    setMenu(null);
-    closeWorkspaceWithConfirm(id);
+  const workspaceMenu = (id: string): MenuItem[] => {
+    const w = workspaces.find((x) => x.id === id);
+    if (!w) return [];
+    return [
+      { kind: "header", label: w.repo.name },
+      {
+        label: "New Terminal",
+        icon: <TerminalSquare size={14} />,
+        onClick: () => {
+          setActiveWorkspace(id);
+          addPane(undefined, id);
+        },
+      },
+      {
+        label: "Refresh",
+        icon: <RefreshCw size={14} />,
+        onClick: () => refreshStatus(id),
+      },
+      {
+        label: "Reveal in Finder",
+        icon: <FolderOpen size={14} />,
+        onClick: () => revealPath(w.repo.path),
+      },
+      {
+        label: "Copy Path",
+        icon: <Copy size={14} />,
+        onClick: () => void navigator.clipboard?.writeText(w.repo.path),
+      },
+      { kind: "separator" },
+      {
+        label: "Close Project",
+        icon: <X size={14} />,
+        destructive: true,
+        onClick: () => closeWorkspaceWithConfirm(id),
+      },
+    ];
   };
 
   // Drag the invisible handle on the panel's right edge to resize it (regular
@@ -404,10 +427,7 @@ export function Sidebar() {
             key={w.id}
             id={w.id}
             name={w.repo.name}
-            onMenu={(e, id) => {
-              e.preventDefault();
-              setMenu({ id, x: e.clientX, y: e.clientY });
-            }}
+            onMenu={(e, id) => openMenu(e, workspaceMenu(id))}
           />
         ))}
         <button
@@ -529,32 +549,8 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Workspace context menu (right-click a rail square). Fixed at the cursor,
-          clamped so it never spills off the viewport edge. Monochrome by design
-          — destructive intent reads through the icon + copy, not hue. */}
-      {menu && (
-        <div
-          ref={menuRef}
-          role="menu"
-          className="surface animate-scale-in fixed z-[70] w-44 p-1.5"
-          style={{
-            left: Math.min(menu.x, window.innerWidth - 188),
-            top: Math.min(menu.y, window.innerHeight - 88),
-          }}
-        >
-          <p className="truncate px-2 py-1.5 text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
-            {menuName}
-          </p>
-          <button
-            role="menuitem"
-            onClick={() => requestClose(menu.id)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
-          >
-            <X size={14} className="text-[var(--color-muted)]" />
-            <span className="flex-1">Close Project</span>
-          </button>
-        </div>
-      )}
+      {/* Workspace context menu (right-click a rail square) — shared surface. */}
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </>
   );
 }

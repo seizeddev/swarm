@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Copy, GitBranch, GitCommitHorizontal, History, RefreshCw, Undo2 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "../lib/ipc";
 import { buildGraph, laneColor } from "../lib/graph";
 import { useActiveWorkspace, useStore } from "../store";
+import { ContextMenu, useContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../lib/menu";
 import type { CommitInfo } from "../lib/types";
+
+/** Best-effort clipboard write — denial is a no-op. */
+function copyText(text: string) {
+  void navigator.clipboard?.writeText(text).catch(() => {});
+}
 
 function relTime(sec: number): string {
   const d = Math.floor(Date.now() / 1000 - sec);
@@ -27,7 +35,17 @@ const NODE_R = DOT + 2;
 
 export function GraphPanel() {
   const ws = useActiveWorkspace();
-  const openCommit = useStore((s) => s.openCommit);
+  const { openCommit, checkoutRef, createBranchAt, resetTo, revertCommit, gitNonce } = useStore(
+    useShallow((s) => ({
+      openCommit: s.openCommit,
+      checkoutRef: s.checkoutRef,
+      createBranchAt: s.createBranchAt,
+      resetTo: s.resetTo,
+      revertCommit: s.revertCommit,
+      gitNonce: s.gitNonce,
+    })),
+  );
+  const { menu, open: openMenu, close: closeMenu } = useContextMenu();
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -39,7 +57,53 @@ export function GraphPanel() {
       .then(setCommits)
       .finally(() => setLoading(false));
   };
-  useEffect(load, [ws?.repo.path]);
+  // Reload on repo switch and after any HEAD-mutating op (gitNonce bump).
+  useEffect(load, [ws?.repo.path, gitNonce]);
+
+  const commitMenu = (c: CommitInfo): MenuItem[] => [
+    { kind: "header", label: c.short },
+    { label: "View Commit", icon: <History size={14} />, onClick: () => openCommit(c.oid) },
+    { kind: "separator" },
+    { label: "Checkout", icon: <GitBranch size={14} />, onClick: () => checkoutRef(c.oid) },
+    {
+      label: "Create Branch here…",
+      icon: <GitBranch size={14} />,
+      onClick: () => {
+        const name = globalThis.prompt(`New branch at ${c.short}:`)?.trim();
+        if (name) createBranchAt(name, c.oid);
+      },
+    },
+    {
+      label: "Revert Commit",
+      icon: <Undo2 size={14} />,
+      onClick: () => {
+        if (globalThis.confirm(`Revert ${c.short}?\n\nCreates a new commit undoing its changes.`))
+          revertCommit(c.oid);
+      },
+    },
+    {
+      label: "Reset to Here (keep changes)",
+      icon: <GitCommitHorizontal size={14} />,
+      onClick: () => resetTo(c.oid, "mixed"),
+    },
+    {
+      label: "Reset to Here (discard)",
+      icon: <GitCommitHorizontal size={14} />,
+      destructive: true,
+      onClick: () => {
+        if (
+          globalThis.confirm(
+            `Hard-reset to ${c.short}?\n\nAll uncommitted changes will be lost. This cannot be undone.`,
+          )
+        )
+          resetTo(c.oid, "hard");
+      },
+    },
+    { kind: "separator" },
+    { label: "Copy SHA", icon: <Copy size={14} />, onClick: () => copyText(c.oid) },
+    { label: "Copy Short SHA", icon: <Copy size={14} />, onClick: () => copyText(c.short) },
+    { label: "Copy Message", icon: <Copy size={14} />, onClick: () => copyText(c.summary) },
+  ];
 
   const g = useMemo(() => buildGraph(commits), [commits]);
   const x = (c: number) => XPAD + c * COLW;
@@ -126,6 +190,7 @@ export function GraphPanel() {
                 key={r.commit.oid}
                 data-active={activeCommit}
                 onClick={() => openCommit(r.commit.oid)}
+                onContextMenu={(e) => openMenu(e, commitMenu(r.commit))}
                 title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
                 className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
                 // Start the row just past the widest node (gw carries a full
@@ -159,6 +224,7 @@ export function GraphPanel() {
           )}
         </div>
       </div>
+      <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
   );
 }

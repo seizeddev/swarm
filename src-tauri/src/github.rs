@@ -244,6 +244,66 @@ pub fn gh_available() -> bool {
     run_gh(&["--version"], None).is_some()
 }
 
+/// Check out a PR's head branch locally via `gh pr checkout <n>`. Unlike the
+/// read-only calls, a failure here is actionable (dirty worktree, no network),
+/// so we capture stderr and surface it instead of degrading to an empty result.
+/// Bounded by the same watchdog so a hung `gh` can't wedge the pool.
+pub fn pr_checkout(repo_path: &str, number: u64) -> AppResult<()> {
+    let num = number.to_string();
+    let mut cmd = Command::new("gh");
+    cmd.args(["pr", "checkout", "--", &num])
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| crate::error::AppError::Other(format!("gh not available: {e}")))?;
+    let mut stderr = child.stderr.take();
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut err) = stderr.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = err.read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+    }
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if start.elapsed() >= GH_TIMEOUT {
+                    let _ = child.kill();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break None,
+        }
+    };
+    let _ = child.wait();
+
+    match status {
+        Some(s) if s.success() => Ok(()),
+        _ => {
+            let msg = rx
+                .recv_timeout(Duration::from_secs(1))
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "gh pr checkout failed".into());
+            Err(crate::error::AppError::Other(msg))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

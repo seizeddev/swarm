@@ -38,6 +38,19 @@ export const api = {
   unstageAll: (worktreePath: string) => invoke<void>("unstage_all", { worktreePath }),
   commit: (worktreePath: string, message: string) =>
     invoke<string>("commit", { worktreePath, message }),
+  discard: (worktreePath: string, paths: string[]) =>
+    invoke<void>("discard", { worktreePath, paths }),
+  checkoutRef: (repoPath: string, name: string) =>
+    invoke<void>("checkout_ref", { repoPath, name }),
+  createBranch: (repoPath: string, name: string, start: string) =>
+    invoke<void>("create_branch", { repoPath, name, start }),
+  resetTo: (repoPath: string, oid: string, mode: "soft" | "mixed" | "hard") =>
+    invoke<void>("reset_to", { repoPath, oid, mode }),
+  revertCommit: (repoPath: string, oid: string) =>
+    invoke<string>("revert_commit", { repoPath, oid }),
+  revealPath: (path: string) => invoke<void>("reveal_path", { path }),
+  prCheckout: (repoPath: string, number: number) =>
+    invoke<void>("pr_checkout", { repoPath, number }),
   prList: (repoPath: string) => invoke<PrSummary[]>("pr_list", { repoPath }),
   prDetail: (repoPath: string, number: number) =>
     invoke<PrDetail | null>("pr_detail", { repoPath, number }),
