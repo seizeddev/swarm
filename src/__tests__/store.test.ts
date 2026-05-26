@@ -43,6 +43,8 @@ vi.mock("../lib/ipc", () => ({
     ptyResize: vi.fn(),
     ptyKill: vi.fn(),
     ptyAlive: vi.fn(),
+    ptyLive: vi.fn(),
+    ptyReap: vi.fn(),
     agentSessionResume: vi.fn().mockResolvedValue(null),
     agentSessionForget: vi.fn(),
   },
@@ -149,6 +151,10 @@ beforeEach(() => {
   m.ghLogin.mockResolvedValue("octocat");
   m.prList.mockResolvedValue([]);
   m.loadSession.mockResolvedValue(null);
+  // Default: no PTY survived a reload — every pane spawns fresh (tests that
+  // exercise reattach-on-reload override ptyLive).
+  m.ptyLive.mockResolvedValue([]);
+  m.ptyReap.mockResolvedValue(undefined);
   // Default: no captured agent session (tests that exercise restore override this).
   m.agentSessionResume.mockResolvedValue(null);
   for (const fn of [
@@ -1094,6 +1100,97 @@ describe("persist + hydrate", () => {
     // Claude restores via --resume <sessionId>
     expect(pane.args).toContain("--resume");
     expect(pane.args).toContain("uuid-1");
+  });
+
+  // Regression: a WebContent reload (OOM → Tauri auto-reload) wipes the frontend
+  // but the Rust process — and its PTYs — survive. Re-resuming the agent then
+  // spawns a *second* process and orphans the live PTY, whose render thread leaks
+  // frames into the webview and re-OOMs it (the reload spiral the user hit). When
+  // the backend reports a live PTY for the pane, hydrate must REATTACH, not resume.
+  it("reattaches to a live PTY after a reload instead of re-resuming the agent", async () => {
+    m.ptyLive.mockResolvedValue([["pane-1", "pty-live-1"]]);
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/repo",
+            panel: "scm",
+            activeTab: "tab-1",
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
+            panes: [
+              {
+                paneId: "pane-1",
+                tabId: "tab-1",
+                agentId: "claude",
+                command: "claude",
+                args: [],
+                cwd: "/repo",
+                title: "Claude Code",
+                sessionId: "uuid-1",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await s().hydrate();
+    const pane = s().panes[0];
+    // The pane carries the live PTY id, so Terminal.tsx attaches to the running
+    // agent rather than spawning a new one…
+    expect(pane.ptyId).toBe("pty-live-1");
+    // …and the resume machinery is never consulted (no `claude --resume` rebuilt).
+    expect(m.agentSessionResume).not.toHaveBeenCalled();
+    expect(pane.args).not.toContain("--resume");
+    // The live PTY is kept, never reaped.
+    expect(m.ptyReap).toHaveBeenCalledWith(["pty-live-1"]);
+  });
+
+  // Regression: any live PTY the reloaded frontend does NOT reattach to — a closed
+  // pane, a dropped workspace, or a duplicate — is an orphan that keeps leaking, so
+  // hydrate reaps it (passing only the ids it kept).
+  it("reaps a PTY orphaned by a reload (a pane no longer in the session)", async () => {
+    m.ptyLive.mockResolvedValue([
+      ["pane-1", "pty-live-1"],
+      ["pane-gone", "pty-orphan"],
+    ]);
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/repo",
+            panel: "scm",
+            activeTab: "tab-1",
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
+            panes: [
+              {
+                paneId: "pane-1",
+                tabId: "tab-1",
+                agentId: "claude",
+                command: "claude",
+                args: [],
+                cwd: "/repo",
+                title: "Claude Code",
+                sessionId: "uuid-1",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await s().hydrate();
+    // Only the reattached PTY is kept; the orphan (`pty-orphan`) is absent from the
+    // keep-list, so the backend kills it.
+    expect(m.ptyReap).toHaveBeenCalledWith(["pty-live-1"]);
   });
 
   it("restores a captured agent session over the persisted pane kind (cmux-style)", async () => {

@@ -125,4 +125,10 @@ export const api = {
   ptySetVisible: (id: string, visible: boolean) => invoke<void>("pty_set_visible", { id, visible }),
   ptyKill: (id: string) => invoke<void>("pty_kill", { id }),
   ptyAlive: (id: string) => invoke<boolean>("pty_alive", { id }),
+  // [paneId, ptyId] for every PTY that outlived a webview reload (the Rust process
+  // survives a WebContent reload). Hydrate uses it to reattach to live agents
+  // rather than re-spawning them (which would orphan the old PTY — see store.ts).
+  ptyLive: () => invoke<[string, string][]>("pty_live"),
+  // Kill any live PTY not in `keep` — the post-hydrate sweep of reload orphans.
+  ptyReap: (keep: string[]) => invoke<void>("pty_reap", { keep }),
 };

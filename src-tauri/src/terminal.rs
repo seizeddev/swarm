@@ -179,6 +179,12 @@ struct Session {
     /// when a pane's component unmounts and later remounts (e.g. switching back to
     /// a workspace) it re-`attach`es a fresh channel here while the PTY lives on.
     chan: Arc<Mutex<UpdateChannel>>,
+    /// The stable frontend pane id (`SWARM_PANE_ID`) this PTY backs, if known. A
+    /// webview *reload* (WebContent OOM → Tauri auto-reload) keeps this Rust process
+    /// — and so every PTY — alive while it wipes the frontend. Tracking the pane id
+    /// lets the reloaded frontend **reattach** to the live PTY (via `live_panes`)
+    /// instead of re-spawning and orphaning it, and enforces one live PTY per pane.
+    pane_id: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -431,6 +437,35 @@ impl TerminalManager {
         opts: SpawnOpts,
         on_update: UpdateChannel,
     ) -> AppResult<()> {
+        // The frontend stamps every PTY with its stable pane id; reading it back
+        // lets us tie this session to a pane (see `Session::pane_id`).
+        let pane_id = opts
+            .env
+            .iter()
+            .find(|(k, _)| k == "SWARM_PANE_ID")
+            .map(|(_, v)| v.clone());
+
+        // One live PTY per pane. A webview reload re-spawns this pane while the
+        // pre-reload PTY is still running in this (surviving) process; without this
+        // its render thread would keep eval'ing frames into the new WebContent
+        // forever — a ~MB/s leak that re-triggers the WebContent OOM that caused the
+        // reload in the first place. Drop any prior session for this pane first.
+        if let Some(pid) = pane_id.as_deref() {
+            let stale: Vec<String> = {
+                let guard = self.sessions.lock();
+                guard
+                    .iter()
+                    .filter(|(_, s)| s.pane_id.as_deref() == Some(pid))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            };
+            for k in stale {
+                if let Some(mut s) = self.sessions.lock().remove(&k) {
+                    let _ = s.child.kill();
+                }
+            }
+        }
+
         // Cap concurrent sessions: each PTY holds three OS threads and an emulator,
         // so an unbounded spawn loop (buggy or hostile frontend) could exhaust file
         // descriptors / memory. 64 is far beyond any real pane count.
@@ -515,6 +550,7 @@ impl TerminalManager {
                 size: size.clone(),
                 visible: visible.clone(),
                 chan: chan.clone(),
+                pane_id,
             },
         );
 
@@ -826,6 +862,39 @@ impl TerminalManager {
 
     pub fn alive(&self, id: &str) -> bool {
         self.sessions.lock().contains_key(id)
+    }
+
+    /// `(pane_id, pty_id)` for every live session that carries a pane id. The
+    /// frontend calls this on hydrate: a pane whose id appears here has a PTY that
+    /// outlived a webview reload, so it reattaches instead of re-spawning.
+    pub fn live_panes(&self) -> Vec<(String, String)> {
+        self.sessions
+            .lock()
+            .iter()
+            .filter_map(|(id, s)| s.pane_id.clone().map(|p| (p, id.clone())))
+            .collect()
+    }
+
+    /// Kill every live session whose PTY id is **not** in `keep`. Called by the
+    /// frontend right after hydrate with the exact PTY ids it reattached to, so any
+    /// session left orphaned by a reload (a closed pane, a dropped workspace, or a
+    /// duplicate for the same pane) is reaped before it can leak.
+    pub fn reap(&self, keep: &[String]) {
+        let kill: Vec<String> = {
+            let guard = self.sessions.lock();
+            guard
+                .iter()
+                // Only pane-backed sessions are reapable: a PTY with no pane id was
+                // never owned by the frontend, so an empty keep-list can't sweep it.
+                .filter(|(id, s)| s.pane_id.is_some() && !keep.iter().any(|k| k == *id))
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for k in kill {
+            if let Some(mut s) = self.sessions.lock().remove(&k) {
+                let _ = s.child.kill();
+            }
+        }
     }
 }
 

@@ -483,12 +483,18 @@ export const useStore = create<State>((set, get) => {
 
     async hydrate() {
       try {
-        const [agents, gh, eventsDir, swarmBin] = await Promise.all([
+        const [agents, gh, eventsDir, swarmBin, live] = await Promise.all([
           api.listAgents(),
           ghAvailableOnce(),
           api.eventsDir().catch(() => null),
           api.swarmBin().catch(() => null),
+          // PTYs that outlived a webview reload (the Rust process survives a
+          // WebContent reload). Their panes reattach to the running agent below
+          // instead of re-spawning — re-spawning would orphan the live PTY, whose
+          // render thread then leaks frames into the webview and OOMs it.
+          api.ptyLive().catch(() => [] as [string, string][]),
         ]);
+        const livePty = new Map<string, string>(live);
         set({ agents, ghAvailable: gh, eventsDir, swarmBin });
         api
           .prepareCodexHome()
@@ -535,6 +541,30 @@ export const useStore = create<State>((set, get) => {
               ghLogin: null,
             });
             for (const sp of sw.panes) {
+              // A live PTY for this pane means we're recovering from a webview
+              // reload (not a fresh launch): reattach to the still-running agent
+              // rather than re-resuming it. Re-resuming would spawn a second agent
+              // and orphan the live PTY — the leak that OOMs WebContent and causes
+              // the reload. Terminal.tsx attaches once it sees this `ptyId`. The
+              // persisted launch info is kept so a later in-app respawn still works.
+              const livePtyId = livePty.get(sp.paneId);
+              if (livePtyId) {
+                panes.push({
+                  paneId: sp.paneId,
+                  workspaceId: sw.id,
+                  tabId: sp.tabId,
+                  ptyId: livePtyId,
+                  title: sp.title,
+                  agentId: sp.agentId,
+                  command: sp.command,
+                  args: sp.args,
+                  cwd: sp.cwd,
+                  attention: false,
+                  sessionId: sp.sessionId,
+                  env: paneEnv(sp.paneId, sp.agentId, sp.args),
+                });
+                continue;
+              }
               // cmux-style restore: if an agent ran in this pane and its hook
               // captured a session (even a `claude --dangerously-skip-permissions`
               // typed into a shell), re-spawn its native resume command — the
@@ -597,6 +627,12 @@ export const useStore = create<State>((set, get) => {
             workspaces.find((w) => w.id === snap.activeWorkspaceId)?.id ??
             workspaces[0]?.id ??
             null;
+          // Reap PTYs orphaned by a reload — every live PTY we did NOT reattach to
+          // (a closed pane, a workspace dropped above, or a duplicate for one pane).
+          // Must run BEFORE `set` mounts the panes: panes about to re-spawn have no
+          // PTY yet, so keeping only the reattached ids can't reap a fresh spawn.
+          const keepPtyIds = panes.map((p) => p.ptyId).filter((id): id is string => id != null);
+          await api.ptyReap(keepPtyIds).catch(() => {});
           set({ workspaces, panes, activeWorkspaceId });
           for (const w of workspaces) {
             api.watchWorktree(w.id, w.repo.path).catch(() => {});

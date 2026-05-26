@@ -713,6 +713,20 @@ fn pty_alive(state: State<TerminalManager>, id: String) -> bool {
     state.alive(&id)
 }
 
+/// `(pane_id, pty_id)` for every PTY that survived a webview reload, so the
+/// reloaded frontend can reattach to its agents instead of re-spawning them.
+#[tauri::command]
+fn pty_live(state: State<TerminalManager>) -> Vec<(String, String)> {
+    state.live_panes()
+}
+
+/// Kill every live PTY whose id isn't in `keep` — the frontend's post-hydrate
+/// sweep of sessions orphaned by a reload (closed panes / duplicates).
+#[tauri::command]
+fn pty_reap(state: State<TerminalManager>, keep: Vec<String>) {
+    state.reap(&keep);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Agent completion hooks re-invoke us as `swarm --notify-helper <mode>`: do
@@ -947,6 +961,8 @@ pub fn run() {
             pty_set_visible,
             pty_kill,
             pty_alive,
+            pty_live,
+            pty_reap,
             watch_worktree,
             unwatch_worktree,
         ])
