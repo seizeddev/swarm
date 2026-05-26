@@ -34,6 +34,19 @@ const RGB_FLAG: i32 = 0x0100_0000;
 const MAX_SESSIONS: usize = 64;
 /// Bounded reader→render queue depth: ~256 × 8 KiB ≈ 2 MB of backpressure.
 const CHUNK_QUEUE_CAP: usize = 256;
+/// Minimum wall-clock gap between two frames pushed to the webview (~60 fps).
+///
+/// Every `chan.send` lands as a `webview.eval` on the WKWebView **main thread**
+/// (the same thread that paints the UI and handles input — see Tauri's
+/// `ipc/channel.rs`). A chatty TUI (token-by-token agent streaming, spinners,
+/// box redraws) otherwise emits one frame per PTY read burst — hundreds per
+/// second — saturating the main thread and freezing the UI for as long as the
+/// backlog takes to drain. Pacing emission to a frame budget caps that to ~60
+/// evals/sec, coalesces a burst into one repaint, and — by sleeping *between*
+/// frames — yields the main thread time to paint and process input instead of
+/// swallowing a contiguous backlog. The first frame after idle is never delayed
+/// (the elapsed gap already exceeds the budget); only sustained output is paced.
+const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -519,10 +532,23 @@ impl TerminalManager {
             let mut notif = NotifState::default();
             let mut last_body = String::new();
             let mut last_at: Option<std::time::Instant> = None;
+            // Wall-clock time of the last frame pushed to the webview, for pacing.
+            let mut last_frame: Option<std::time::Instant> = None;
             // `recv` blocks for the first chunk; `Err` means the reader (and so the
             // PTY) is gone, ending the loop.
             while let Ok(first) = chunk_rx.recv() {
                 let mut chunks = vec![first];
+                // Frame pacing: if we pushed a frame less than a budget ago, sleep
+                // out the remainder before draining. This both throttles webview
+                // evals to ~60 fps and lets more chunks pile into the queue, so a
+                // burst coalesces into a single repaint (see FRAME_BUDGET). We sleep
+                // *before* locking `term`, so resize/scroll/copy stay responsive.
+                if let Some(prev) = last_frame {
+                    let since = prev.elapsed();
+                    if since < FRAME_BUDGET {
+                        std::thread::sleep(FRAME_BUDGET - since);
+                    }
+                }
                 while let Ok(c) = chunk_rx.try_recv() {
                     chunks.push(c);
                 }
@@ -582,6 +608,7 @@ impl TerminalManager {
                     // Ignore send errors: a detached (unmounted) channel just means
                     // the pane is hidden; the loop ends only when the PTY closes.
                     let _ = chan.lock().send(frame(&update));
+                    last_frame = Some(std::time::Instant::now());
                 }
             }
         });
