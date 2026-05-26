@@ -135,6 +135,19 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibility);
 
+    // Suppress the WKWebView's native right-click menu (its only items are
+    // "Reload" / "Inspect Element" — useless and off-brand for a desktop app).
+    // Components that want a context menu (e.g. the Sidebar workspace menu) call
+    // preventDefault in their own React handler, which fires first; a second
+    // preventDefault here is a harmless no-op. We keep the native menu over
+    // editable fields so copy/paste/spell-check still work where it's wanted.
+    const onContextMenu = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+
     // Live git status: the backend's per-worktree notify watcher fires
     // `fs:changed`; coalesce bursts per workspace before refreshing.
     const fsTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -178,6 +191,7 @@ export default function App() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("contextmenu", onContextMenu);
       unlistenFocus.then((f) => f()).catch(() => {});
       fsTimers.forEach((t) => clearTimeout(t));
       events.then((fns) => fns.forEach((f) => f()));
