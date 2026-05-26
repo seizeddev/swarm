@@ -465,34 +465,49 @@ svg.lucide {
 }
 
 /* ── Terminal grid ───────────────────────────────────────────────── */
+/* The cell metrics are measured from this font, then locked to integer device
+   pixels by the renderer. letter-spacing and ligatures MUST be off: the body sets
+   negative tracking + "liga"/"calt" for Inter, and inherited into the monospace
+   measure span they desync the measured advance from the rasterized glyph (column
+   drift, broken alignment). The grid is painted on a <canvas>, so this styling now
+   only governs the hidden measure <span>. */
 .term {
   font-family: var(--font-mono);
   font-size: 12.5px;
   /* Integer line-height: avoids sub-pixel accumulation that clipped the last row. */
   line-height: 17px;
+  letter-spacing: 0;
+  font-feature-settings: "liga" 0, "calt" 0;
+  font-variant-ligatures: none;
   white-space: pre;
   background: var(--color-bg-deep);
-  /* Terminal output is data — let it be selected/copied. */
-  user-select: text;
-  -webkit-user-select: text;
 }
-/* The terminal pane is a self-contained, fixed-size, clipped surface, so its
-   layout/paint never affects (or is affected by) the rest of the app. NB: only
-   the wrapper carries this — the hidden measure <span> shares `.term` and must
-   size to its content. */
+/* The terminal pane is a self-contained, clipped surface, so its layout/paint
+   never affects (or is affected by) the rest of the app. The sub-cell remainder
+   (pane height not divisible by the cell box) shows this background seamlessly. */
 .term-pane {
   contain: strict;
+  background: var(--color-bg-deep);
 }
-/* Each row has an explicit height, so full (incl. size) containment is safe and
-   lets the engine skip a flooding line's neighbours during layout/paint. */
-.term-line {
-  height: 17px;
-  white-space: pre;
-  contain: strict;
+/* The GPU/2D drawing surface, pinned top-left; its backing store is sized in
+   device pixels by the renderer and its CSS box to the exact grid extent. */
+.term-canvas {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: block;
 }
-.term-cursor {
+/* Thin scrollback indicator on the right edge, in the same quiet style as the
+   app's scrollbars — only visible while there's history (opacity set live). */
+.term-scrollbar {
+  position: absolute;
+  right: 2px;
+  width: 4px;
+  border-radius: 2px;
   background: var(--color-text);
-  border-radius: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
 /* Long, non-virtualized lists (the changed-files list can be huge in a big

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { decodeUpdate } from "./term";
+import { decodeUpdate } from "./term/grid";
 import type {
   AgentDef,
   CommitDetail,
@@ -84,6 +84,13 @@ export const api = {
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
   ptyResize: (id: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { id, cols, rows }),
+  // Scroll the viewport through scrollback by `delta` lines (>0 = back into
+  // history). The core replies with a fresh full frame at the new offset.
+  ptyScroll: (id: string, delta: number) => invoke<void>("pty_scroll", { id, delta }),
+  // Extract the text between two 0-based viewport cells (resolved through the
+  // current scroll offset by the core). Endpoints may be in any drag order.
+  ptySelectionText: (id: string, start: [number, number], end: [number, number]) =>
+    invoke<string>("pty_selection_text", { id, start, end }),
   agentSessionResume: (paneId: string) =>
     invoke<ResumeCommand | null>("agent_session_resume", { paneId }),
   agentSessionForget: (paneId: string) =>

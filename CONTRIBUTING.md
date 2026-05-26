@@ -6,8 +6,10 @@ Thanks for helping build swarm. It's early — issues, ideas, and PRs are all we
 
 ```
 src/            React + Vite + Tailwind v4 frontend
-  components/   Sidebar, Workspace, Terminal (cell-grid renderer), DiffViewer
-  lib/          ipc (typed Tauri commands), types, theme (palette), keys
+  components/   Sidebar, Workspace, Terminal (canvas orchestrator), DiffViewer
+  lib/          ipc (typed Tauri commands), types, theme (palette)
+  lib/term/     terminal renderer: grid model, metrics, glyph atlas,
+                WebGL2/Canvas2D backends, input + selection encoding
   store.ts      zustand app state
 src-tauri/src/  Rust core
   git.rs        libgit2 worktrees / status / diff / branches

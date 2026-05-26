@@ -122,6 +122,9 @@ export interface WireRun {
   fg: number;
   bg: number;
   flags: number;
+  // OSC 8 hyperlink target for every cell in this run, present only when the
+  // run's flags carry the hyperlink bit. A link boundary breaks run coalescing.
+  link?: string;
 }
 
 export interface WireLine {
@@ -129,8 +132,8 @@ export interface WireLine {
   runs: WireRun[];
 }
 
-// A streamed terminal frame. `full` replaces every row; `delta` patches only the
-// rows in `lines` (the ones the emulator reported as damaged).
+// A streamed terminal frame (wire v2). `full` replaces every row; `delta` patches
+// only the rows in `lines` (the ones the emulator reported as damaged).
 export interface WireUpdate {
   kind: "full" | "delta";
   cols: number;
@@ -138,5 +141,12 @@ export interface WireUpdate {
   cursorX: number;
   cursorY: number;
   cursorVisible: boolean;
+  // Filtered TermMode bits (see lib/term/mode.ts) — drives key/mouse encoding and
+  // the wheel behaviour without a round-trip to the core.
+  mode: number;
+  // Rows the viewport is scrolled back from the live tail (0 = bottom).
+  displayOffset: number;
+  // Scrollback depth above the screen, for the scrollbar overlay.
+  history: number;
   lines: WireLine[];
 }

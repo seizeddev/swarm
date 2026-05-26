@@ -6,10 +6,10 @@
 use crate::error::{AppError, AppResult};
 use crate::osc::{parse_notifications, NotifState};
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::{Dimensions, Grid};
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::grid::{Dimensions, Grid, Scroll};
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::{Cell, Flags};
-use alacritty_terminal::term::{Config, Term, TermDamage};
+use alacritty_terminal::term::{viewport_to_point, Config, Term, TermDamage};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, Processor, StdSyncHandler};
 use parking_lot::Mutex;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
@@ -48,12 +48,21 @@ pub struct SpawnOpts {
     pub rows: u16,
 }
 
+/// Wire flag bit set on a run that carries an OSC 8 hyperlink target (its `link`
+/// is `Some`). Bits 0..=6 mirror the cell attributes packed by `wflags`; bit 7 is
+/// ours, signalling the decoder to read a trailing length-prefixed URI.
+const WF_HYPERLINK: u16 = 1 << 7;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct WireRun {
     pub text: String,
     pub fg: i32,
     pub bg: i32,
     pub flags: u16,
+    /// OSC 8 hyperlink target for every cell in this run, or `None`. Part of the
+    /// run identity, so a link boundary breaks coalescing just like a style change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// One painted grid row: its viewport index `y` and the coalesced style runs.
@@ -76,6 +85,13 @@ pub struct WireUpdate {
     pub cursor_x: usize,
     pub cursor_y: i32,
     pub cursor_visible: bool,
+    /// Filtered `TermMode` bits (the emulator's current input/scroll modes), so the
+    /// frontend can encode keys/mouse and pick a wheel behaviour without a round-trip.
+    pub mode: u32,
+    /// Rows the viewport is scrolled back from the bottom (0 = live tail).
+    pub display_offset: usize,
+    /// Scrollback depth above the screen (`history_size`), for the scrollbar overlay.
+    pub history: usize,
     pub lines: Vec<WireLine>,
 }
 
@@ -100,6 +116,18 @@ impl EventListener for Proxy {
                 let _ = self.app.emit(
                     "term:title",
                     serde_json::json!({ "id": self.id, "title": title }),
+                );
+            }
+            // OSC 52 copy: a program in the terminal asked to set the system
+            // clipboard. Forward the payload to the frontend, which writes it via
+            // the WebView clipboard API. (The `osc52` config defaults to `OnlyCopy`,
+            // so the reverse — `ClipboardLoad`, a program *reading* your clipboard —
+            // is intentionally never emitted: that path is clipboard exfiltration
+            // and stays disabled, mirroring the deliberately-inert bell above.)
+            Event::ClipboardStore(_, text) => {
+                let _ = self.app.emit(
+                    "term:clipboard",
+                    serde_json::json!({ "id": self.id, "text": text }),
                 );
             }
             _ => {}
@@ -191,19 +219,26 @@ fn line_runs(grid: &Grid<Cell>, vy: usize, cols: usize, off: i32) -> Vec<WireRun
         let cell = &row[Column(col)];
         // The trailing half of a wide char carries no glyph; render it as a blank
         // so column alignment is preserved (mirrors the old full-grid behaviour).
-        let (ch, fg, bg, fl) = if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-            (' ', FG, BG, 0u16)
+        let (ch, fg, bg, mut fl, link) = if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            (' ', FG, BG, 0u16, None)
         } else {
             let ch = if cell.c == '\0' { ' ' } else { cell.c };
-            (ch, enc(cell.fg), enc(cell.bg), wflags(cell.flags))
+            let link = cell.hyperlink().map(|h| h.uri().to_string());
+            (ch, enc(cell.fg), enc(cell.bg), wflags(cell.flags), link)
         };
+        if link.is_some() {
+            fl |= WF_HYPERLINK;
+        }
         match runs.last_mut() {
-            Some(r) if r.fg == fg && r.bg == bg && r.flags == fl => r.text.push(ch),
+            Some(r) if r.fg == fg && r.bg == bg && r.flags == fl && r.link == link => {
+                r.text.push(ch)
+            }
             _ => runs.push(WireRun {
                 text: ch.to_string(),
                 fg,
                 bg,
                 flags: fl,
+                link,
             }),
         }
     }
@@ -218,10 +253,12 @@ fn build_update<T: EventListener>(
     term: &Term<T>,
     rows_iter: impl Iterator<Item = usize>,
 ) -> WireUpdate {
+    let mode = term.mode().bits();
     let grid = term.grid();
     let cols = grid.columns().max(1);
     let rows = grid.screen_lines().max(1);
-    let off = grid.display_offset() as i32;
+    let off = grid.display_offset();
+    let history = grid.history_size();
     let cursor = term.renderable_content().cursor;
     let mut lines = Vec::new();
     for vy in rows_iter {
@@ -230,7 +267,7 @@ fn build_update<T: EventListener>(
         }
         lines.push(WireLine {
             y: vy,
-            runs: line_runs(grid, vy, cols, off),
+            runs: line_runs(grid, vy, cols, off as i32),
         });
     }
     WireUpdate {
@@ -238,8 +275,11 @@ fn build_update<T: EventListener>(
         cols,
         rows,
         cursor_x: cursor.point.column.0,
-        cursor_y: cursor.point.line.0 + off,
+        cursor_y: cursor.point.line.0 + off as i32,
         cursor_visible: !matches!(cursor.shape, CursorShape::Hidden),
+        mode,
+        display_offset: off,
+        history,
         lines,
     }
 }
@@ -250,20 +290,31 @@ fn snapshot_full<T: EventListener>(term: &Term<T>) -> WireUpdate {
     build_update("full", term, 0..rows)
 }
 
+/// Wire-format version. Bump in lock-step with `decodeUpdate` in `lib/term/grid.ts`
+/// whenever the byte layout below changes; the decoder rejects a mismatched byte.
+const WIRE_VERSION: u8 = 2;
+
 /// Pack a frame into a compact little-endian byte layout (decoded into typed
-/// arrays in `lib/term.ts`), bypassing JSON. Header is 16 bytes:
-///   u8 kind(0=full,1=delta) · u8 cursorVisible · u16 cols · u16 rows ·
-///   u16 cursorX · i32 cursorY · u32 lineCount
+/// arrays in `lib/term/grid.ts`), bypassing JSON. Header is 30 bytes:
+///   u8 version · u8 kind(0=full,1=delta) · u8 cursorVisible · u8 _reserved ·
+///   u16 cols · u16 rows · u16 cursorX · i32 cursorY ·
+///   u32 mode · u32 displayOffset · u32 history · u32 lineCount
 /// then each line: u16 y · u16 runCount, then each run:
-///   i32 fg · i32 bg · u16 flags · u16 textLen · textLen UTF-8 bytes.
+///   i32 fg · i32 bg · u16 flags · u16 textLen · textLen UTF-8 bytes,
+///   and — only when flags has bit 7 (WF_HYPERLINK) — u16 linkLen · linkLen bytes.
 fn encode(u: &WireUpdate) -> Vec<u8> {
-    let mut b = Vec::with_capacity(16 + u.lines.len() * 8);
+    let mut b = Vec::with_capacity(30 + u.lines.len() * 8);
+    b.push(WIRE_VERSION);
     b.push(if u.kind == "delta" { 1 } else { 0 });
     b.push(u.cursor_visible as u8);
+    b.push(0); // reserved (keeps the 16-bit fields 2-byte aligned)
     b.extend_from_slice(&(u.cols as u16).to_le_bytes());
     b.extend_from_slice(&(u.rows as u16).to_le_bytes());
     b.extend_from_slice(&(u.cursor_x as u16).to_le_bytes());
     b.extend_from_slice(&u.cursor_y.to_le_bytes());
+    b.extend_from_slice(&u.mode.to_le_bytes());
+    b.extend_from_slice(&(u.display_offset as u32).to_le_bytes());
+    b.extend_from_slice(&(u.history as u32).to_le_bytes());
     b.extend_from_slice(&(u.lines.len() as u32).to_le_bytes());
     for line in &u.lines {
         b.extend_from_slice(&(line.y as u16).to_le_bytes());
@@ -275,6 +326,11 @@ fn encode(u: &WireUpdate) -> Vec<u8> {
             let text = r.text.as_bytes();
             b.extend_from_slice(&(text.len() as u16).to_le_bytes());
             b.extend_from_slice(text);
+            if r.flags & WF_HYPERLINK != 0 {
+                let link = r.link.as_deref().unwrap_or("").as_bytes();
+                b.extend_from_slice(&(link.len() as u16).to_le_bytes());
+                b.extend_from_slice(link);
+            }
         }
     }
     b
@@ -283,6 +339,44 @@ fn encode(u: &WireUpdate) -> Vec<u8> {
 /// Encode a frame as a raw IPC body (binary, never JSON).
 fn frame(u: &WireUpdate) -> InvokeResponseBody {
     InvokeResponseBody::Raw(encode(u))
+}
+
+/// Build the `CommandBuilder` for a spawn, platform-specifically.
+///
+/// On Unix we route the agent through the user's interactive login shell, exactly
+/// as a real terminal emulator does, so it inherits the user's full environment:
+/// PATH, LANG, and personal settings such as CLAUDE_CODE_NO_FLICKER (which controls
+/// whether Claude Code uses the full-height alternate screen vs an inline render).
+/// A GUI / .dmg launch only carries a minimal launchd environment — without sourcing
+/// the login profile the agent rendered in the degraded inline mode, so the terminal
+/// looked "cut off" at the bottom in packaged builds but not from a shell/`tauri dev`
+/// launch. `exec "$0" "$@"` replaces the shell in place (no extra process, same PTY)
+/// and passes argv through verbatim without re-quoting.
+///
+/// On Windows there is no login-shell convention to source: a GUI process already
+/// inherits the user's full environment, and `cmd.exe`/PowerShell have no portable
+/// `-ilc exec` equivalent. So we spawn the command directly; a "shell" pane resolves
+/// to `%COMSPEC%` (cmd.exe) via the frontend's pane defaults.
+#[cfg(unix)]
+fn build_command(opts: &SpawnOpts) -> CommandBuilder {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let mut cmd = CommandBuilder::new(&shell);
+    cmd.arg("-ilc");
+    cmd.arg("exec \"$0\" \"$@\"");
+    cmd.arg(&opts.command);
+    for a in &opts.args {
+        cmd.arg(a);
+    }
+    cmd
+}
+
+#[cfg(windows)]
+fn build_command(opts: &SpawnOpts) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(&opts.command);
+    for a in &opts.args {
+        cmd.arg(a);
+    }
+    cmd
 }
 
 impl TerminalManager {
@@ -314,24 +408,7 @@ impl TerminalManager {
             })
             .map_err(|e| AppError::Pty(e.to_string()))?;
 
-        // Spawn the agent through the user's interactive login shell, exactly as a
-        // real terminal emulator does, so it inherits the user's full environment:
-        // PATH, LANG, and personal settings such as CLAUDE_CODE_NO_FLICKER (which
-        // controls whether Claude Code uses the full-height alternate screen vs an
-        // inline render). A GUI / .dmg launch only carries a minimal launchd
-        // environment — without sourcing the login profile the agent rendered in
-        // the degraded inline mode, so the terminal looked "cut off" at the bottom
-        // in packaged builds but not from a shell/`tauri dev` launch. `exec "$0"
-        // "$@"` replaces the shell in place (no extra process, same PTY) and passes
-        // argv through verbatim without re-quoting.
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-ilc");
-        cmd.arg("exec \"$0\" \"$@\"");
-        cmd.arg(&opts.command);
-        for a in &opts.args {
-            cmd.arg(a);
-        }
+        let mut cmd = build_command(&opts);
         cmd.cwd(&opts.cwd);
         for (k, v) in &opts.env {
             cmd.env(k, v);
@@ -533,6 +610,7 @@ impl TerminalManager {
             cols: cols.max(1) as usize,
             lines: rows.max(1) as usize,
         };
+        #[cfg(target_os = "macos")]
         let old_lines = session.size.lock().lines;
         session
             .master
@@ -564,7 +642,10 @@ impl TerminalManager {
         // so a single change the app misreads strands it. After a grow we therefore
         // re-assert the height with a brief 1-row toggle, off-thread, to deliver a
         // second SIGWINCH the app re-reads from. This is PTY-only — the emulator grid
-        // stays at the real size, so our own rendering is never disturbed.
+        // stays at the real size, so our own rendering is never disturbed. macOS-only:
+        // it's a workaround for that platform's SIGWINCH coalescing (Linux/Windows
+        // ConPTY don't exhibit it, and an extra resize there only causes flicker).
+        #[cfg(target_os = "macos")]
         if new.lines > old_lines {
             let sessions = self.sessions.clone();
             let id = id.to_string();
@@ -589,6 +670,51 @@ impl TerminalManager {
             });
         }
         Ok(())
+    }
+
+    /// Scroll the viewport through the scrollback by `delta` lines (positive = back
+    /// into history, negative = toward the live tail), then push a fresh full frame
+    /// so the new viewport paints immediately. A no-op for an unknown id.
+    pub fn scroll(&self, id: &str, delta: i32) -> AppResult<()> {
+        let guard = self.sessions.lock();
+        let session = match guard.get(id) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let update = {
+            let mut t = session.term.lock();
+            t.scroll_display(Scroll::Delta(delta));
+            let upd = snapshot_full(&t);
+            t.reset_damage();
+            upd
+        };
+        if session.visible.load(Ordering::Acquire) {
+            let _ = session.chan.lock().send(frame(&update));
+        }
+        Ok(())
+    }
+
+    /// Extract the text between two *viewport* cell coordinates (0-based `(line,
+    /// col)`), resolving through the current scrollback offset so a selection over
+    /// scrolled-back rows reads the real history. Endpoints are ordered here, so the
+    /// frontend may pass them in either drag direction. `bounds_to_string` handles
+    /// wrapped lines and trailing-blank trimming the way a terminal copy should.
+    pub fn selection_text(
+        &self,
+        id: &str,
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> AppResult<String> {
+        let guard = self.sessions.lock();
+        let session = guard
+            .get(id)
+            .ok_or_else(|| AppError::NotFound(format!("terminal '{id}' not found")))?;
+        let t = session.term.lock();
+        let off = t.grid().display_offset();
+        let a = viewport_to_point(off, Point::new(start.0, Column(start.1)));
+        let b = viewport_to_point(off, Point::new(end.0, Column(end.1)));
+        let (s, e) = if a <= b { (a, b) } else { (b, a) };
+        Ok(t.bounds_to_string(s, e))
     }
 
     /// Mark a pane visible or hidden. Going visible pushes one full frame (so the
@@ -836,6 +962,9 @@ mod tests {
             cursor_x: 3,
             cursor_y: 5,
             cursor_visible: true,
+            mode: 0x14, // BRACKETED_PASTE | APP_CURSOR
+            display_offset: 7,
+            history: 99,
             lines: vec![WireLine {
                 y: 2,
                 runs: vec![WireRun {
@@ -843,28 +972,96 @@ mod tests {
                     fg: 1,
                     bg: 257,
                     flags: 0,
+                    link: None,
                 }],
             }],
         };
         let b = encode(&u);
-        // Header (16 bytes): kind=1, cursorVisible=1, cols=80, rows=24, cx=3, cy=5, lines=1
-        assert_eq!(b[0], 1);
+        // Header (30 bytes): version=2, kind=1, cursorVisible=1, _reserved=0,
+        // cols=80, rows=24, cx=3, cy=5, mode, displayOffset, history, lineCount=1.
+        assert_eq!(b[0], WIRE_VERSION);
         assert_eq!(b[1], 1);
-        assert_eq!(u16::from_le_bytes([b[2], b[3]]), 80);
-        assert_eq!(u16::from_le_bytes([b[4], b[5]]), 24);
-        assert_eq!(u16::from_le_bytes([b[6], b[7]]), 3);
-        assert_eq!(i32::from_le_bytes([b[8], b[9], b[10], b[11]]), 5);
-        assert_eq!(u32::from_le_bytes([b[12], b[13], b[14], b[15]]), 1);
+        assert_eq!(b[2], 1);
+        assert_eq!(b[3], 0);
+        assert_eq!(u16::from_le_bytes([b[4], b[5]]), 80);
+        assert_eq!(u16::from_le_bytes([b[6], b[7]]), 24);
+        assert_eq!(u16::from_le_bytes([b[8], b[9]]), 3);
+        assert_eq!(i32::from_le_bytes([b[10], b[11], b[12], b[13]]), 5);
+        assert_eq!(u32::from_le_bytes([b[14], b[15], b[16], b[17]]), 0x14);
+        assert_eq!(u32::from_le_bytes([b[18], b[19], b[20], b[21]]), 7);
+        assert_eq!(u32::from_le_bytes([b[22], b[23], b[24], b[25]]), 99);
+        assert_eq!(u32::from_le_bytes([b[26], b[27], b[28], b[29]]), 1);
         // Line: y=2, runCount=1
-        assert_eq!(u16::from_le_bytes([b[16], b[17]]), 2);
-        assert_eq!(u16::from_le_bytes([b[18], b[19]]), 1);
-        // Run: fg=1, bg=257, flags=0, textLen=2, "Hi"
-        assert_eq!(i32::from_le_bytes([b[20], b[21], b[22], b[23]]), 1);
-        assert_eq!(i32::from_le_bytes([b[24], b[25], b[26], b[27]]), 257);
-        assert_eq!(u16::from_le_bytes([b[28], b[29]]), 0);
         assert_eq!(u16::from_le_bytes([b[30], b[31]]), 2);
-        assert_eq!(&b[32..34], b"Hi");
-        assert_eq!(b.len(), 34);
+        assert_eq!(u16::from_le_bytes([b[32], b[33]]), 1);
+        // Run: fg=1, bg=257, flags=0, textLen=2, "Hi"
+        assert_eq!(i32::from_le_bytes([b[34], b[35], b[36], b[37]]), 1);
+        assert_eq!(i32::from_le_bytes([b[38], b[39], b[40], b[41]]), 257);
+        assert_eq!(u16::from_le_bytes([b[42], b[43]]), 0);
+        assert_eq!(u16::from_le_bytes([b[44], b[45]]), 2);
+        assert_eq!(&b[46..48], b"Hi");
+        assert_eq!(b.len(), 48);
+    }
+
+    #[test]
+    fn encode_appends_hyperlink_after_text_when_flag_set() {
+        let u = WireUpdate {
+            kind: "delta",
+            cols: 10,
+            rows: 1,
+            cursor_x: 0,
+            cursor_y: 0,
+            cursor_visible: false,
+            mode: 0,
+            display_offset: 0,
+            history: 0,
+            lines: vec![WireLine {
+                y: 0,
+                runs: vec![WireRun {
+                    text: "x".to_string(),
+                    fg: 256,
+                    bg: 257,
+                    flags: WF_HYPERLINK,
+                    link: Some("https://e.x".to_string()),
+                }],
+            }],
+        };
+        let b = encode(&u);
+        // After the 30-byte header + 4-byte line header + run (4+4+2 fixed):
+        //   textLen=1, "x", then linkLen + link bytes.
+        let run_at = 30 + 4;
+        let text_len_at = run_at + 10;
+        assert_eq!(u16::from_le_bytes([b[text_len_at], b[text_len_at + 1]]), 1);
+        let link_len_at = text_len_at + 2 + 1;
+        let link_len = u16::from_le_bytes([b[link_len_at], b[link_len_at + 1]]) as usize;
+        assert_eq!(link_len, "https://e.x".len());
+        let link = &b[link_len_at + 2..link_len_at + 2 + link_len];
+        assert_eq!(link, b"https://e.x");
+    }
+
+    #[test]
+    fn scroll_and_selection_round_trip_through_scrollback() {
+        // Build a small term with a tiny scrollback, push more rows than fit, then
+        // verify display_offset moves on scroll and bounds_to_string reads history.
+        let size = TermSize { cols: 8, lines: 2 };
+        let cfg = Config {
+            scrolling_history: 100,
+            ..Default::default()
+        };
+        let mut term = Term::new(cfg, &size, alacritty_terminal::event::VoidListener);
+        let mut parser = Processor::<StdSyncHandler>::new();
+        parser.advance(&mut term, b"row0\r\nrow1\r\nrow2\r\nrow3");
+        assert_eq!(term.grid().display_offset(), 0, "starts at the live tail");
+        assert!(
+            term.grid().history_size() >= 2,
+            "rows scrolled into history"
+        );
+        term.scroll_display(Scroll::Delta(1));
+        assert_eq!(term.grid().display_offset(), 1, "scrolled one line back");
+
+        let snap = snapshot_full(&term);
+        assert_eq!(snap.display_offset, 1);
+        assert!(snap.history >= 2);
     }
 
     #[test]

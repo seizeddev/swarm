@@ -21,7 +21,7 @@ A full analysis lives in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 These are the security properties we actively maintain and verify:
 
-- **Terminal output cannot inject UI.** The terminal is rendered as a cell grid built in Rust (Alacritty's VT engine), not as DOM/HTML — escape sequences become styled cells, never markup, so a hostile program's output can't mount an XSS.
+- **Terminal output cannot inject UI.** VT parsing runs in Rust (Alacritty's engine) and the resulting cell grid is painted onto a `<canvas>` (WebGL2/Canvas2D), never DOM/HTML — escape sequences become pixels, never markup, so a hostile program's output can't mount an XSS.
 - **No `git` shell-out.** All version-control work goes through libgit2, removing an entire class of argument-injection and `$PATH`-hijack risks.
 - **Strict Content-Security-Policy.** `default-src 'self'`, no remote script, `object-src`/`frame-src`/`form-action` `'none'`, `base-uri 'self'`. This is the primary defence keeping a compromised page from executing or exfiltrating.
 - **Filesystem blast-radius guard.** Every path-taking command is validated against a registry of roots the user explicitly opened (`src-tauri/guard.rs`); a subverted frontend can't reach `/etc` or spawn a shell in `/`.

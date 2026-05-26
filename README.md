@@ -30,7 +30,7 @@ Running several Claude Code / Codex sessions at once is the new normal. The term
 - **GitHub view built in.** A VS Code-style Source Control panel (stage / commit / per-file diff via libgit2) and a Pull Requests panel from `gh` — review without leaving the app.
 - **Work how you already work.** Local, no forced branches or worktrees. Terminals are the primary unit; git is a view you open when you want it.
 - **Cross-platform & tiny.** Tauri 2 + a Rust core in a system webview. No Electron, no bundled Chromium.
-- **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine; the UI just paints the cell grid. No xterm.js, so TUI agents like Claude Code render correctly.
+- **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine; the UI paints the cell grid on a GPU `<canvas>` (WebGL2, Canvas2D fallback). No xterm.js, so TUI agents like Claude Code render correctly — with mouse reporting, scrollback, selection/copy, and hyperlinks.
 
 ## Install
 
@@ -61,7 +61,7 @@ Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enab
 ```
 ┌───────────────────────────────────────────────┐
 │  React + Vite + Tailwind v4    (system webview) │
-│  • cell-grid terminal renderer (no xterm.js)    │
+│  • WebGL2/Canvas2D terminal renderer (no xterm) │
 │  • source control · history · PRs · terminals   │
 └───────────────▲─────────────────────────────────┘
                 │  Tauri IPC (commands + Channel)
@@ -74,7 +74,7 @@ Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enab
 └──────────────────────────────────────────────────┘
 ```
 
-Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resulting cell grid (run-length-coalesced) is streamed to the frontend over a Tauri `Channel`. The webview never parses ANSI.
+Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resulting cell grid (run-length-coalesced) is streamed to the frontend over a Tauri `Channel`, where it's painted on a `<canvas>` (WebGL2, Canvas2D fallback). The webview never parses ANSI and terminal text never becomes a DOM node.
 
 ## Performance & security
 

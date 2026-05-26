@@ -31,10 +31,11 @@ from signed GitHub releases.
 ## Threats and mitigations
 
 ### T1 — Terminal output injects UI / runs code (boundary 1)
-The terminal renders as a **cell grid produced in Rust** (Alacritty VT engine),
-streamed as binary frames and painted as styled `<span>`s — escape sequences
-become cell attributes, never DOM/HTML. There is no `dangerouslySetInnerHTML`
-path for terminal content. The OSC 9/99/777 notification parser is pure, unit-
+The terminal's VT parsing runs **in Rust** (Alacritty engine); the resulting cell
+grid is streamed as binary frames and painted onto a **`<canvas>`** (WebGL2, with
+a Canvas2D fallback) — escape sequences become pixels, never DOM/HTML. There is no
+`dangerouslySetInnerHTML` path for terminal content, and terminal text never
+becomes a DOM node at all. The OSC 9/99/777 notification parser is pure, unit-
 tested, and **fuzzed** (`fuzz/fuzz_targets/parse_notifications.rs`). Notifications
 are tagged with `source: "terminal"`, labelled as untrusted in the UI, and their
 body is never treated as a URL or action.

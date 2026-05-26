@@ -483,6 +483,21 @@ fn pty_set_visible(state: State<TerminalManager>, id: String, visible: bool) -> 
 }
 
 #[tauri::command]
+fn pty_scroll(state: State<TerminalManager>, id: String, delta: i32) -> AppResult<()> {
+    state.scroll(&id, delta)
+}
+
+#[tauri::command]
+fn pty_selection_text(
+    state: State<TerminalManager>,
+    id: String,
+    start: (usize, usize),
+    end: (usize, usize),
+) -> AppResult<String> {
+    state.selection_text(&id, start, end)
+}
+
+#[tauri::command]
 fn watch_worktree(
     app: AppHandle,
     state: State<WatcherManager>,
@@ -711,6 +726,8 @@ pub fn run() {
             pty_attach,
             pty_write,
             pty_resize,
+            pty_scroll,
+            pty_selection_text,
             pty_set_visible,
             pty_kill,
             pty_alive,

@@ -55,3 +55,5 @@ export const F_INVERSE = 1 << 3;
 export const F_DIM = 1 << 4;
 export const F_STRIKE = 1 << 5;
 export const F_HIDDEN = 1 << 6;
+// Bit 7 is set by the core when a run carries an OSC 8 hyperlink (see WireRun.link).
+export const F_HYPERLINK = 1 << 7;

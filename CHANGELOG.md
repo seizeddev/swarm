@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **New GPU terminal renderer.** The terminal is now painted on a `<canvas>` — a WebGL2 backend (instanced glyph quads) with an automatic Canvas2D fallback (and context-loss recovery), replacing the old DOM cell-grid. Both backends share one glyph atlas, so text is crisp and identical either way. Cell metrics are locked to integer device pixels, fixing the sub-pixel cursor/text drift and the occasional few-pixel gap at the bottom on resize.
+
+### Added
+
+- **Mouse-reporting terminals.** Click, drag, and wheel are reported to mouse-aware TUIs (vim, htop, btop, …) via SGR 1006 (with a legacy fallback).
+- **Scrollback.** Scroll the wheel to page back through history, with a quiet scrollbar indicator; typing snaps back to the live tail.
+- **Selection & copy.** Drag to select, double-click for a word, triple-click for a line, with copy-on-select; ⌘/Ctrl+C copies a selection (and still sends SIGINT when there's none).
+- **Clipboard & hyperlinks.** OSC 52 copy writes the system clipboard; OSC 8 hyperlinks underline on hover and open on ⌘/Ctrl+click (http(s) only).
+- **Fuller keyboard.** Function keys, modified arrows/navigation (CSI `1;<mod>`), application-cursor (DECCKM/SS3) and keypad modes, bracketed paste, and focus reporting.
+- **Cross-platform spawn.** The Windows path spawns the command directly (no Unix login-shell wrapper), so terminals work on Windows as well as macOS/Linux.
+
 ## [0.3.1] - 2026-05-25
 
 A notifications release. No data migration required; the persisted session
