@@ -276,9 +276,24 @@ signed with the *old* key; otherwise existing installs can never update again.
 
 ---
 
-## License of contributions
+## Contributing & licensing
 
-swarm is licensed under **GPL-3.0-or-later** (see [LICENSE](./LICENSE)). By
-submitting a contribution you agree it is licensed under the same terms
-(inbound = outbound), and that new source files carry the SPDX header shown in
-the house rules above.
+swarm is released under **GPL-3.0-or-later** (see [LICENSE](./LICENSE)), and new
+source files carry the SPDX header shown in the house rules above.
+
+By submitting a contribution — a pull request, patch, or any code, docs, or other
+material — you agree that:
+
+1. Your contribution is licensed to the project and its users under
+   **GPL-3.0-or-later**, the same terms as swarm itself (inbound = outbound).
+2. You additionally grant **Valentin Weinert** (the project maintainer and
+   copyright steward) a perpetual, worldwide, non-exclusive, royalty-free, and
+   irrevocable license to use, reproduce, modify, sublicense, and distribute your
+   contribution **under any license terms** — including a commercial license
+   offered to third parties.
+
+You keep the copyright to your contribution; the grant above sits on top of it.
+This dual arrangement keeps swarm fully open under the GPL while letting the
+maintainer offer a separate [commercial license](./README.md#license) to
+organizations that can't adopt the GPL — so the open project and a sustainable
+commercial option can coexist.
