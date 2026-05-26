@@ -98,5 +98,5 @@ flooding output applies OS backpressure instead of growing memory without bound.
 Build provenance can be checked with the GitHub CLI:
 
 ```sh
-gh attestation verify <downloaded-artifact> --repo seizeddev/swarm
+gh attestation verify <downloaded-artifact> --repo valewnrt/swarm
 ```

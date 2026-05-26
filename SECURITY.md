@@ -4,7 +4,7 @@
 
 Please **do not** open a public issue for security vulnerabilities.
 
-Instead, use GitHub's [private vulnerability reporting](https://github.com/seizeddev/swarm/security/advisories/new), or email the maintainers. We aim to acknowledge reports within 72 hours.
+Instead, use GitHub's [private vulnerability reporting](https://github.com/valewnrt/swarm/security/advisories/new), or email the maintainers. We aim to acknowledge reports within 72 hours.
 
 ## Scope & design
 

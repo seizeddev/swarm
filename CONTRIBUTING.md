@@ -57,7 +57,7 @@ Install them once:
 
 ```bash
 # 1. Clone (no submodules — a plain clone is everything).
-git clone https://github.com/seizeddev/swarm.git
+git clone https://github.com/valewnrt/swarm.git
 cd swarm
 
 # 2. Install frontend dependencies.

@@ -8,8 +8,8 @@ Run a swarm of AI coding agents in parallel — with source control, diffs, and 
 
 A lightweight, cross-platform desktop app. Rust core, native webview, no Electron.
 
-[![CI](https://github.com/seizeddev/swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/seizeddev/swarm/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/seizeddev/swarm/badge)](https://scorecard.dev/viewer/?uri=github.com/seizeddev/swarm)
+[![CI](https://github.com/valewnrt/swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/valewnrt/swarm/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/valewnrt/swarm/badge)](https://scorecard.dev/viewer/?uri=github.com/valewnrt/swarm)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-informational.svg)](./LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555)
 
@@ -53,7 +53,7 @@ Running several Claude Code / Codex sessions at once is the new normal. The term
 
 ## Install
 
-**Download a ready-to-run build — no toolchain required.** Grab the file for your OS from the [latest release](https://github.com/seizeddev/swarm/releases/latest):
+**Download a ready-to-run build — no toolchain required.** Grab the file for your OS from the [latest release](https://github.com/valewnrt/swarm/releases/latest):
 
 | OS | Download | Then |
 | --- | --- | --- |
@@ -132,7 +132,7 @@ Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resultin
 Want to hack on swarm? The full guide — prerequisites, project layout, house rules, and how to reproduce the CI gate locally — is in **[CONTRIBUTING.md](./CONTRIBUTING.md)**. The short version:
 
 ```bash
-git clone https://github.com/seizeddev/swarm.git
+git clone https://github.com/valewnrt/swarm.git
 cd swarm
 corepack enable     # activates the pinned pnpm (bundled with Node 20+)
 pnpm install
