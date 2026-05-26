@@ -3,7 +3,7 @@
 // Paints only the dirty rows (bg fill + atlas glyphs), then the selection tint and
 // the cursor overlay. Draws in device pixels — the atlas glyphs are already
 // device-sized, so there is no ctx scaling and nothing drifts off the pixel grid.
-import { F_DIM, F_HIDDEN, F_INVERSE, resolveColor, TERM_BG, TERM_FG } from "../theme";
+import { F_DIM, F_HIDDEN, F_INVERSE, resolveColor, selectionCss, TERM_BG, TERM_FG } from "../theme";
 import type { CellMetrics } from "./metrics";
 import type { GlyphAtlas } from "./atlas";
 import type { RenderFrame, RendererBackend } from "./renderer";
@@ -11,8 +11,6 @@ import { cellInRange } from "./select";
 import type { WireRun } from "../types";
 
 /* v8 ignore start -- requires a real 2D canvas context (node test env has none). */
-
-const SELECTION_TINT = "rgba(125, 156, 255, 0.30)"; // calm blue wash, monochrome-safe alpha
 
 export class Canvas2DBackend implements RendererBackend {
   readonly kind = "canvas2d" as const;
@@ -42,6 +40,7 @@ export class Canvas2DBackend implements RendererBackend {
   }
 
   draw(frame: RenderFrame): void {
+    this.atlas.beginFrame();
     const { grid, dirty } = frame;
     const { cellW, cellH } = this.metrics;
     const rows = dirty ?? Array.from({ length: grid.rows }, (_, i) => i);
@@ -71,7 +70,7 @@ export class Canvas2DBackend implements RendererBackend {
     if (selection) {
       for (let x = 0; x < grid.cols; x++) {
         if (cellInRange({ col: x, row: y }, selection.start, selection.end)) {
-          ctx.fillStyle = SELECTION_TINT;
+          ctx.fillStyle = selectionCss();
           let run = x;
           while (run < grid.cols && cellInRange({ col: run, row: y }, selection.start, selection.end))
             run++;

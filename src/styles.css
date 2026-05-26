@@ -484,17 +484,19 @@ svg.lucide {
 }
 /* The terminal pane is a self-contained, clipped surface, so its layout/paint
    never affects (or is affected by) the rest of the app. The sub-cell remainder
-   (pane height not divisible by the cell box) shows this background seamlessly. */
+   (pane height not divisible by the cell box) shows this background — the canvas
+   clears to the same colour (the only shared value; see theme.ts), so the seam is
+   invisible. */
 .term-pane {
   contain: strict;
   background: var(--color-bg-deep);
 }
-/* The GPU/2D drawing surface, pinned top-left; its backing store is sized in
-   device pixels by the renderer and its CSS box to the exact grid extent. */
+/* The GPU/2D drawing surface; its backing store is sized in device pixels by the
+   renderer and its CSS box to the exact grid extent. Its top/left offset is set
+   inline from the wrapper's measured padding (applyCanvasSize) — not hardcoded
+   here — so the two can never drift apart. */
 .term-canvas {
   position: absolute;
-  top: 8px;
-  left: 8px;
   display: block;
 }
 /* Thin scrollback indicator on the right edge, in the same quiet style as the

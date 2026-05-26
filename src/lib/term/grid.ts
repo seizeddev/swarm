@@ -208,6 +208,8 @@ export class Grid {
     if (!runs) return null;
     let x = 0;
     for (const r of runs) {
+      // Codepoint count (not `.length`), so a wide/astral char advances the column
+      // correctly. Only runs on hover, so the spread allocation is fine here.
       const w = [...r.text].length;
       if (col < x + w) return r;
       x += w;

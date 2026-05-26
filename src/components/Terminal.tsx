@@ -10,6 +10,7 @@ import { encodeKey, encodeMouse, focusEvent, reportsMouse, wheelFallback, wrapPa
 import { wheelScrollsBuffer } from "../lib/term/mode";
 import { pixelToCell, orderCells, expandWord, expandLine, rowText, type Cell } from "../lib/term/select";
 import { openExternal } from "../lib/external";
+import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
 import type { WireUpdate } from "../lib/types";
 
@@ -107,6 +108,11 @@ export function Terminal({
     const fontPx = parseFloat(cs.fontSize) || 12.5;
     const lineHeightPx = parseFloat(cs.lineHeight) || Math.round(fontPx * 1.35);
     const family = cs.fontFamily || "monospace";
+    // The canvas clears to the terminal surface colour; the `.term` span carries the
+    // same `--color-bg-deep` as the pane wrapper, so reading it here keeps the canvas
+    // clear in lockstep with the app palette (the sub-cell remainder is seamless).
+    // Runs before the first frame, so there's no flash.
+    setTerminalSurface(cs.backgroundColor);
     const dpr = window.devicePixelRatio || 1;
     const ctx = document.createElement("canvas").getContext("2d");
     if (!ctx) return false;
@@ -176,11 +182,18 @@ export function Terminal({
   const applyCanvasSize = (cols: number, rows: number) => {
     const m = metricsRef.current;
     const canvas = canvasRef.current;
-    if (!m || !canvas) return;
+    const wrap = wrapRef.current;
+    if (!m || !canvas || !wrap) return;
     const dw = cols * m.cellW;
     const dh = rows * m.cellH;
     canvas.style.width = `${dw / m.dpr}px`;
     canvas.style.height = `${dh / m.dpr}px`;
+    // Position the canvas at the wrapper's content origin, derived from its real
+    // padding (the same padding dimsFromBox subtracts) — so the CSS class never has
+    // to hardcode an offset that could drift from the wrapper's `p-2`.
+    const cs = getComputedStyle(wrap);
+    canvas.style.left = `${parseFloat(cs.paddingLeft)}px`;
+    canvas.style.top = `${parseFloat(cs.paddingTop)}px`;
     rendererRef.current?.resize(dw, dh);
     gridRef.current.markAllDirty();
   };
@@ -547,7 +560,7 @@ export function Terminal({
     } else {
       hoverRef.current = null;
     }
-    if (JSON.stringify(prevHover) !== JSON.stringify(hoverRef.current)) {
+    if (!sameHover(prevHover, hoverRef.current)) {
       g.markAllDirty();
       scheduleRender();
     }
@@ -638,6 +651,16 @@ export function Terminal({
       )}
     </div>
   );
+}
+
+type Hover = { row: number; startCol: number; endCol: number };
+
+// Field-wise equality for the hover state (null-safe) — cheaper and clearer than a
+// JSON.stringify round-trip on the move hot path.
+function sameHover(a: Hover | null, b: Hover | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.row === b.row && a.startCol === b.startCol && a.endCol === b.endCol;
 }
 
 // Expand a hovered cell to the full extent of the contiguous cells sharing the

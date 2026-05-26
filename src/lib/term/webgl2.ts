@@ -3,10 +3,16 @@
 // quads — one pass for non-default cell backgrounds, one textured pass for glyphs
 // sampled from the SHARED 2D-rasterized atlas (so text is pixel-identical to the
 // Canvas2D baseline; premultiplied-alpha blend, opaque backgrounds first), then
-// selection tint and cursor. A full GPU redraw per frame is cheap, so this ignores
-// the dirty-row list. On context loss it notifies the orchestrator to rebuild
-// (which re-tries WebGL2 and otherwise falls back to Canvas2D).
-import { F_DIM, F_HIDDEN, F_INVERSE, resolveColor, TERM_BG, TERM_FG } from "../theme";
+// selection tint and cursor.
+//
+// Unlike the Canvas2D baseline, this redraws the *whole* grid every frame and
+// ignores `RenderFrame.dirty` — deliberately: a full instanced GPU draw is cheap,
+// frames are only scheduled on `apply` (not free-running), and a partial GPU update
+// would mean tracking per-cell instance offsets for no real win. To keep that full
+// redraw allocation-free, the per-frame instance data is written into reused scratch
+// Float32Arrays (grown on demand) and uploaded with the WebGL2 `bufferData`
+// offset/length overload — no `number[]` churn, no `new Float32Array` per frame.
+import { F_DIM, F_HIDDEN, F_INVERSE, resolveColor, TERM_BG, TERM_FG, TERM_SELECTION } from "../theme";
 import type { CellMetrics } from "./metrics";
 import type { GlyphAtlas } from "./atlas";
 import type { RenderFrame, RendererBackend } from "./renderer";
@@ -109,6 +115,19 @@ export class WebGL2Backend implements RendererBackend {
   private tex: WebGLTexture;
   private texVersion = -1;
   private onLost?: () => void;
+  // Reused per-frame instance scratch (see the file header): grown on demand, never
+  // shrunk. `solidScratch` holds the bg pass and is reused for the overlay pass.
+  private solidScratch: Float32Array<ArrayBuffer> = new Float32Array(0);
+  private glyphScratch: Float32Array<ArrayBuffer> = new Float32Array(0);
+
+  // Return `arr` if it already holds `floats`, else a fresh array of at least that
+  // many floats (doubling growth). Contents are not preserved — callers refill.
+  private ensure(arr: Float32Array<ArrayBuffer>, floats: number): Float32Array<ArrayBuffer> {
+    if (arr.length >= floats) return arr;
+    let cap = arr.length || 256;
+    while (cap < floats) cap *= 2;
+    return new Float32Array(cap);
+  }
 
   static tryCreate(
     canvas: HTMLCanvasElement,
@@ -250,12 +269,19 @@ export class WebGL2Backend implements RendererBackend {
     this.texVersion = this.atlas.version;
   }
 
+  // Instance strides (floats per quad), matching the VAO layouts.
+  private static readonly SOLID_STRIDE = 8; // cellX,cellY, spanX,spanY, r,g,b,a
+  private static readonly GLYPH_STRIDE = 9; // cellX,cellY, spanX,spanY, u0,v0,u1,v1, alpha
+
   draw(frame: RenderFrame): void {
+    this.atlas.beginFrame();
     const gl = this.gl;
     const { grid, selection } = frame;
     const { cellW, cellH } = this.metrics;
     const w = grid.cols * cellW;
     const h = grid.rows * cellH;
+    const SS = WebGL2Backend.SOLID_STRIDE;
+    const GS = WebGL2Backend.GLYPH_STRIDE;
 
     // Background: clear to terminal bg, then draw the non-default bg cells. Glyphs
     // need the atlas texture current first (it also bakes fg colour into pixels).
@@ -264,8 +290,14 @@ export class WebGL2Backend implements RendererBackend {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.disable(gl.BLEND);
 
-    const solid: number[] = [];
-    const glyphs: number[] = [];
+    // Upper bound: at most one solid + one glyph instance per cell, plus the cursor
+    // in the overlay reuse of solidScratch.
+    const maxCells = grid.rows * grid.cols;
+    let solid = this.ensure(this.solidScratch, (maxCells + 1) * SS);
+    this.solidScratch = solid;
+    const glyphs = (this.glyphScratch = this.ensure(this.glyphScratch, maxCells * GS));
+    let si = 0;
+    let gi = 0;
     for (let y = 0; y < grid.rows; y++) {
       const runs = grid.lines[y];
       if (!runs) continue;
@@ -279,7 +311,8 @@ export class WebGL2Backend implements RendererBackend {
         const chars = [...run.text];
         if (bgc !== TERM_BG) {
           const [r, g, b] = parseHex(bgc);
-          solid.push(col, y, chars.length, 1, r, g, b, 1);
+          solid[si++] = col; solid[si++] = y; solid[si++] = chars.length; solid[si++] = 1;
+          solid[si++] = r; solid[si++] = g; solid[si++] = b; solid[si++] = 1;
         }
         if (!hidden) {
           for (const ch of chars) {
@@ -290,7 +323,9 @@ export class WebGL2Backend implements RendererBackend {
               const v0 = slot.y / ATLAS_PX;
               const u1 = (slot.x + (slot.wide ? cellW * 2 : cellW)) / ATLAS_PX;
               const v1 = (slot.y + cellH) / ATLAS_PX;
-              glyphs.push(col, y, span, 1, u0, v0, u1, v1, alpha);
+              glyphs[gi++] = col; glyphs[gi++] = y; glyphs[gi++] = span; glyphs[gi++] = 1;
+              glyphs[gi++] = u0; glyphs[gi++] = v0; glyphs[gi++] = u1; glyphs[gi++] = v1;
+              glyphs[gi++] = alpha;
             }
             col++;
           }
@@ -304,16 +339,20 @@ export class WebGL2Backend implements RendererBackend {
     // glyphs); upload after, so the texture has every glyph this frame uses.
     this.uploadAtlasIfStale();
 
-    this.drawSolid(solid, w, h);
+    this.drawSolid(solid, si, w, h);
 
     // Glyphs (premultiplied-alpha over the opaque backgrounds).
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    this.drawGlyphs(glyphs, w, h);
+    this.drawGlyphs(glyphs, gi, w, h);
 
-    // Selection tint + cursor: straight-alpha translucent quads on top.
-    const overlay: number[] = [];
+    // Selection tint + cursor: straight-alpha translucent quads on top, refilling
+    // solidScratch after the bg pass already uploaded.
+    solid = this.solidScratch;
+    let oi = 0;
     if (selection) {
+      const { r, g, b, a } = TERM_SELECTION;
+      const sr = r / 255, sg = g / 255, sb = b / 255;
       for (let y = selection.start.row; y <= selection.end.row; y++) {
         let x = 0;
         while (x < grid.cols) {
@@ -324,36 +363,40 @@ export class WebGL2Backend implements RendererBackend {
           let run = x;
           while (run < grid.cols && cellInRange({ col: run, row: y }, selection.start, selection.end))
             run++;
-          overlay.push(x, y, run - x, 1, 0.49, 0.61, 1, 0.3);
+          solid[oi++] = x; solid[oi++] = y; solid[oi++] = run - x; solid[oi++] = 1;
+          solid[oi++] = sr; solid[oi++] = sg; solid[oi++] = sb; solid[oi++] = a;
           x = run;
         }
       }
     }
     if (grid.cursorVisible && grid.cursorY >= 0 && grid.cursorY < grid.rows) {
       const [cr, cg, cb] = parseHex(TERM_FG);
-      overlay.push(grid.cursorX, grid.cursorY, 1, 1, cr, cg, cb, frame.focused ? 0.85 : 0.32);
+      solid[oi++] = grid.cursorX; solid[oi++] = grid.cursorY; solid[oi++] = 1; solid[oi++] = 1;
+      solid[oi++] = cr; solid[oi++] = cg; solid[oi++] = cb; solid[oi++] = frame.focused ? 0.85 : 0.32;
     }
-    if (overlay.length) {
+    if (oi) {
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      this.drawSolid(overlay, w, h);
+      this.drawSolid(solid, oi, w, h);
     }
   }
 
-  private drawSolid(data: number[], w: number, h: number): void {
-    if (!data.length) return;
+  // Upload exactly the filled `[0, floatCount)` region of `scratch` (WebGL2's
+  // bufferData srcOffset/length overload — no intermediate allocation).
+  private drawSolid(scratch: Float32Array, floatCount: number, w: number, h: number): void {
+    if (!floatCount) return;
     const gl = this.gl;
     gl.useProgram(this.solidProg);
     gl.uniform2f(gl.getUniformLocation(this.solidProg, "u_resolution"), w, h);
     gl.uniform2f(gl.getUniformLocation(this.solidProg, "u_cell"), this.metrics.cellW, this.metrics.cellH);
     gl.bindVertexArray(this.solidVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.solidInst);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, data.length / 8);
+    gl.bufferData(gl.ARRAY_BUFFER, scratch, gl.DYNAMIC_DRAW, 0, floatCount);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, floatCount / WebGL2Backend.SOLID_STRIDE);
     gl.bindVertexArray(null);
   }
 
-  private drawGlyphs(data: number[], w: number, h: number): void {
-    if (!data.length) return;
+  private drawGlyphs(scratch: Float32Array, floatCount: number, w: number, h: number): void {
+    if (!floatCount) return;
     const gl = this.gl;
     gl.useProgram(this.glyphProg);
     gl.uniform2f(gl.getUniformLocation(this.glyphProg, "u_resolution"), w, h);
@@ -363,8 +406,8 @@ export class WebGL2Backend implements RendererBackend {
     gl.uniform1i(gl.getUniformLocation(this.glyphProg, "u_atlas"), 0);
     gl.bindVertexArray(this.glyphVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.glyphInst);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, data.length / 9);
+    gl.bufferData(gl.ARRAY_BUFFER, scratch, gl.DYNAMIC_DRAW, 0, floatCount);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, floatCount / WebGL2Backend.GLYPH_STRIDE);
     gl.bindVertexArray(null);
   }
 

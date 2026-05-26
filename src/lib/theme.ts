@@ -3,8 +3,54 @@
 // Encoding: (v & 0x01000000) => truecolor in low 24 bits; 256 => fg; 257 => bg;
 // 0..255 => the xterm palette below; anything else falls back to fg.
 
+// The terminal's neutral grey default foreground and the surface (clear) colour.
+// Only the *surface* is shared with the app — it must match the pane wrapper's
+// `--color-bg-deep` so the sub-cell remainder around the grid is seamless, hence
+// `let` (overwritten at mount from the live CSS via `setTerminalSurface`, so it
+// tracks any future palette shift). The ANSI palette below and the neutral grey
+// `TERM_FG` are the terminal's *own* contract — deliberately not app-themed.
 export const TERM_FG = "#d6d6db";
-export const TERM_BG = "#161616";
+export let TERM_BG = "#161513";
+
+// Selection wash: a neutral white tint (brightness, not hue) — the app is strictly
+// monochrome (colour is reserved for git status). Both backends draw from this one
+// source so the WebGL2 and Canvas2D selection are identical.
+export const TERM_SELECTION = { r: 255, g: 255, b: 255, a: 0.18 };
+
+export function selectionCss(): string {
+  const { r, g, b, a } = TERM_SELECTION;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+// Parse a CSS colour (`rgb()`/`rgba()`/`#rgb`/`#rrggbb`) into a `#rrggbb` hex
+// string, or null if unparseable. Alpha is ignored — the terminal surface is opaque.
+export function cssColorToHex(s: string): string | null {
+  const str = s.trim();
+  const rgb = str.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*[\d.]+\s*)?\)$/i);
+  if (rgb) {
+    const r = Math.round(Number(rgb[1]));
+    const g = Math.round(Number(rgb[2]));
+    const b = Math.round(Number(rgb[3]));
+    if ([r, g, b].some((n) => Number.isNaN(n) || n < 0 || n > 255)) return null;
+    return hex(r, g, b);
+  }
+  const m = str.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (m) {
+    const h = m[1];
+    if (h.length === 3) {
+      return ("#" + h.split("").map((c) => c + c).join("")).toLowerCase();
+    }
+    return ("#" + h).toLowerCase();
+  }
+  return null;
+}
+
+// Set the terminal surface (canvas clear) colour. Ignores an unparseable input so
+// a bad value never blanks the terminal.
+export function setTerminalSurface(bg: string): void {
+  const parsed = cssColorToHex(bg);
+  if (parsed) TERM_BG = parsed;
+}
 
 // 16 base colors — a calm, modern dark theme for the terminal's ANSI palette.
 const BASE16 = [
