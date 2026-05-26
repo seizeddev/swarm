@@ -3833,6 +3833,7 @@ dependencies = [
  "portable-pty",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -3841,6 +3842,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-winrt-notification",
  "thiserror 2.0.18",
+ "toml 0.8.2",
  "uuid",
 ]
 

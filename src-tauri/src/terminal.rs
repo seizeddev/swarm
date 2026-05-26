@@ -533,6 +533,7 @@ impl TerminalManager {
             cols: cols.max(1) as usize,
             lines: rows.max(1) as usize,
         };
+        let old_lines = session.size.lock().lines;
         session
             .master
             .resize(PtySize {
@@ -554,6 +555,38 @@ impl TerminalManager {
         };
         if session.visible.load(Ordering::Acquire) {
             let _ = session.chan.lock().send(frame(&update));
+        }
+
+        // Grow nudge: some TUIs (notably Claude Code / Ink on macOS) intermittently
+        // read a *stale* winsize on the SIGWINCH from a grow and redraw at the old,
+        // smaller height — leaving dead space below until the next event (a keystroke
+        // forces a fresh read). macOS only raises SIGWINCH on an actual size change,
+        // so a single change the app misreads strands it. After a grow we therefore
+        // re-assert the height with a brief 1-row toggle, off-thread, to deliver a
+        // second SIGWINCH the app re-reads from. This is PTY-only — the emulator grid
+        // stays at the real size, so our own rendering is never disturbed.
+        if new.lines > old_lines {
+            let sessions = self.sessions.clone();
+            let id = id.to_string();
+            let cols = cols.max(1);
+            let rows = rows.max(1);
+            let smaller = rows.saturating_sub(1).max(1);
+            std::thread::spawn(move || {
+                let win = |r: u16| PtySize {
+                    rows: r,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                };
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                if let Some(s) = sessions.lock().get(&id) {
+                    let _ = s.master.resize(win(smaller));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                if let Some(s) = sessions.lock().get(&id) {
+                    let _ = s.master.resize(win(rows));
+                }
+            });
         }
         Ok(())
     }

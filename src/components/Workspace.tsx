@@ -46,9 +46,7 @@ export function Workspace() {
       const splitW = (d.rect.w / 100) * box.width;
       const splitH = (d.rect.h / 100) * box.height;
       const ratio =
-        d.dir === "row"
-          ? (ev.clientX - splitLeft) / splitW
-          : (ev.clientY - splitTop) / splitH;
+        d.dir === "row" ? (ev.clientX - splitLeft) / splitW : (ev.clientY - splitTop) / splitH;
       setRatio(d.id, Math.min(0.9, Math.max(0.1, ratio)));
     };
     const onUp = () => {
@@ -91,7 +89,13 @@ export function Workspace() {
                   : { inset: 0, display: "none" }
               }
             >
-              <Terminal pane={p} visible={shown} focused={shown && focused} />
+              <Terminal
+                pane={p}
+                visible={shown}
+                focused={shown && focused}
+                wPct={r?.w}
+                hPct={r?.h}
+              />
               {/* Dim the unfocused panes in a split so the active one reads as
                   in focus. A background-tinted overlay (not CSS opacity) keeps
                   the cell grid crisp while it recedes — mirrors cmux's

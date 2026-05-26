@@ -36,6 +36,8 @@ vi.mock("../lib/ipc", () => ({
     ptyResize: vi.fn(),
     ptyKill: vi.fn(),
     ptyAlive: vi.fn(),
+    agentSessionResume: vi.fn().mockResolvedValue(null),
+    agentSessionForget: vi.fn(),
   },
 }));
 
@@ -139,6 +141,8 @@ beforeEach(() => {
   m.ghLogin.mockResolvedValue("octocat");
   m.prList.mockResolvedValue([]);
   m.loadSession.mockResolvedValue(null);
+  // Default: no captured agent session (tests that exercise restore override this).
+  m.agentSessionResume.mockResolvedValue(null);
   for (const fn of [
     "stage",
     "unstage",
@@ -870,6 +874,61 @@ describe("persist + hydrate", () => {
     // Claude restores via --resume <sessionId>
     expect(pane.args).toContain("--resume");
     expect(pane.args).toContain("uuid-1");
+  });
+
+  it("restores a captured agent session over the persisted pane kind (cmux-style)", async () => {
+    // A shell pane in which the user ran `claude --dangerously-skip-permissions`:
+    // the backend captured it, so on hydrate the pane comes back AS Claude with the
+    // flag preserved (not a bare shell). Claude also re-gets swarm's --settings.
+    m.agentSessionResume.mockResolvedValue({
+      agent: "claude",
+      command: "claude",
+      args: ["--resume", "sess-x", "--dangerously-skip-permissions"],
+      cwd: "/repo",
+      sessionId: "sess-x",
+    });
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/repo",
+            panel: "scm",
+            activeTab: "tab-1",
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
+            panes: [
+              {
+                paneId: "pane-1",
+                tabId: "tab-1",
+                agentId: "shell",
+                command: "bash",
+                args: [],
+                cwd: "/repo",
+                title: "Shell",
+                sessionId: undefined,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await s().hydrate();
+    const pane = s().panes[0];
+    expect(pane.agentId).toBe("claude");
+    expect(pane.command).toBe("claude");
+    expect(pane.args).toEqual([
+      "--resume",
+      "sess-x",
+      "--dangerously-skip-permissions",
+      "--settings",
+      expect.any(String),
+    ]);
+    expect(pane.sessionId).toBe("sess-x");
+    expect(pane.env).toContainEqual(["SWARM_PANE_ID", "pane-1"]);
   });
 
   it("restores an empty workspace shell, and closing it removes it for good", async () => {

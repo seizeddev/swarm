@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod agent_hooks;
+mod agent_session;
 mod agents;
 mod error;
 mod git;
@@ -331,28 +332,83 @@ fn prepare_codex_home() -> AppResult<String> {
     #[cfg(unix)]
     if src.is_dir() {
         for e in std::fs::read_dir(&src)?.flatten() {
-            if e.file_name() == std::ffi::OsStr::new("config.toml") {
+            // config.toml is rewritten below; hooks.json is ours (don't symlink the
+            // user's over it).
+            let name = e.file_name();
+            if name == std::ffi::OsStr::new("config.toml")
+                || name == std::ffi::OsStr::new("hooks.json")
+            {
                 continue;
             }
-            let target = dst.join(e.file_name());
+            let target = dst.join(name);
             if !target.exists() {
                 let _ = std::os::unix::fs::symlink(e.path(), &target);
             }
         }
     }
-    // Codex's `notify` invokes our cross-platform helper with the turn JSON as
-    // an argv arg; it forwards the agent's *actual last message* into
-    // SWARM_EVENT_FILE, where the events watcher turns it into a `pane:notify`.
-    let mut cfg = std::fs::read_to_string(src.join("config.toml")).unwrap_or_default();
-    if !cfg.contains("swarm-notify") {
-        // TOML basic strings: backslashes (Windows paths) must be escaped.
-        let bin = swarm_bin_path().replace('\\', "\\\\");
-        cfg.push_str(&format!(
-            "\n# swarm-notify\nnotify = [\"{bin}\", \"--notify-helper\", \"event\"]\n",
-        ));
-    }
+    let bin = swarm_bin_path();
+    // Session-capture hook (cmux-style restore): write hooks.json into the isolated
+    // home and trust it in config.toml so a Codex launched from swarm records its
+    // session for `codex resume <id>` on restart.
+    let hooks_path = dst.join("hooks.json");
+    let _ = std::fs::write(&hooks_path, agent_hooks::codex_session_hooks_json(&bin));
+    let hooks_real = std::fs::canonicalize(&hooks_path).unwrap_or_else(|_| hooks_path.clone());
+
+    let raw = std::fs::read_to_string(src.join("config.toml")).unwrap_or_default();
+    // Codex's `notify` invokes our cross-platform helper with the turn JSON as an
+    // argv arg; it forwards the agent's *actual last message* into SWARM_EVENT_FILE.
+    let cfg_out = match toml::from_str::<toml::Table>(&raw) {
+        Ok(mut cfg) => {
+            cfg.insert(
+                "notify".into(),
+                toml::Value::Array(vec![
+                    toml::Value::String(bin.clone()),
+                    toml::Value::String("--notify-helper".into()),
+                    toml::Value::String("event".into()),
+                ]),
+            );
+            // `[features] hooks = true` enables Codex's hook system.
+            if let Some(t) = cfg
+                .entry("features".to_string())
+                .or_insert_with(|| toml::Value::Table(Default::default()))
+                .as_table_mut()
+            {
+                t.insert("hooks".into(), toml::Value::Boolean(true));
+            }
+            // `[hooks.state."<key>"] trusted_hash` pre-trusts our hook so Codex runs
+            // it without a prompt.
+            let (key, hash) = agent_hooks::codex_trust_entry(&bin, &hooks_real.to_string_lossy());
+            if let Some(st) = cfg
+                .entry("hooks".to_string())
+                .or_insert_with(|| toml::Value::Table(Default::default()))
+                .as_table_mut()
+                .and_then(|ht| {
+                    ht.entry("state".to_string())
+                        .or_insert_with(|| toml::Value::Table(Default::default()))
+                        .as_table_mut()
+                })
+            {
+                let mut entry = toml::map::Map::new();
+                entry.insert("trusted_hash".into(), toml::Value::String(hash));
+                st.insert(key, toml::Value::Table(entry));
+            }
+            toml::to_string(&cfg).unwrap_or(raw)
+        }
+        // Unparseable config: preserve it verbatim and only append the notify line
+        // (string form), skipping the hooks rather than risk losing the user's settings.
+        Err(_) => {
+            let mut s = raw;
+            if !s.contains("swarm-notify") {
+                let b = bin.replace('\\', "\\\\");
+                s.push_str(&format!(
+                    "\n# swarm-notify\nnotify = [\"{b}\", \"--notify-helper\", \"event\"]\n",
+                ));
+            }
+            s
+        }
+    };
     let cfg_path = dst.join("config.toml");
-    std::fs::write(&cfg_path, cfg)?;
+    std::fs::write(&cfg_path, cfg_out)?;
     // Holds a copy of the user's Codex config (may carry auth-adjacent settings).
     restrict_file(&cfg_path);
     Ok(dst.to_string_lossy().into_owned())
@@ -366,6 +422,21 @@ fn list_agents() -> Vec<agents::AgentDef> {
 #[tauri::command]
 fn claude_session_exists(id: String) -> bool {
     agents::claude_session_exists(&id)
+}
+
+/// The native resume command for a pane's captured agent session, or null when
+/// there's no restorable capture (no agent ran in that pane, the session is gone,
+/// or it was a non-restorable launch). Used on hydrate to bring an agent — and the
+/// user's launch flags — back after a restart, cmux-style.
+#[tauri::command]
+fn agent_session_resume(pane_id: String) -> Option<agent_session::ResumeCommand> {
+    agent_session::resume_command(&pane_id)
+}
+
+/// Forget a pane's captured agent session (the pane was closed for good).
+#[tauri::command]
+fn agent_session_forget(pane_id: String) {
+    agent_session::forget(&pane_id);
 }
 
 #[tauri::command]
@@ -632,6 +703,8 @@ pub fn run() {
             notify_os,
             swarm_bin,
             install_agent_hooks,
+            agent_session_resume,
+            agent_session_forget,
             commit_detail,
             commit_diff,
             pty_spawn,

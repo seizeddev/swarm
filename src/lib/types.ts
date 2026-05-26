@@ -106,6 +106,17 @@ export interface AgentDef {
   resume: string[];
 }
 
+// The native resume command for a pane's captured agent session (see
+// src-tauri/agent_session.rs), used on hydrate to bring an agent + its launch
+// flags back after a restart.
+export interface ResumeCommand {
+  agent: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  sessionId: string;
+}
+
 export interface WireRun {
   text: string;
   fg: number;

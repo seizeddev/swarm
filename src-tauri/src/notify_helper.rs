@@ -29,6 +29,16 @@ const MAX_LEN: usize = 200;
 /// any failure degrades to the fallback (or silence) so a hook never errors out.
 pub fn run(args: &[String]) {
     let mode = args.first().map(String::as_str).unwrap_or("");
+    // `session-start <agent>`: capture the agent's session + launch flags for
+    // restore. The agent id is an explicit argv arg; the payload is always stdin
+    // (the agent's hook JSON, carrying session_id/cwd).
+    if mode == "session-start" {
+        let agent = args.get(1).map(String::as_str).unwrap_or("");
+        let mut payload = String::new();
+        let _ = std::io::stdin().read_to_string(&mut payload);
+        crate::agent_session::record_session_start(agent, &payload);
+        return;
+    }
     // Payload: an explicit argv arg (Codex) wins; otherwise read stdin.
     let payload = if args.len() > 1 {
         args[1..].join(" ")

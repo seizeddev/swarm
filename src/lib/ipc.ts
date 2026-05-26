@@ -9,6 +9,7 @@ import type {
   PrDetail,
   PrSummary,
   RepoInfo,
+  ResumeCommand,
   StatusAndStats,
   WireUpdate,
 } from "./types";
@@ -22,18 +23,15 @@ export const api = {
     invoke<DiffHunk[]>("file_diff_hunks", { worktreePath, file, staged }),
   statusAndStats: (worktreePath: string) =>
     invoke<StatusAndStats>("status_and_stats", { worktreePath }),
-  gitLog: (repoPath: string, limit = 200) =>
-    invoke<CommitInfo[]>("git_log", { repoPath, limit }),
+  gitLog: (repoPath: string, limit = 200) => invoke<CommitInfo[]>("git_log", { repoPath, limit }),
   commitDetail: (repoPath: string, oid: string) =>
     invoke<CommitDetail>("commit_detail", { repoPath, oid }),
-  commitDiff: (repoPath: string, oid: string) =>
-    invoke<string>("commit_diff", { repoPath, oid }),
+  commitDiff: (repoPath: string, oid: string) => invoke<string>("commit_diff", { repoPath, oid }),
   saveSession: (data: string) => invoke<void>("save_session", { data }),
   loadSession: () => invoke<string | null>("load_session"),
   eventsDir: () => invoke<string>("events_dir"),
   prepareCodexHome: () => invoke<string>("prepare_codex_home"),
-  stage: (worktreePath: string, paths: string[]) =>
-    invoke<void>("stage", { worktreePath, paths }),
+  stage: (worktreePath: string, paths: string[]) => invoke<void>("stage", { worktreePath, paths }),
   unstage: (worktreePath: string, paths: string[]) =>
     invoke<void>("unstage", { worktreePath, paths }),
   stageAll: (worktreePath: string) => invoke<void>("stage_all", { worktreePath }),
@@ -47,8 +45,7 @@ export const api = {
   ghAvailable: () => invoke<boolean>("gh_available"),
   watchWorktree: (workspaceId: string, path: string) =>
     invoke<void>("watch_worktree", { workspaceId, path }),
-  unwatchWorktree: (workspaceId: string) =>
-    invoke<void>("unwatch_worktree", { workspaceId }),
+  unwatchWorktree: (workspaceId: string) => invoke<void>("unwatch_worktree", { workspaceId }),
   listAgents: () => invoke<AgentDef[]>("list_agents"),
   claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
   swarmBin: () => invoke<string>("swarm_bin"),
@@ -87,8 +84,11 @@ export const api = {
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
   ptyResize: (id: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { id, cols, rows }),
-  ptySetVisible: (id: string, visible: boolean) =>
-    invoke<void>("pty_set_visible", { id, visible }),
+  agentSessionResume: (paneId: string) =>
+    invoke<ResumeCommand | null>("agent_session_resume", { paneId }),
+  agentSessionForget: (paneId: string) =>
+    invoke<void>("agent_session_forget", { paneId }).catch(() => {}),
+  ptySetVisible: (id: string, visible: boolean) => invoke<void>("pty_set_visible", { id, visible }),
   ptyKill: (id: string) => invoke<void>("pty_kill", { id }),
   ptyAlive: (id: string) => invoke<boolean>("pty_alive", { id }),
 };

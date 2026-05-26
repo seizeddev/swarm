@@ -287,10 +287,20 @@ export const useStore = create<State>((set, get) => {
 
   // Per-pane env: SWARM_EVENT_FILE wires the generic notification watcher;
   // CODEX_HOME redirects Codex onto our notify-enabled config.
-  const paneEnv = (paneId: string, agentId: string): [string, string][] => {
+  const paneEnv = (paneId: string, agentId: string, args?: string[]): [string, string][] => {
     const env: [string, string][] = [];
     const ev = get().eventsDir;
     if (ev) env.push(["SWARM_EVENT_FILE", `${ev}/${paneId}`]);
+    // Stamp every PTY with its pane id so an agent's session-start hook can key
+    // its capture record to this pane (enables cmux-style resume-on-restart, even
+    // for an agent typed by hand into a shell). See src-tauri/agent_session.rs.
+    env.push(["SWARM_PANE_ID", paneId]);
+    // When swarm launches the agent it knows the exact argv — hand it over so the
+    // capture is precise (values with spaces, e.g. the injected `--settings`,
+    // survive), rather than relying on the process-scan fallback.
+    if (agentId !== "shell" && args && args.length) {
+      env.push(["SWARM_AGENT_ARGV_JSON", JSON.stringify(args)]);
+    }
     const ch = get().codexHome;
     if (agentId === "codex" && ch) env.push(["CODEX_HOME", ch]);
     return env;
@@ -301,6 +311,7 @@ export const useStore = create<State>((set, get) => {
     const paneId = uid("pane");
     const agentId = a?.id ?? "shell";
     const sessionId = agentId === "claude" ? crypto.randomUUID() : undefined;
+    const args = a ? launchArgs(a, sessionId, false, get().swarmBin ?? "swarm") : [];
     return {
       paneId,
       workspaceId: ws.id,
@@ -309,11 +320,11 @@ export const useStore = create<State>((set, get) => {
       title: a?.name ?? "Shell",
       agentId,
       command: a?.command ?? "bash",
-      args: a ? launchArgs(a, sessionId, false, get().swarmBin ?? "swarm") : [],
+      args,
       cwd: ws.repo.path,
       attention: false,
       sessionId,
-      env: paneEnv(paneId, agentId),
+      env: paneEnv(paneId, agentId, args),
     };
   };
 
@@ -456,6 +467,35 @@ export const useStore = create<State>((set, get) => {
               ghLogin: null,
             });
             for (const sp of sw.panes) {
+              // cmux-style restore: if an agent ran in this pane and its hook
+              // captured a session (even a `claude --dangerously-skip-permissions`
+              // typed into a shell), re-spawn its native resume command — the
+              // session *and* the user's flags come back. Takes precedence over the
+              // persisted pane kind (a shell pane that ran Claude restores as
+              // Claude). Claude additionally keeps swarm's notification settings.
+              const captured = await api.agentSessionResume(sp.paneId).catch(() => null);
+              if (captured) {
+                const a = agents.find((x) => x.id === captured.agent);
+                const args =
+                  captured.agent === "claude"
+                    ? [...captured.args, "--settings", claudeSettings(swarmBin ?? "swarm")]
+                    : captured.args;
+                panes.push({
+                  paneId: sp.paneId,
+                  workspaceId: sw.id,
+                  tabId: sp.tabId,
+                  ptyId: null,
+                  title: a?.name ?? sp.title,
+                  agentId: captured.agent,
+                  command: captured.command,
+                  args,
+                  cwd: captured.cwd || sp.cwd,
+                  attention: false,
+                  sessionId: captured.sessionId,
+                  env: paneEnv(sp.paneId, captured.agent, args),
+                });
+                continue;
+              }
               // Relaunch resuming the same session. Claude only persists a
               // transcript after the first turn, so a session that was opened but
               // never used cannot be `--resume`d ("No conversation found with
@@ -481,7 +521,7 @@ export const useStore = create<State>((set, get) => {
                 cwd: sp.cwd,
                 attention: false,
                 sessionId: sp.sessionId,
-                env: paneEnv(sp.paneId, sp.agentId),
+                env: paneEnv(sp.paneId, sp.agentId, args),
               });
             }
           }
@@ -549,7 +589,10 @@ export const useStore = create<State>((set, get) => {
       // Kill the workspace's PTYs explicitly — their components unmount without
       // killing, so closing the workspace is where they're reaped.
       for (const p of get().panes) {
-        if (p.workspaceId === id && p.ptyId) api.ptyKill(p.ptyId).catch(() => {});
+        if (p.workspaceId === id) {
+          if (p.ptyId) api.ptyKill(p.ptyId).catch(() => {});
+          api.agentSessionForget(p.paneId);
+        }
       }
       set((s) => {
         const workspaces = s.workspaces.filter((w) => w.id !== id);
@@ -648,6 +691,9 @@ export const useStore = create<State>((set, get) => {
       // The Terminal no longer kills on unmount (PTYs survive workspace switches),
       // so removal is the explicit kill point.
       if (pane?.ptyId) api.ptyKill(pane.ptyId).catch(() => {});
+      // Drop any captured agent-session record so a closed pane doesn't resurrect
+      // an agent on next launch.
+      api.agentSessionForget(paneId);
       set((s) => ({ panes: s.panes.filter((p) => p.paneId !== paneId) }));
       if (!pane) return;
       const ws = get().workspaces.find((w) => w.id === pane.workspaceId);

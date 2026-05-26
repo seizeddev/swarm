@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { encodeKey } from "../lib/keys";
 import { applyUpdate, runStyle } from "../lib/term";
@@ -30,10 +30,18 @@ export function Terminal({
   pane,
   visible,
   focused,
+  wPct,
+  hPct,
 }: {
   pane: Pane;
   visible: boolean;
   focused: boolean;
+  // This pane's allotted size in the tab layout (percent of the tiling area).
+  // Changes when a split is created/removed or a divider is dragged — a
+  // deterministic signal we re-fit from, since ResizeObserver can't be trusted
+  // to deliver a height-only growth in WKWebView (see the layout-change effect).
+  wPct?: number;
+  hPct?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
@@ -46,7 +54,20 @@ export function Terminal({
   const cursorRef = useRef({ x: 0, y: 0, visible: false });
   const visibleRef = useRef(visible);
   const raf = useRef<number | undefined>(undefined);
+  // Debounce handle for ResizeObserver-driven resizes (window/font changes).
+  const resizeTimer = useRef<number | undefined>(undefined);
   const cell = useRef({ w: 7.5, h: 16.5 });
+  // Latest layout fraction, mirrored from props so a *deferred* fit (a debounced
+  // ResizeObserver callback, a settle-fit timer, a rAF) reads the current size
+  // and never a stale closure — a stale fit would push the wrong winsize (e.g.
+  // the pre-split full height while the pane is mid-split), and the kernel then
+  // suppresses the real SIGWINCH on the next change because the size "already"
+  // matches, so the TUI never repaints until you type. See fit()/measureFraction.
+  const wPctRef = useRef(wPct);
+  const hPctRef = useRef(hPct);
+  // Last size pushed to the PTY: skip redundant resends so every ptyResize is a
+  // genuine winsize change (one SIGWINCH), never a no-op that masks the next one.
+  const lastSent = useRef<{ cols: number; rows: number } | null>(null);
   const [lines, setLines] = useState<WireRun[][]>([]);
   const [cursor, setCursor] = useState({ x: 0, y: 0, visible: false });
   const [exited, setExited] = useState(false);
@@ -95,7 +116,7 @@ export function Terminal({
     new Promise<{ cols: number; rows: number }>((resolve) => {
       let tries = 0;
       const tick = () => {
-        const dims = measure();
+        const dims = measureFraction() ?? measure();
         if (dims) resolve(dims);
         else if (cancelledRef() || tries >= 20) resolve({ cols: 80, rows: 24 });
         else {
@@ -106,17 +127,73 @@ export function Terminal({
       tick();
     });
 
-  // Measure and push the current geometry to the running PTY. Guards against a
-  // missing id or a zero-size (hidden / unmounted) box, so it's safe to fire
-  // from any settle point. Re-sending the same geometry is cheap (the core just
-  // repaints), so it needs no change-tracking.
+  // Resize the PTY from this pane's *layout fraction* of the stable tiling area,
+  // rather than from its own measured height. After a split opens/closes, WKWebView
+  // can take up to a second — or until the next interaction forces a repaint — to
+  // recompute the resolved height of a percentage-sized absolutely-positioned box.
+  // So measuring the pane element directly reports the stale (pre-grow) size: the
+  // TUI stays short until WebKit's lazy reflow finally lands (the "resizes back,
+  // but only after I type" symptom). The tiling area's pixel size is stable across
+  // splits (only the window changes it) and wPct/hPct are the new fractions the
+  // instant the layout state changes, so this is correct immediately. Returns the
+  // dims, or null if the area isn't laid out yet / no fraction is known.
+  const measureFraction = (): { cols: number; rows: number } | null => {
+    const wrap = wrapRef.current;
+    const wp = wPctRef.current;
+    const hp = hPctRef.current;
+    if (!wrap || wp == null || hp == null) return null;
+    // wrap (relative) → its offsetParent is the absolute pane box → whose
+    // offsetParent is the relative tiling area we want.
+    const area = (wrap.offsetParent as HTMLElement | null)?.offsetParent as HTMLElement | null;
+    if (!area || area.clientWidth === 0 || area.clientHeight === 0) return null;
+    const m = measureRef.current;
+    if (m) {
+      const r = m.getBoundingClientRect();
+      if (r.width > 0) cell.current = { w: r.width / 10, h: r.height };
+    }
+    const cs = getComputedStyle(wrap);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const cols = Math.max(2, Math.floor(((area.clientWidth * wp) / 100 - padX) / cell.current.w));
+    const rows = Math.max(1, Math.floor(((area.clientHeight * hp) / 100 - padY) / cell.current.h));
+    return { cols, rows };
+  };
+
+  // Push the current geometry to the running PTY. Prefers the fraction-derived
+  // size (lag-free, never the stale element height) and falls back to a direct
+  // element measure only when no layout fraction is known. Guards against a
+  // missing id or a zero-size box, so it's safe to fire from any settle point;
+  // re-sending the same size is cheap, so it needs no change-tracking.
   const fit = () => {
     const id = ptyIdRef.current;
     if (!id) return;
-    const dims = measure();
+    const dims = measureFraction() ?? measure();
     if (!dims) return; // pane not laid out — never push a degenerate size
+    // Skip a redundant resend: an identical winsize is a no-op in the kernel and
+    // suppresses the SIGWINCH the *next* genuine change needs, stranding the TUI.
+    const last = lastSent.current;
+    if (last && last.cols === dims.cols && last.rows === dims.rows) return;
+    lastSent.current = dims;
     api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
   };
+
+  // Debounced re-fit off the ResizeObserver (window / font changes): re-fits at
+  // fire time so it reads the settled geometry.
+  const scheduleFit = () => {
+    if (resizeTimer.current != null) clearTimeout(resizeTimer.current);
+    resizeTimer.current = window.setTimeout(() => {
+      resizeTimer.current = undefined;
+      fit();
+    }, 50);
+  };
+
+  // Keep the fraction refs in lock-step with the props, synchronously after every
+  // commit (before paint and before any deferred fit fires), so no fit ever sizes
+  // from a stale fraction.
+  useLayoutEffect(() => {
+    wPctRef.current = wPct;
+    hPctRef.current = hPct;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -209,29 +286,46 @@ export function Terminal({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    let timer: number | undefined;
+    // Catches viewport/font changes (the window resizing, fonts loading). Layout
+    // changes inside the tab — splits opening/closing, divider drags — are NOT
+    // reliably reported here (WKWebView misses a height-only growth of a
+    // percentage-sized absolutely-positioned pane), so those are driven from the
+    // layout-change effect below; both share scheduleFit's debounce.
     const ro = new ResizeObserver(() => {
-      const id = ptyIdRef.current;
-      if (!id) return;
+      if (!ptyIdRef.current) return;
       // A hidden pane (display:none ancestor) reports a 0-size box; resizing the
       // PTY to that would reflow the agent's UI to 2×1. Ignore those.
       if (el.clientWidth === 0 || el.clientHeight === 0) return;
-      // Debounce: a resize drag fires the observer continuously; only the final
-      // geometry needs to reach the PTY (the core pushes a full frame back).
-      if (timer != null) clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        // Re-measure at fire time; if the pane is now 0×0 (hidden mid-debounce),
-        // measure() returns null and we skip rather than push a fallback size.
-        const dims = measure();
-        if (dims) api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
-      }, 50);
+      scheduleFit();
     });
     ro.observe(el);
     return () => {
-      if (timer != null) clearTimeout(timer);
+      if (resizeTimer.current != null) clearTimeout(resizeTimer.current);
       ro.disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reconcile the PTY geometry whenever this pane's allotted size changes in the
+  // tab layout — a sibling split opened/closed, or a divider was dragged. The
+  // grow case (closing a split-*down* sibling, so the survivor's height doubles)
+  // is the one ResizeObserver drops in WKWebView, leaving a running TUI (Claude
+  // Code) stuck at the old half-height with dead space below until a reload.
+  //
+  // Runs in a layout effect (synchronously, before paint) and sizes from the
+  // stable area fraction via fit() — so it lands the instant the layout changes,
+  // with none of the percentage-reflow lag that measuring the pane element would
+  // incur, and (critically) the ResizeObserver's own fit() now uses the same
+  // fraction, so it can't clobber this back to the stale half-height. Retry once
+  // next frame if the area isn't laid out yet. A no-op until the PTY exists, so
+  // it never races the spawn-time sizing.
+  useLayoutEffect(() => {
+    if (!visible || ptyIdRef.current == null) return;
+    fit();
+    const h = requestAnimationFrame(fit);
+    return () => cancelAnimationFrame(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wPct, hPct, visible]);
 
   useEffect(() => {
     visibleRef.current = visible;
