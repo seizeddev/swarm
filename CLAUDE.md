@@ -9,6 +9,12 @@
 
 - **Comments earn their place — don't comment everywhere, comment where it helps.** Prefer code that reads on its own (clear names, small functions); a comment should tell the reader something the code can't. **Do** comment the *why*: a non-obvious rationale, a constraint or gotcha, a "don't remove this — it fixes X" note, a wire-format/protocol detail, or a doc comment on a public API. **Don't** narrate the *what* (`// increment i`, `// loop over items`), restate the next line, leave section-divider noise, or keep commented-out code. The test: *would deleting this comment lose knowledge?* If no, delete it. This codebase already follows that — most existing comments are load-bearing "why" notes; keep them.
 
+# Engineering policies
+
+- **Regression tests prove themselves — red, then green.** When you add a test for a bug fix, commit it in two steps: first the *failing* test alone (CI goes red, proving it actually catches the bug), then the fix (CI goes green). A test that passes without the fix present isn't a regression test. Our CI is frontend Vitest + cross-platform `cargo test`, so the red/green shows up per-commit in the PR.
+- **One behavior, one path — then verify every entrypoint.** Several actions are reachable from more than one surface: the native menu accelerator (`lib.rs`), a right-click context menu, and sometimes a direct keyboard/button handler — e.g. *Close Project* (⌘⇧W **and** the workspace context menu), splits, the panel toggles, git write-ops. Implement the action **once** (in `store.ts` or a shared command) and wire each surface to that one path; never copy the logic into a second surface. When you change such an action, walk every entrypoint that should trigger it.
+- **Test behavior, not source text.** Tests must exercise observable runtime behavior — a function's output, a store transition, a decoded frame — never assert that some string, identifier, or AST fragment *appears in the source*. The ≥85% coverage gate is satisfied by testing what the code **does**, not by reading what it says; don't pad coverage with shape assertions. If a behavior can't be exercised yet, add a small seam and test through it. When a user reports a bug the tests missed, add coverage around the exact repro **before** calling the fix done.
+
 # Project knowledge (learnings)
 
 ## Build & verify
