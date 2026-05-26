@@ -33,7 +33,7 @@ Running several Claude Code / Codex sessions at once is the new normal. The term
 
 - **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine and is painted on a GPU `<canvas>` (WebGL2, with a Canvas2D fallback). No xterm.js — so full-screen TUI agents like Claude Code render correctly, with mouse reporting, scrollback, selection/copy, and OSC 8 hyperlinks.
 - **Infinite terminals & splits.** Split right or down into a tiled layout with draggable dividers; every session stays alive across tab and workspace switches.
-- **Paste screenshots.** Paste an image straight into a terminal and swarm hands the agent a file path it can read — the way cmux / WezTerm / iTerm2 do it.
+- **Paste screenshots.** Paste an image straight into a terminal: swarm writes it to a temp file and hands the agent the file path, so agents that read images off disk just work.
 
 ### Agents & sessions
 

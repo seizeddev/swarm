@@ -12,8 +12,8 @@ persisted by 0.3.x are restored as-is.
 ### Added
 
 - **App-wide right-click context menus.** Terminals, the source-control tree, PR rows, and tabs now have context menus, backed by new libgit2 write operations — discard, checkout, create branch, reset, revert — plus PR checkout and a guarded "Reveal in Finder". The menu is portaled to the document body so panel overflow can't clip it, and it shows even over a mouse-reporting TUI (the right-click isn't forwarded to the program).
-- **Agent session restore (cmux-style).** Agents and their launch flags now survive a restart: each pane's session id and argv are captured via per-agent hooks, and the native resume command is rebuilt on relaunch (e.g. `claude --resume <id> --dangerously-skip-permissions`, `codex resume <id>`), with swarm's own injected flags filtered out.
-- **Clipboard image paste.** Pasting a screenshot into a terminal writes it to a temp file and pastes the path (as cmux / WezTerm / iTerm2 do), so agents such as Claude Code and Codex can read it off disk; text paste still wins when present.
+- **Agent session restore.** Agents and their launch flags now survive a restart: each pane's session id and argv are captured via per-agent hooks, and the native resume command is rebuilt on relaunch (e.g. `claude --resume <id> --dangerously-skip-permissions`, `codex resume <id>`), with swarm's own injected flags filtered out.
+- **Clipboard image paste.** Pasting a screenshot into a terminal writes it to a temp file and pastes the path, so agents such as Claude Code and Codex can read it off disk; text paste still wins when present.
 - **Close projects.** Remove a workspace from the rail via its context menu or ⌘/Ctrl+Shift+W; the removal is persisted immediately.
 - **Mouse-reporting terminals.** Click, drag, and wheel are reported to mouse-aware TUIs (vim, htop, btop, …) via SGR 1006 (with a legacy fallback).
 - **Scrollback.** Scroll the wheel to page back through history, with a quiet scrollbar indicator; typing snaps back to the live tail.
