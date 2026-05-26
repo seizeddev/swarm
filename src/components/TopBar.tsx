@@ -78,18 +78,27 @@ export function TopBar() {
   const ws = useActiveWorkspace();
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectTab, removePane, splitActive, closeOtherTabs, closeTabsToRight, sidebarVisible, compact } =
-    useStore(
-      useShallow((s) => ({
-        selectTab: s.selectTab,
-        removePane: s.removePane,
-        splitActive: s.splitActive,
-        closeOtherTabs: s.closeOtherTabs,
-        closeTabsToRight: s.closeTabsToRight,
-        sidebarVisible: s.sidebarVisible,
-        compact: s.compact,
-      })),
-    );
+  const {
+    selectTab,
+    removePane,
+    splitActive,
+    closeOtherTabs,
+    closeTabsToRight,
+    sidebarVisible,
+    compact,
+    fullscreen,
+  } = useStore(
+    useShallow((s) => ({
+      selectTab: s.selectTab,
+      removePane: s.removePane,
+      splitActive: s.splitActive,
+      closeOtherTabs: s.closeOtherTabs,
+      closeTabsToRight: s.closeTabsToRight,
+      sidebarVisible: s.sidebarVisible,
+      compact: s.compact,
+      fullscreen: s.fullscreen,
+    })),
+  );
   const { menu, open: openMenu, close: closeMenu } = useContextMenu();
 
   // Build the right-click menu for a tab. Split/close act on this tab; the close
@@ -157,10 +166,12 @@ export function TopBar() {
 
       {/* Repo identity — sits over the inspector panel, only while it's open,
           and tracks the panel's resizable width. pl-8 clears the macOS traffic
-          lights (which spill ~72px from the left, past the 56px rail column). */}
+          lights (which spill ~72px from the left, past the 56px rail column).
+          In fullscreen macOS hides the lights, so we drop back to pl-3 — else
+          the title floats with dead space on the left. */}
       {showIdentity && (
         <div
-          className="flex h-full flex-none items-center gap-2 pl-8 pr-3"
+          className={`flex h-full flex-none items-center gap-2 pr-3 ${fullscreen ? "pl-3" : "pl-8"}`}
           style={{ width: "var(--panel-w)" }}
         >
           <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
@@ -176,10 +187,11 @@ export function TopBar() {
 
       {/* Content column — terminal tabs + split toolbar, over the editor area.
           When the inspector is hidden there's no identity block, so the tabs
-          themselves must clear the traffic lights (pl-8). */}
+          themselves must clear the traffic lights (pl-8) — unless fullscreen
+          hides them, where pl-3 reclaims the dead space. */}
       <div
         className={`flex h-full min-w-0 flex-1 items-center gap-1 pr-3 ${
-          showIdentity ? "pl-3" : "pl-8"
+          showIdentity || fullscreen ? "pl-3" : "pl-8"
         }`}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">

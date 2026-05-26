@@ -135,6 +135,18 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibility);
 
+    // Fullscreen tracking: macOS hides the traffic lights in fullscreen, so the
+    // TopBar must drop the left padding that clears them (else the title floats
+    // over dead space). Tauri has no dedicated fullscreen event — entering or
+    // leaving fullscreen fires a resize, so re-query isFullscreen() on each.
+    const syncFullscreen = () =>
+      win
+        .isFullscreen()
+        .then((v) => useStore.getState().setFullscreen(v))
+        .catch(() => {});
+    syncFullscreen();
+    const unlistenResize = win.onResized(syncFullscreen);
+
     // Suppress the WKWebView's native right-click menu (its only items are
     // "Reload" / "Inspect Element" — useless and off-brand for a desktop app).
     // Components that want a context menu (e.g. the Sidebar workspace menu) call
@@ -193,6 +205,7 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibility);
       document.removeEventListener("contextmenu", onContextMenu);
       unlistenFocus.then((f) => f()).catch(() => {});
+      unlistenResize.then((f) => f()).catch(() => {});
       fsTimers.forEach((t) => clearTimeout(t));
       events.then((fns) => fns.forEach((f) => f()));
     };

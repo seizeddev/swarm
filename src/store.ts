@@ -184,6 +184,10 @@ interface State {
   // background notification escalates to an OS banner (see onNotify). Default
   // true so the app behaves as "in front" until told otherwise.
   windowFocused: boolean;
+  // Whether the window is in macOS fullscreen. In fullscreen the OS hides the
+  // traffic lights, so the TopBar drops its left padding that normally clears
+  // them (see TopBar) — otherwise the title floats with dead space on the left.
+  fullscreen: boolean;
   // Absolute path to our own binary (from the backend), used to build agent
   // hooks that re-invoke `<swarmBin> --notify-helper …`. Resolved on hydrate.
   swarmBin: string | null;
@@ -205,6 +209,7 @@ interface State {
   toggleSidebar(): void;
   setCompact(v: boolean): void;
   setWindowFocused(v: boolean): void;
+  setFullscreen(v: boolean): void;
   closeActivePane(): void;
 
   addPane(agent?: AgentDef, wsId?: string): void;
@@ -382,6 +387,7 @@ export const useStore = create<State>((set, get) => {
     sidebarVisible: true,
     compact: false,
     windowFocused: true,
+    fullscreen: false,
     swarmBin: null,
     eventsDir: null,
     codexHome: null,
@@ -393,6 +399,10 @@ export const useStore = create<State>((set, get) => {
 
     setCompact(v) {
       if (get().compact !== v) set({ compact: v });
+    },
+
+    setFullscreen(v) {
+      if (get().fullscreen !== v) set({ fullscreen: v });
     },
 
     setWindowFocused(v) {
