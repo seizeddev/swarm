@@ -92,19 +92,28 @@ export function TopBar() {
   const showIdentity = !!ws && sidebarVisible && !compact;
 
   return (
+    // The whole band is one drag region. `deep` (Tauri ≥2.x) makes *any*
+    // descendant click drag the window — unlike a bare attr, which only drags
+    // when the click target is literally this element (so the wide tab area,
+    // covered by a `flex-1` inner container, was a dead zone). Interactive
+    // controls opt out on their own: <button>s are inherently non-draggable,
+    // and the tabs carry role="tab" (an INTERACTIVE_ROLE Tauri treats the same
+    // way), so click-to-select and the close/split buttons keep working while
+    // every gap and empty strip across the bar drags. Intermediate containers
+    // must NOT re-declare the attr: a bare value on an inner element returns
+    // early and would shadow this `deep` root.
     <div
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
       className="flex h-11 flex-none items-center border-b border-[var(--color-border)]"
     >
       {/* Rail column — the macOS traffic lights overlay this strip. */}
-      <div data-tauri-drag-region className="h-full w-14 flex-none" />
+      <div className="h-full w-14 flex-none" />
 
       {/* Repo identity — sits over the inspector panel, only while it's open,
           and tracks the panel's resizable width. pl-8 clears the macOS traffic
           lights (which spill ~72px from the left, past the 56px rail column). */}
       {showIdentity && (
         <div
-          data-tauri-drag-region
           className="flex h-full flex-none items-center gap-2 pl-8 pr-3"
           style={{ width: "var(--panel-w)" }}
         >
@@ -123,7 +132,6 @@ export function TopBar() {
           When the inspector is hidden there's no identity block, so the tabs
           themselves must clear the traffic lights (pl-8). */}
       <div
-        data-tauri-drag-region
         className={`flex h-full min-w-0 flex-1 items-center gap-1 pr-3 ${
           showIdentity ? "pl-3" : "pl-8"
         }`}
@@ -139,6 +147,8 @@ export function TopBar() {
             return (
               <div
                 key={t.id}
+                role="tab"
+                aria-selected={active}
                 data-active={active}
                 onClick={() => selectTab(t.id)}
                 className="group row flex h-8 cursor-pointer items-center gap-2 px-3 text-[12.5px]"
