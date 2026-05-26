@@ -563,8 +563,11 @@ export function Terminal({
       return;
     }
 
-    // Mouse-reporting program: forward the press instead of selecting.
-    if (id && reportsMouse(g.mode)) {
+    // Mouse-reporting program: forward the press instead of selecting. The
+    // right button is the exception — it summons our context menu (see
+    // onContextMenu), so we don't forward it; the coding agents we host don't
+    // use a right-click, and Copy/Paste is worth more than the report.
+    if (id && reportsMouse(g.mode) && e.button !== 2) {
       const seq = encodeMouse(
         { type: "press", button: e.button, col: cell.col, row: cell.row, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey },
         g.mode,
@@ -673,11 +676,11 @@ export function Terminal({
     if (fb) api.ptyWrite(id, fb);
   };
 
-  // Right-click menu for the canvas. A mouse-reporting program (a TUI) owns the
-  // right button — onMouseDown forwards it — so we suppress our menu there and
-  // let the program receive the click. In a plain shell, our menu shows.
+  // Right-click menu for the canvas — always shown (even over a mouse-reporting
+  // TUI like Claude/Codex). onMouseDown deliberately doesn't forward the right
+  // button to such programs, so the menu wins; Copy/Paste is more useful there
+  // than a forwarded right-click the agent ignores anyway.
   const onContextMenu = (e: React.MouseEvent) => {
-    if (reportsMouse(gridRef.current.mode)) return;
     const id = ptyIdRef.current;
     const store = useStore.getState();
     const items: MenuItem[] = [

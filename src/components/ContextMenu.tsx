@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { clampMenuPosition, type MenuItem, type MenuState } from "../lib/menu";
 
 /**
@@ -65,7 +66,11 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
 
   if (!menu) return null;
 
-  return (
+  // Portal to <body> so the menu escapes every overflow/transform ancestor — a
+  // panel's `overflow-auto` plus the `transform`-based entrance animations would
+  // otherwise clip a fixed-positioned child (the menu was cut off at the panel
+  // edge). At the body root, the viewport-clamped fixed coords are exact.
+  return createPortal(
     <div
       ref={ref}
       role="menu"
@@ -114,6 +119,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
           </button>
         );
       })}
-    </div>
+    </div>,
+    document.body,
   );
 }
