@@ -1,0 +1,9 @@
+# prettier owns the frontend source (TS/TSX/CSS) + root JSON config only.
+# Everything below is either generated, hand-maintained, or owned by another
+# formatter (Rust → cargo fmt), so keep prettier out to avoid churn.
+node_modules
+dist
+src-tauri
+pnpm-lock.yaml
+docs
+*.md

@@ -79,6 +79,7 @@ function WorkspaceSquare({
   const initials = name.slice(0, 2).toUpperCase();
   return (
     <button
+      type="button"
       onClick={() => setActiveWorkspace(id)}
       onContextMenu={(e) => onMenu(e, id)}
       title={name}
@@ -128,6 +129,7 @@ function RailButton({
   const shown = active && sidebarVisible;
   return (
     <button
+      type="button"
       className="icon-btn relative h-8 w-8"
       data-active={shown}
       title={shown ? `Hide ${title}` : title}
@@ -445,6 +447,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           />
         ))}
         <button
+          type="button"
           className="icon-btn h-8 w-8"
           title="Add project"
           onClick={() => pickRepo(addWorkspace)}
@@ -536,7 +539,11 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
               <p className="mx-auto mb-5 mt-1 max-w-[200px] text-[12.5px] leading-relaxed text-[var(--color-muted)]">
                 Open a git repository to start working with terminals, diffs and pull requests.
               </p>
-              <button className="btn btn-accent mx-auto" onClick={() => pickRepo(addWorkspace)}>
+              <button
+                type="button"
+                className="btn btn-accent mx-auto"
+                onClick={() => pickRepo(addWorkspace)}
+              >
                 <Plus size={15} /> Add project
               </button>
             </div>
@@ -626,6 +633,7 @@ function RenameWorkspaceModal({
           Display name only — the folder isn't touched. Leave blank to use “{repoName}”.
         </p>
         <input
+          aria-labelledby="rename-title"
           autoFocus
           value={value}
           onChange={(e) => setValue(e.target.value)}

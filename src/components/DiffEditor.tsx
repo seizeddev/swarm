@@ -8,9 +8,7 @@ import type { DiffHunk, DiffLine } from "../lib/types";
 
 // One flat scroll row: a hunk header, or a single diff line carrying optional
 // word-diff segments (present only when the line is part of a modified pair).
-type Row =
-  | { type: "header"; text: string }
-  | { type: "line"; line: DiffLine; word?: Seg[] };
+type Row = { type: "header"; text: string } | { type: "line"; line: DiffLine; word?: Seg[] };
 
 // Fraction of a line that may change before we stop calling it an "edit" of its
 // counterpart — past this the lines are unrelated, so a word diff would just
@@ -46,11 +44,19 @@ function buildRows(hunks: DiffHunk[]): Row[] {
         const paired = Math.min(dels.length, adds.length);
         dels.forEach((line, p) => {
           const wd = p < paired ? wordDiff(line.text, adds[p].text) : null;
-          rows.push({ type: "line", line, word: wd && changedRatio(wd.a) <= SIMILARITY_CUTOFF ? wd.a : undefined });
+          rows.push({
+            type: "line",
+            line,
+            word: wd && changedRatio(wd.a) <= SIMILARITY_CUTOFF ? wd.a : undefined,
+          });
         });
         adds.forEach((line, p) => {
           const wd = p < paired ? wordDiff(dels[p].text, line.text) : null;
-          rows.push({ type: "line", line, word: wd && changedRatio(wd.b) <= SIMILARITY_CUTOFF ? wd.b : undefined });
+          rows.push({
+            type: "line",
+            line,
+            word: wd && changedRatio(wd.b) <= SIMILARITY_CUTOFF ? wd.b : undefined,
+          });
         });
         i = a;
       } else {
@@ -134,7 +140,11 @@ function LineRow({ row }: { row: Extract<Row, { type: "line" }> }) {
         {line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}
       </span>
       <span className="selectable whitespace-pre-wrap break-all pr-4 text-[var(--color-text)]">
-        {word ? <WordSpans segs={word} add={line.kind === "add"} /> : <CodeSpans text={line.text} />}
+        {word ? (
+          <WordSpans segs={word} add={line.kind === "add"} />
+        ) : (
+          <CodeSpans text={line.text} />
+        )}
       </span>
     </div>
   );
@@ -171,8 +181,12 @@ function buildSplitRows(hunks: DiffHunk[]): SplitRow[] {
           const wd = p < paired ? wordDiff(dl.text, ad.text) : null;
           rows.push({
             type: "pair",
-            left: dl ? { line: dl, word: wd && changedRatio(wd.a) <= SIMILARITY_CUTOFF ? wd.a : undefined } : null,
-            right: ad ? { line: ad, word: wd && changedRatio(wd.b) <= SIMILARITY_CUTOFF ? wd.b : undefined } : null,
+            left: dl
+              ? { line: dl, word: wd && changedRatio(wd.a) <= SIMILARITY_CUTOFF ? wd.a : undefined }
+              : null,
+            right: ad
+              ? { line: ad, word: wd && changedRatio(wd.b) <= SIMILARITY_CUTOFF ? wd.b : undefined }
+              : null,
           });
         }
         i = a;
@@ -212,7 +226,11 @@ function SplitHalf({ side, left }: { side: Side | null; left: boolean }) {
         {line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}
       </span>
       <span className="selectable min-w-0 whitespace-pre-wrap break-all pr-3 text-[var(--color-text)]">
-        {word ? <WordSpans segs={word} add={line.kind === "add"} /> : <CodeSpans text={line.text} />}
+        {word ? (
+          <WordSpans segs={word} add={line.kind === "add"} />
+        ) : (
+          <CodeSpans text={line.text} />
+        )}
       </span>
     </div>
   );
@@ -326,6 +344,7 @@ export function DiffEditor({
           </span>
         )}
         <button
+          type="button"
           className="icon-btn ml-auto h-7 w-7"
           data-active={effSplit}
           disabled={narrow}
@@ -340,7 +359,7 @@ export function DiffEditor({
         >
           <Columns2 size={14} />
         </button>
-        <button className="icon-btn h-7 w-7" onClick={onClose} title="Close">
+        <button type="button" className="icon-btn h-7 w-7" onClick={onClose} title="Close">
           <X size={14} />
         </button>
       </div>

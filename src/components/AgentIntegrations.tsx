@@ -74,9 +74,9 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
           Agent Integrations
         </h2>
         <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-muted)]">
-          swarm installs a small hook into each agent's config so turn-completion
-          notifications and session restore work — even for an agent you start by
-          hand in a shell. Review and toggle each one here.
+          swarm installs a small hook into each agent's config so turn-completion notifications and
+          session restore work — even for an agent you start by hand in a shell. Review and toggle
+          each one here.
         </p>
       </div>
 
@@ -104,11 +104,14 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                   <div className="border-t border-[var(--color-border)] p-3">
                     {!r.onPath && (
                       <p className="mb-2 text-[12px] text-[var(--color-muted)]">
-                        Not found on your PATH — the hook is harmless if installed, but the
-                        agent isn't available to launch.
+                        Not found on your PATH — the hook is harmless if installed, but the agent
+                        isn't available to launch.
                       </p>
                     )}
-                    <p className="mb-2 truncate text-[11.5px] text-[var(--color-faint)]" title={r.configPath}>
+                    <p
+                      className="mb-2 truncate text-[11.5px] text-[var(--color-faint)]"
+                      title={r.configPath}
+                    >
                       {r.isPlugin ? "Plugin file: " : "Config: "}
                       {r.configPath}
                     </p>
@@ -122,7 +125,13 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                         onClick={() => act(r.id, true)}
                         className="btn h-8 flex-1 text-[12.5px]"
                       >
-                        {busy ? <Loader2 size={13} className="spin" /> : r.isPlugin ? <FileCode2 size={13} /> : <Plus size={13} />}
+                        {busy ? (
+                          <Loader2 size={13} className="spin" />
+                        ) : r.isPlugin ? (
+                          <FileCode2 size={13} />
+                        ) : (
+                          <Plus size={13} />
+                        )}
                         {r.installed ? "Re-apply" : r.isPlugin ? "Create file" : "Apply"}
                       </button>
                       <button
@@ -180,7 +189,13 @@ function StatusBadge({ row }: { row: IntegrationStatus }) {
 
 // The before→after diff for the action the user is most likely to take: if it's
 // installed, show what Remove would do; otherwise what Apply would do.
-function DiffView({ preview, row }: { preview: IntegrationPreview | null; row: IntegrationStatus }) {
+function DiffView({
+  preview,
+  row,
+}: {
+  preview: IntegrationPreview | null;
+  row: IntegrationStatus;
+}) {
   if (!preview) {
     return (
       <p className="flex items-center gap-2 text-[12px] text-[var(--color-muted)]">
@@ -221,7 +236,9 @@ function DiffView({ preview, row }: { preview: IntegrationPreview | null; row: I
                   : undefined,
           }}
         >
-          <span className="select-none opacity-60">{l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  "}</span>
+          <span className="select-none opacity-60">
+            {l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  "}
+          </span>
           {l.text || " "}
         </div>
       ))}

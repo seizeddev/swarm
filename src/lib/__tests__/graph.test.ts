@@ -38,12 +38,7 @@ describe("buildGraph", () => {
 
   it("opens a second lane for a merge's additional parent", () => {
     // M is a merge of A and B; both descend from base.
-    const g = buildGraph([
-      c("M", ["A", "B"]),
-      c("A", ["base"]),
-      c("B", ["base"]),
-      c("base", []),
-    ]);
+    const g = buildGraph([c("M", ["A", "B"]), c("A", ["base"]), c("B", ["base"]), c("base", [])]);
     expect(g.cols).toBe(2);
     expect(g.index.get("M")).toEqual({ row: 0, col: 0 });
     expect(g.index.get("A")).toEqual({ row: 1, col: 0 });
@@ -64,12 +59,7 @@ describe("buildGraph", () => {
 
   it("does not duplicate a lane when two children share one parent already tracked", () => {
     // The shared parent must occupy exactly one lane.
-    const g = buildGraph([
-      c("M", ["A", "B"]),
-      c("A", ["base"]),
-      c("B", ["base"]),
-      c("base", []),
-    ]);
+    const g = buildGraph([c("M", ["A", "B"]), c("A", ["base"]), c("B", ["base"]), c("base", [])]);
     const baseLanes = g.rows.filter((r) => r.commit.oid === "base");
     expect(baseLanes).toHaveLength(1);
   });

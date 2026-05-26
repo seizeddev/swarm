@@ -39,7 +39,10 @@ export function PrView({
   const [detail, setDetail] = useState<PrDetail | null>(null);
   useEffect(() => {
     setDetail(null);
-    api.prDetail(repoPath, pr.number).then(setDetail).catch(() => setDetail(null));
+    api
+      .prDetail(repoPath, pr.number)
+      .then(setDetail)
+      .catch(() => setDetail(null));
   }, [repoPath, pr.number]);
 
   const checks = pr.checks ? `Checks ${pr.checks}` : "No checks";
@@ -52,7 +55,7 @@ export function PrView({
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
         <GitPullRequest size={15} style={{ color: checkColor(pr.checks) }} />
         <span className="nums text-[12.5px] text-[var(--color-muted)]">#{pr.number}</span>
-        <button className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
+        <button type="button" className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
           <X size={14} />
         </button>
       </div>
@@ -129,6 +132,7 @@ export function PrView({
           )}
 
           <button
+            type="button"
             className="btn btn-accent mt-8"
             onClick={() => openExternal(pr.url).catch(() => {})}
           >

@@ -69,7 +69,13 @@ GitHub Actions are pinned to **commit SHAs** (Dependabot keeps them current).
 Tokens are least-privilege (`contents: read` by default), and checkouts that don't
 push set `persist-credentials: false`. Merge gates: `cargo-deny` (RUSTSEC
 advisories + licence allowlist + sources + bans), `pnpm audit --audit-level=high`,
-and **CodeQL**. Releases publish **SLSA build provenance** for every artifact, and
+and **CodeQL**. npm dependencies are also **age-quarantined** (`minimumReleaseAge`
+in `pnpm-workspace.yaml`, 7 days) so a freshly published — possibly compromised —
+version can't be auto-pulled before it's had time to be flagged and unpublished
+(`trustPolicy: no-downgrade` additionally rejects updates whose provenance or
+signature signals have weakened); the fast-moving vite/rolldown toolchain is the
+lone documented exclusion from the age gate.
+Releases publish **SLSA build provenance** for every artifact, and
 **OpenSSF Scorecard** tracks posture. The release signing key is isolated to a
 protected Environment so a rogue matrix job can't read it.
 

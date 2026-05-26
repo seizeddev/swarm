@@ -117,7 +117,9 @@ body {
   /* Inter wants its optical sizing + ligatures on; a hair of negative tracking
      is what gives variable Inter its tight, designed look at UI sizes. */
   font-optical-sizing: auto;
-  font-feature-settings: "liga" 1, "calt" 1;
+  font-feature-settings:
+    "liga" 1,
+    "calt" 1;
   letter-spacing: -0.0035em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -317,7 +319,8 @@ svg.lucide {
     border: 0.5px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-row);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
-    transition: background var(--dur-fast) var(--ease-out),
+    transition:
+      background var(--dur-fast) var(--ease-out),
       border-color var(--dur-fast) var(--ease-out);
   }
   .row:hover {
@@ -353,7 +356,9 @@ svg.lucide {
     border: 0.5px solid rgba(255, 255, 255, 0.11);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
     cursor: pointer;
-    transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
   }
   .btn:hover {
     background: #2f2c28;
@@ -363,7 +368,9 @@ svg.lucide {
   }
   .btn:focus-visible {
     outline: none;
-    box-shadow: var(--focus-ring), inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+    box-shadow:
+      var(--focus-ring),
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
   }
 
   .btn.btn-accent {
@@ -395,7 +402,9 @@ svg.lucide {
     border-radius: var(--radius-chip);
     color: var(--color-muted);
     cursor: pointer;
-    transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
   .icon-btn:hover {
@@ -448,7 +457,9 @@ svg.lucide {
     outline: none;
     user-select: text;
     -webkit-user-select: text;
-    transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
   }
   .field::placeholder {
     color: var(--color-faint);
@@ -477,7 +488,9 @@ svg.lucide {
   /* Integer line-height: avoids sub-pixel accumulation that clipped the last row. */
   line-height: 17px;
   letter-spacing: 0;
-  font-feature-settings: "liga" 0, "calt" 0;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-variant-ligatures: none;
   white-space: pre;
   background: var(--color-bg-deep);

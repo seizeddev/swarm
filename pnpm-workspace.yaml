@@ -1,0 +1,16 @@
+# Supply-chain hardening: don't install a dependency version until it's had time
+# to be vetted. A freshly published version can ship malware that gets caught and
+# unpublished within hours; delaying installs by 7 days (10080 min) sidesteps that
+# window. pnpm reads its settings from this file since 10.16 (we're on 10.32).
+minimumReleaseAge: 10080
+# The vite/rolldown toolchain is intentionally tracked bleeding-edge (rolldown
+# ships native bindings within days of a vite bump), so quarantining it would
+# block every upgrade. Exempt just that family; the long tail — where a hijacked
+# obscure package is the real threat — still gets the 7-day vetting window.
+minimumReleaseAgeExclude:
+  - vite
+  - rolldown
+  - "@rolldown/*"
+# Reject any update whose trust signals (npm provenance / signatures) have
+# *weakened* vs the previous release — a classic sign of a hijacked package.
+trustPolicy: no-downgrade

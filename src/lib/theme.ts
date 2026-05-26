@@ -26,7 +26,9 @@ export function selectionCss(): string {
 // string, or null if unparseable. Alpha is ignored — the terminal surface is opaque.
 export function cssColorToHex(s: string): string | null {
   const str = s.trim();
-  const rgb = str.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*[\d.]+\s*)?\)$/i);
+  const rgb = str.match(
+    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*[\d.]+\s*)?\)$/i,
+  );
   if (rgb) {
     const r = Math.round(Number(rgb[1]));
     const g = Math.round(Number(rgb[2]));
@@ -38,7 +40,13 @@ export function cssColorToHex(s: string): string | null {
   if (m) {
     const h = m[1];
     if (h.length === 3) {
-      return ("#" + h.split("").map((c) => c + c).join("")).toLowerCase();
+      return (
+        "#" +
+        h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      ).toLowerCase();
     }
     return ("#" + h).toLowerCase();
   }
@@ -54,10 +62,22 @@ export function setTerminalSurface(bg: string): void {
 
 // 16 base colors — a calm, modern dark theme for the terminal's ANSI palette.
 const BASE16 = [
-  "#1b1b1f", "#ff6b81", "#46d39a", "#e8c474",
-  "#7c9dff", "#b288ff", "#5ad4d4", "#c7c7cf",
-  "#3a3a42", "#ff8095", "#6ce0b3", "#f0d390",
-  "#9bb4ff", "#c9a6ff", "#7fe6e6", "#f4f4f7",
+  "#1b1b1f",
+  "#ff6b81",
+  "#46d39a",
+  "#e8c474",
+  "#7c9dff",
+  "#b288ff",
+  "#5ad4d4",
+  "#c7c7cf",
+  "#3a3a42",
+  "#ff8095",
+  "#6ce0b3",
+  "#f0d390",
+  "#9bb4ff",
+  "#c9a6ff",
+  "#7fe6e6",
+  "#f4f4f7",
 ];
 
 function buildPalette(): string[] {
@@ -65,8 +85,7 @@ function buildPalette(): string[] {
   const steps = [0, 95, 135, 175, 215, 255];
   for (let r = 0; r < 6; r++)
     for (let g = 0; g < 6; g++)
-      for (let b = 0; b < 6; b++)
-        p.push(hex(steps[r], steps[g], steps[b]));
+      for (let b = 0; b < 6; b++) p.push(hex(steps[r], steps[g], steps[b]));
   for (let i = 0; i < 24; i++) {
     const v = 8 + i * 10;
     p.push(hex(v, v, v));

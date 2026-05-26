@@ -72,7 +72,10 @@ export class Canvas2DBackend implements RendererBackend {
         if (cellInRange({ col: x, row: y }, selection.start, selection.end)) {
           ctx.fillStyle = selectionCss();
           let run = x;
-          while (run < grid.cols && cellInRange({ col: run, row: y }, selection.start, selection.end))
+          while (
+            run < grid.cols &&
+            cellInRange({ col: run, row: y }, selection.start, selection.end)
+          )
             run++;
           ctx.fillRect(x * cellW, top, (run - x) * cellW, cellH);
           x = run;
@@ -84,7 +87,12 @@ export class Canvas2DBackend implements RendererBackend {
     if (hover && hover.row === y) {
       ctx.fillStyle = TERM_FG;
       const x0 = hover.startCol * cellW;
-      ctx.fillRect(x0, top + cellH - Math.max(1, Math.round(this.metrics.dpr)), (hover.endCol - hover.startCol + 1) * cellW, Math.max(1, Math.round(this.metrics.dpr)));
+      ctx.fillRect(
+        x0,
+        top + cellH - Math.max(1, Math.round(this.metrics.dpr)),
+        (hover.endCol - hover.startCol + 1) * cellW,
+        Math.max(1, Math.round(this.metrics.dpr)),
+      );
     }
   }
 

@@ -23,7 +23,10 @@ export function clampPanelWidth(px: number, innerWidth: number): number {
 
 // Clamp to the live window bounds and write it to the document.
 export function applyPanelWidth(px: number): void {
-  document.documentElement.style.setProperty("--panel-w", `${clampPanelWidth(px, window.innerWidth)}px`);
+  document.documentElement.style.setProperty(
+    "--panel-w",
+    `${clampPanelWidth(px, window.innerWidth)}px`,
+  );
 }
 
 // Current width as written to the DOM (falls back to the default).

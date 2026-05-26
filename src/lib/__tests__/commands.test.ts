@@ -9,7 +9,9 @@ vi.mock("../ipc", () => ({
     ghAvailable: vi.fn().mockResolvedValue(false),
   },
 }));
-vi.mock("../updater", () => ({ updater: { check: vi.fn(), downloadAndInstall: vi.fn(), relaunch: vi.fn() } }));
+vi.mock("../updater", () => ({
+  updater: { check: vi.fn(), downloadAndInstall: vi.fn(), relaunch: vi.fn() },
+}));
 vi.mock("../notify", () => ({ notifyOS: vi.fn() }));
 
 import { buildCommands, filterCommands, type CommandHandlers } from "../commands";
@@ -55,7 +57,10 @@ describe("buildCommands", () => {
 
   it("omits Close Project when no workspace is open, includes it otherwise", () => {
     expect(buildCommands(handlers()).some((c) => c.id === "close_workspace")).toBe(false);
-    useStore.setState({ workspaces: [{ id: "w1", repo: repo("a") } as any], activeWorkspaceId: "w1" });
+    useStore.setState({
+      workspaces: [{ id: "w1", repo: repo("a") } as any],
+      activeWorkspaceId: "w1",
+    });
     expect(buildCommands(handlers()).some((c) => c.id === "close_workspace")).toBe(true);
   });
 
@@ -75,7 +80,10 @@ describe("buildCommands", () => {
 
   it("dispatches every handler-backed command to the injected handlers", () => {
     const h = handlers();
-    useStore.setState({ workspaces: [{ id: "w1", repo: repo("a") } as any], activeWorkspaceId: "w1" });
+    useStore.setState({
+      workspaces: [{ id: "w1", repo: repo("a") } as any],
+      activeWorkspaceId: "w1",
+    });
     const cmds = buildCommands(h);
     const run = (id: string) => cmds.find((c) => c.id === id)!.run();
     run("new_workspace");
@@ -95,12 +103,17 @@ describe("buildCommands", () => {
   });
 
   it("runs the terminal + project store-action commands", () => {
-    useStore.setState({ workspaces: [{ id: "w1", repo: repo("a") } as any], activeWorkspaceId: "w1" });
+    useStore.setState({
+      workspaces: [{ id: "w1", repo: repo("a") } as any],
+      activeWorkspaceId: "w1",
+    });
     const cmds = buildCommands(handlers());
     const spies = {
       addPane: vi.spyOn(useStore.getState(), "addPane").mockImplementation(() => {}),
       splitActive: vi.spyOn(useStore.getState(), "splitActive").mockImplementation(() => {}),
-      closeActivePane: vi.spyOn(useStore.getState(), "closeActivePane").mockImplementation(() => {}),
+      closeActivePane: vi
+        .spyOn(useStore.getState(), "closeActivePane")
+        .mockImplementation(() => {}),
       setPanel: vi.spyOn(useStore.getState(), "setPanel").mockImplementation(() => {}),
       cycleWorkspace: vi.spyOn(useStore.getState(), "cycleWorkspace").mockImplementation(() => {}),
     };
@@ -128,7 +141,10 @@ describe("buildCommands", () => {
     cmds.find((c) => c.id === "toggle_sidebar")!.run();
     expect(useStore.getState().sidebarVisible).toBe(false);
 
-    useStore.setState({ workspaces: [{ id: "w9", repo: repo("z") } as any], activeWorkspaceId: null });
+    useStore.setState({
+      workspaces: [{ id: "w9", repo: repo("z") } as any],
+      activeWorkspaceId: null,
+    });
     buildCommands(handlers())
       .find((c) => c.id === "switch_ws_w9")!
       .run();

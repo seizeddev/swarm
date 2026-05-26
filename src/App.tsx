@@ -211,7 +211,10 @@ export default function App() {
       const { paths, position } = e.payload;
       if (!paths?.length) return;
       const dpr = window.devicePixelRatio || 1;
-      const el = document.elementFromPoint(position.x / dpr, position.y / dpr) as HTMLElement | null;
+      const el = document.elementFromPoint(
+        position.x / dpr,
+        position.y / dpr,
+      ) as HTMLElement | null;
       const paneId = el?.closest<HTMLElement>("[data-pane-id]")?.getAttribute("data-pane-id");
       if (paneId) dispatchDrop(paneId, paths);
     });

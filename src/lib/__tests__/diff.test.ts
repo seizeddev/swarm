@@ -4,7 +4,10 @@ import { lineDiff, tokenize, wordDiff } from "../diff";
 
 const text = (segs: { text: string }[]) => segs.map((s) => s.text).join("");
 const changed = (segs: { text: string; changed: boolean }[]) =>
-  segs.filter((s) => s.changed).map((s) => s.text).join("");
+  segs
+    .filter((s) => s.changed)
+    .map((s) => s.text)
+    .join("");
 
 describe("wordDiff", () => {
   it("reconstructs both sides exactly", () => {
@@ -39,11 +42,17 @@ describe("wordDiff", () => {
 
 describe("tokenize", () => {
   const kinds = (line: string, kind: string) =>
-    tokenize(line).filter((t) => t.kind === kind).map((t) => t.text);
+    tokenize(line)
+      .filter((t) => t.kind === kind)
+      .map((t) => t.text);
 
   it("losslessly covers the input", () => {
-    const line = 'const n = 42; // note';
-    expect(tokenize(line).map((t) => t.text).join("")).toBe(line);
+    const line = "const n = 42; // note";
+    expect(
+      tokenize(line)
+        .map((t) => t.text)
+        .join(""),
+    ).toBe(line);
   });
 
   it("classifies keywords, numbers, strings and comments", () => {

@@ -97,6 +97,8 @@ pnpm tauri build
 | `pnpm test` | Run the frontend unit tests (Vitest) once. |
 | `pnpm test:watch` | Frontend tests in watch mode. |
 | `pnpm test:coverage` | Frontend tests with the 85 % coverage gate (what CI enforces). |
+| `pnpm format` | Format frontend TS/TSX/CSS with Prettier (writes in place). |
+| `pnpm format:check` | Verify formatting without writing (what CI enforces). |
 | `cargo test` | Rust unit + integration tests. Run from `src-tauri/`. |
 | `cargo clippy --all-targets -- -D warnings` | Rust lints, warnings-as-errors. From `src-tauri/`. |
 | `cargo fmt --check` | Rust formatting check. From `src-tauri/`. |
@@ -204,6 +206,7 @@ One ordering gotcha: **build the frontend before the Rust steps** — Tauri's
 ```bash
 # Frontend gate
 pnpm install --frozen-lockfile
+pnpm format:check     # Prettier (frontend TS/TSX/CSS); run `pnpm format` to fix
 pnpm test:coverage
 pnpm build            # tsc typecheck + Vite build → dist/ (also needed by Rust below)
 

@@ -110,6 +110,7 @@ export function Workspace() {
               )}
               {split && shown && (
                 <button
+                  type="button"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -204,7 +205,11 @@ export function Workspace() {
                 Open a terminal to start an agent or shell in{" "}
                 <span className="text-[var(--color-text)]">{ws.repo.name}</span>.
               </p>
-              <button className="btn btn-accent mx-auto mt-5" onClick={() => addPane()}>
+              <button
+                type="button"
+                className="btn btn-accent mx-auto mt-5"
+                onClick={() => addPane()}
+              >
                 <Plus size={15} /> Open a terminal
               </button>
             </div>

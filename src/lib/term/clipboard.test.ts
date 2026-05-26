@@ -89,7 +89,9 @@ describe("pickClipboardImage", () => {
 
   it("falls back to files when items has no usable image", () => {
     const f = new File([new Uint8Array([9])], "y.jpg", { type: "image/jpeg" });
-    const got = pickClipboardImage(dt({ items: [{ kind: "string", type: "text/plain" }], files: [f] }));
+    const got = pickClipboardImage(
+      dt({ items: [{ kind: "string", type: "text/plain" }], files: [f] }),
+    );
     expect(got?.file).toBe(f);
     expect(got?.ext).toBe("jpg");
   });

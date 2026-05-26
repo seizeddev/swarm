@@ -12,7 +12,15 @@
 // redraw allocation-free, the per-frame instance data is written into reused scratch
 // Float32Arrays (grown on demand) and uploaded with the WebGL2 `bufferData`
 // offset/length overload — no `number[]` churn, no `new Float32Array` per frame.
-import { F_DIM, F_HIDDEN, F_INVERSE, resolveColor, TERM_BG, TERM_FG, TERM_SELECTION } from "../theme";
+import {
+  F_DIM,
+  F_HIDDEN,
+  F_INVERSE,
+  resolveColor,
+  TERM_BG,
+  TERM_FG,
+  TERM_SELECTION,
+} from "../theme";
 import type { CellMetrics } from "./metrics";
 import type { GlyphAtlas } from "./atlas";
 import type { RenderFrame, RendererBackend } from "./renderer";
@@ -311,8 +319,14 @@ export class WebGL2Backend implements RendererBackend {
         const chars = [...run.text];
         if (bgc !== TERM_BG) {
           const [r, g, b] = parseHex(bgc);
-          solid[si++] = col; solid[si++] = y; solid[si++] = chars.length; solid[si++] = 1;
-          solid[si++] = r; solid[si++] = g; solid[si++] = b; solid[si++] = 1;
+          solid[si++] = col;
+          solid[si++] = y;
+          solid[si++] = chars.length;
+          solid[si++] = 1;
+          solid[si++] = r;
+          solid[si++] = g;
+          solid[si++] = b;
+          solid[si++] = 1;
         }
         if (!hidden) {
           for (const ch of chars) {
@@ -323,8 +337,14 @@ export class WebGL2Backend implements RendererBackend {
               const v0 = slot.y / ATLAS_PX;
               const u1 = (slot.x + (slot.wide ? cellW * 2 : cellW)) / ATLAS_PX;
               const v1 = (slot.y + cellH) / ATLAS_PX;
-              glyphs[gi++] = col; glyphs[gi++] = y; glyphs[gi++] = span; glyphs[gi++] = 1;
-              glyphs[gi++] = u0; glyphs[gi++] = v0; glyphs[gi++] = u1; glyphs[gi++] = v1;
+              glyphs[gi++] = col;
+              glyphs[gi++] = y;
+              glyphs[gi++] = span;
+              glyphs[gi++] = 1;
+              glyphs[gi++] = u0;
+              glyphs[gi++] = v0;
+              glyphs[gi++] = u1;
+              glyphs[gi++] = v1;
               glyphs[gi++] = alpha;
             }
             col++;
@@ -352,7 +372,9 @@ export class WebGL2Backend implements RendererBackend {
     let oi = 0;
     if (selection) {
       const { r, g, b, a } = TERM_SELECTION;
-      const sr = r / 255, sg = g / 255, sb = b / 255;
+      const sr = r / 255,
+        sg = g / 255,
+        sb = b / 255;
       for (let y = selection.start.row; y <= selection.end.row; y++) {
         let x = 0;
         while (x < grid.cols) {
@@ -361,18 +383,33 @@ export class WebGL2Backend implements RendererBackend {
             continue;
           }
           let run = x;
-          while (run < grid.cols && cellInRange({ col: run, row: y }, selection.start, selection.end))
+          while (
+            run < grid.cols &&
+            cellInRange({ col: run, row: y }, selection.start, selection.end)
+          )
             run++;
-          solid[oi++] = x; solid[oi++] = y; solid[oi++] = run - x; solid[oi++] = 1;
-          solid[oi++] = sr; solid[oi++] = sg; solid[oi++] = sb; solid[oi++] = a;
+          solid[oi++] = x;
+          solid[oi++] = y;
+          solid[oi++] = run - x;
+          solid[oi++] = 1;
+          solid[oi++] = sr;
+          solid[oi++] = sg;
+          solid[oi++] = sb;
+          solid[oi++] = a;
           x = run;
         }
       }
     }
     if (grid.cursorVisible && grid.cursorY >= 0 && grid.cursorY < grid.rows) {
       const [cr, cg, cb] = parseHex(TERM_FG);
-      solid[oi++] = grid.cursorX; solid[oi++] = grid.cursorY; solid[oi++] = 1; solid[oi++] = 1;
-      solid[oi++] = cr; solid[oi++] = cg; solid[oi++] = cb; solid[oi++] = frame.focused ? 0.85 : 0.32;
+      solid[oi++] = grid.cursorX;
+      solid[oi++] = grid.cursorY;
+      solid[oi++] = 1;
+      solid[oi++] = 1;
+      solid[oi++] = cr;
+      solid[oi++] = cg;
+      solid[oi++] = cb;
+      solid[oi++] = frame.focused ? 0.85 : 0.32;
     }
     if (oi) {
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -387,7 +424,11 @@ export class WebGL2Backend implements RendererBackend {
     const gl = this.gl;
     gl.useProgram(this.solidProg);
     gl.uniform2f(gl.getUniformLocation(this.solidProg, "u_resolution"), w, h);
-    gl.uniform2f(gl.getUniformLocation(this.solidProg, "u_cell"), this.metrics.cellW, this.metrics.cellH);
+    gl.uniform2f(
+      gl.getUniformLocation(this.solidProg, "u_cell"),
+      this.metrics.cellW,
+      this.metrics.cellH,
+    );
     gl.bindVertexArray(this.solidVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.solidInst);
     gl.bufferData(gl.ARRAY_BUFFER, scratch, gl.DYNAMIC_DRAW, 0, floatCount);
@@ -400,7 +441,11 @@ export class WebGL2Backend implements RendererBackend {
     const gl = this.gl;
     gl.useProgram(this.glyphProg);
     gl.uniform2f(gl.getUniformLocation(this.glyphProg, "u_resolution"), w, h);
-    gl.uniform2f(gl.getUniformLocation(this.glyphProg, "u_cell"), this.metrics.cellW, this.metrics.cellH);
+    gl.uniform2f(
+      gl.getUniformLocation(this.glyphProg, "u_cell"),
+      this.metrics.cellW,
+      this.metrics.cellH,
+    );
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.uniform1i(gl.getUniformLocation(this.glyphProg, "u_atlas"), 0);

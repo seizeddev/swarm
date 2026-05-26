@@ -40,25 +40,85 @@ export function buildCommands(h: CommandHandlers): Command[] {
   const cmds: Command[] = [
     // ── Projects ──────────────────────────────────────────────────────────────
     { id: "new_workspace", label: "New Project…", group: "Projects", run: h.newWorkspace },
-    { id: "ws_next", label: "Next Project", group: "Projects", run: () => useStore.getState().cycleWorkspace(1) },
-    { id: "ws_prev", label: "Previous Project", group: "Projects", run: () => useStore.getState().cycleWorkspace(-1) },
+    {
+      id: "ws_next",
+      label: "Next Project",
+      group: "Projects",
+      run: () => useStore.getState().cycleWorkspace(1),
+    },
+    {
+      id: "ws_prev",
+      label: "Previous Project",
+      group: "Projects",
+      run: () => useStore.getState().cycleWorkspace(-1),
+    },
     // ── Terminals ─────────────────────────────────────────────────────────────
-    { id: "new_terminal", label: "New Terminal", group: "Terminals", run: () => useStore.getState().addPane() },
-    { id: "split_right", label: "Split Right", group: "Terminals", run: () => useStore.getState().splitActive("row") },
-    { id: "split_down", label: "Split Down", group: "Terminals", run: () => useStore.getState().splitActive("col") },
-    { id: "close_pane", label: "Close Terminal", group: "Terminals", run: () => useStore.getState().closeActivePane() },
+    {
+      id: "new_terminal",
+      label: "New Terminal",
+      group: "Terminals",
+      run: () => useStore.getState().addPane(),
+    },
+    {
+      id: "split_right",
+      label: "Split Right",
+      group: "Terminals",
+      run: () => useStore.getState().splitActive("row"),
+    },
+    {
+      id: "split_down",
+      label: "Split Down",
+      group: "Terminals",
+      run: () => useStore.getState().splitActive("col"),
+    },
+    {
+      id: "close_pane",
+      label: "Close Terminal",
+      group: "Terminals",
+      run: () => useStore.getState().closeActivePane(),
+    },
     // ── View ──────────────────────────────────────────────────────────────────
-    { id: "toggle_sidebar", label: "Toggle Sidebar", group: "View", run: () => useStore.getState().toggleSidebar() },
-    { id: "panel_scm", label: "Source Control", group: "View", run: () => useStore.getState().setPanel("scm") },
-    { id: "panel_history", label: "History", group: "View", run: () => useStore.getState().setPanel("history") },
-    { id: "panel_prs", label: "Pull Requests", group: "View", run: () => useStore.getState().setPanel("prs") },
-    { id: "panel_notifications", label: "Notifications", group: "View", run: () => useStore.getState().setPanel("notifications") },
+    {
+      id: "toggle_sidebar",
+      label: "Toggle Sidebar",
+      group: "View",
+      run: () => useStore.getState().toggleSidebar(),
+    },
+    {
+      id: "panel_scm",
+      label: "Source Control",
+      group: "View",
+      run: () => useStore.getState().setPanel("scm"),
+    },
+    {
+      id: "panel_history",
+      label: "History",
+      group: "View",
+      run: () => useStore.getState().setPanel("history"),
+    },
+    {
+      id: "panel_prs",
+      label: "Pull Requests",
+      group: "View",
+      run: () => useStore.getState().setPanel("prs"),
+    },
+    {
+      id: "panel_notifications",
+      label: "Notifications",
+      group: "View",
+      run: () => useStore.getState().setPanel("notifications"),
+    },
     { id: "zoom_in", label: "Zoom In", group: "View", run: h.zoomIn },
     { id: "zoom_out", label: "Zoom Out", group: "View", run: h.zoomOut },
     { id: "zoom_reset", label: "Actual Size", group: "View", run: h.zoomReset },
     { id: "shortcuts", label: "Keyboard Shortcuts", group: "View", run: h.openShortcuts },
     // ── Agents ────────────────────────────────────────────────────────────────
-    { id: "agent_integrations", label: "Agent Integrations…", group: "Agents", run: h.openIntegrations },
+    {
+      id: "agent_integrations",
+      label: "Agent Integrations…",
+      group: "Agents",
+      run: h.openIntegrations,
+    },
   ];
 
   // "Close Project" only when one is open (it acts on the active workspace).

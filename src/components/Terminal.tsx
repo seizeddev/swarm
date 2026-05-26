@@ -6,17 +6,39 @@ import { Grid } from "../lib/term/grid";
 import { measureCell, type CellMetrics } from "../lib/term/metrics";
 import { GlyphAtlas } from "../lib/term/atlas";
 import { createRenderer, type RendererBackend, type RenderFrame } from "../lib/term/renderer";
-import { encodeKey, encodeMouse, focusEvent, reportsMouse, wheelFallback, wrapPaste } from "../lib/term/input";
+import {
+  encodeKey,
+  encodeMouse,
+  focusEvent,
+  reportsMouse,
+  wheelFallback,
+  wrapPaste,
+} from "../lib/term/input";
 import { bytesToBase64, pickClipboardImage } from "../lib/term/clipboard";
 import { wheelScrollsBuffer } from "../lib/term/mode";
-import { pixelToCell, orderCells, expandWord, expandLine, rowText, type Cell } from "../lib/term/select";
+import {
+  pixelToCell,
+  orderCells,
+  expandWord,
+  expandLine,
+  rowText,
+  type Cell,
+} from "../lib/term/select";
 import { openExternal } from "../lib/external";
 import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { joinPaths, registerDrop } from "../lib/drop";
-import { ClipboardPaste, Copy, Eraser, Loader2, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
+import {
+  ClipboardPaste,
+  Copy,
+  Eraser,
+  Loader2,
+  SplitSquareHorizontal,
+  SplitSquareVertical,
+  X,
+} from "lucide-react";
 import type { WireUpdate } from "../lib/types";
 
 // `visible` = this pane is on screen (a split shows every leaf at once, so all of
@@ -133,7 +155,8 @@ export function Terminal({
     else atlasRef.current.reset(m);
     if (!rendererRef.current) {
       const canvas = canvasRef.current;
-      if (canvas) rendererRef.current = createRenderer(canvas, m, atlasRef.current, rebuildRenderer);
+      if (canvas)
+        rendererRef.current = createRenderer(canvas, m, atlasRef.current, rebuildRenderer);
     } else {
       rendererRef.current.setMetrics(m, atlasRef.current);
     }
@@ -460,7 +483,11 @@ export function Terminal({
     const id = ptyIdRef.current;
     if (!sel || !id) return;
     try {
-      const text = await api.ptySelectionText(id, [sel.start.row, sel.start.col], [sel.end.row, sel.end.col]);
+      const text = await api.ptySelectionText(
+        id,
+        [sel.start.row, sel.start.col],
+        [sel.end.row, sel.end.col],
+      );
       if (text) await navigator.clipboard?.writeText(text);
     } catch {
       /* clipboard denied — nothing to do */
@@ -570,10 +597,18 @@ export function Terminal({
     const g = gridRef.current;
     if (!canvas) return null;
     const r = canvas.getBoundingClientRect();
-    return pixelToCell(e.clientX - r.left, e.clientY - r.top, cssCell.current.w, cssCell.current.h, g.cols, g.rows);
+    return pixelToCell(
+      e.clientX - r.left,
+      e.clientY - r.top,
+      cssCell.current.w,
+      cssCell.current.h,
+      g.cols,
+      g.rows,
+    );
   };
 
-  const linkAt = (cell: Cell): string | undefined => gridRef.current.runAt(cell.col, cell.row)?.link;
+  const linkAt = (cell: Cell): string | undefined =>
+    gridRef.current.runAt(cell.col, cell.row)?.link;
 
   const onMouseDown = (e: React.MouseEvent) => {
     wrapRef.current?.focus();
@@ -597,7 +632,15 @@ export function Terminal({
     // use a right-click, and Copy/Paste is worth more than the report.
     if (id && reportsMouse(g.mode) && e.button !== 2) {
       const seq = encodeMouse(
-        { type: "press", button: e.button, col: cell.col, row: cell.row, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey },
+        {
+          type: "press",
+          button: e.button,
+          col: cell.col,
+          row: cell.row,
+          shift: e.shiftKey,
+          alt: e.altKey,
+          ctrl: e.ctrlKey,
+        },
         g.mode,
       );
       if (seq) {
@@ -612,13 +655,19 @@ export function Terminal({
     if (e.detail >= 3) {
       const text = rowText(g.lines[cell.row]);
       const { startCol, endCol } = expandLine(text, g.cols);
-      selRef.current = { start: { col: startCol, row: cell.row }, end: { col: endCol, row: cell.row } };
+      selRef.current = {
+        start: { col: startCol, row: cell.row },
+        end: { col: endCol, row: cell.row },
+      };
       draggingRef.current = false;
       void copySelection();
     } else if (e.detail === 2) {
       const text = rowText(g.lines[cell.row]);
       const { startCol, endCol } = expandWord(text, cell.col);
-      selRef.current = { start: { col: startCol, row: cell.row }, end: { col: endCol, row: cell.row } };
+      selRef.current = {
+        start: { col: startCol, row: cell.row },
+        end: { col: endCol, row: cell.row },
+      };
       draggingRef.current = false;
       void copySelection();
     } else {
@@ -656,7 +705,15 @@ export function Terminal({
       scheduleRender();
     } else if (id && reportsMouse(g.mode) && e.buttons) {
       const seq = encodeMouse(
-        { type: "move", button: 0, col: cell.col, row: cell.row, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey },
+        {
+          type: "move",
+          button: 0,
+          col: cell.col,
+          row: cell.row,
+          shift: e.shiftKey,
+          alt: e.altKey,
+          ctrl: e.ctrlKey,
+        },
         g.mode,
       );
       if (seq) api.ptyWrite(id, seq);
@@ -669,7 +726,15 @@ export function Terminal({
     const cell = eventCell(e);
     if (id && reportsMouse(g.mode) && cell) {
       const seq = encodeMouse(
-        { type: "release", button: e.button, col: cell.col, row: cell.row, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey },
+        {
+          type: "release",
+          button: e.button,
+          col: cell.col,
+          row: cell.row,
+          shift: e.shiftKey,
+          alt: e.altKey,
+          ctrl: e.ctrlKey,
+        },
         g.mode,
       );
       if (seq) api.ptyWrite(id, seq);
@@ -690,7 +755,16 @@ export function Terminal({
     if (reportsMouse(g.mode)) {
       const cell = eventCell(e as unknown as React.MouseEvent);
       const seq = encodeMouse(
-        { type: "wheel", button: 0, col: cell?.col ?? 0, row: cell?.row ?? 0, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, wheelUp: up },
+        {
+          type: "wheel",
+          button: 0,
+          col: cell?.col ?? 0,
+          row: cell?.row ?? 0,
+          shift: e.shiftKey,
+          alt: e.altKey,
+          ctrl: e.ctrlKey,
+          wheelUp: up,
+        },
         g.mode,
       );
       if (seq) api.ptyWrite(id, seq.repeat(lines));
@@ -718,7 +792,11 @@ export function Terminal({
         disabled: !selRef.current,
         onClick: () => void copySelection(),
       },
-      { label: "Paste", icon: <ClipboardPaste size={14} />, onClick: () => void pasteFromClipboard() },
+      {
+        label: "Paste",
+        icon: <ClipboardPaste size={14} />,
+        onClick: () => void pasteFromClipboard(),
+      },
       { kind: "separator" },
       {
         label: "Clear",

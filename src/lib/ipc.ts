@@ -42,8 +42,7 @@ export const api = {
     invoke<string>("commit", { worktreePath, message }),
   discard: (worktreePath: string, paths: string[]) =>
     invoke<void>("discard", { worktreePath, paths }),
-  checkoutRef: (repoPath: string, name: string) =>
-    invoke<void>("checkout_ref", { repoPath, name }),
+  checkoutRef: (repoPath: string, name: string) => invoke<void>("checkout_ref", { repoPath, name }),
   createBranch: (repoPath: string, name: string, start: string) =>
     invoke<void>("create_branch", { repoPath, name, start }),
   resetTo: (repoPath: string, oid: string, mode: "soft" | "mixed" | "hard") =>
@@ -65,14 +64,11 @@ export const api = {
   claudeSessionExists: (id: string) => invoke<boolean>("claude_session_exists", { id }),
   swarmBin: () => invoke<string>("swarm_bin"),
   installAgentHooks: () => invoke<void>("install_agent_hooks"),
-  agentIntegrationsStatus: () =>
-    invoke<IntegrationStatus[]>("agent_integrations_status"),
+  agentIntegrationsStatus: () => invoke<IntegrationStatus[]>("agent_integrations_status"),
   agentIntegrationPreview: (agent: string) =>
     invoke<IntegrationPreview>("agent_integration_preview", { agent }),
-  agentIntegrationApply: (agent: string) =>
-    invoke<void>("agent_integration_apply", { agent }),
-  agentIntegrationRemove: (agent: string) =>
-    invoke<void>("agent_integration_remove", { agent }),
+  agentIntegrationApply: (agent: string) => invoke<void>("agent_integration_apply", { agent }),
+  agentIntegrationRemove: (agent: string) => invoke<void>("agent_integration_remove", { agent }),
   notifyOs: (
     title: string,
     body: string,

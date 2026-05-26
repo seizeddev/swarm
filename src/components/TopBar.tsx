@@ -27,7 +27,12 @@ function AgentMenu() {
   }, []);
   return (
     <div ref={ref} className="relative">
-      <button className="icon-btn h-7 w-7" title="New terminal" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="icon-btn h-7 w-7"
+        title="New terminal"
+        onClick={() => setOpen((v) => !v)}
+      >
         <Plus size={14} />
       </button>
       {open && (
@@ -36,6 +41,7 @@ function AgentMenu() {
             Spawn
           </p>
           <button
+            type="button"
             onClick={() => {
               addPane();
               setOpen(false);
@@ -48,22 +54,25 @@ function AgentMenu() {
           {agents
             .filter((a) => a.name.toLowerCase() !== "shell")
             .map((a: AgentDef) => (
-            <button
-              key={a.id}
-              onClick={() => {
-                addPane(a);
-                setOpen(false);
-              }}
-              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
-            >
-              <span
-                className="h-2 w-2 flex-none rounded-full"
-                style={{ background: a.installed ? "var(--color-text)" : "var(--color-faint)" }}
-              />
-              <span className="flex-1">{a.name}</span>
-              {!a.installed && <span className="text-[10px] text-[var(--color-faint)]">missing</span>}
-            </button>
-          ))}
+              <button
+                type="button"
+                key={a.id}
+                onClick={() => {
+                  addPane(a);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+              >
+                <span
+                  className="h-2 w-2 flex-none rounded-full"
+                  style={{ background: a.installed ? "var(--color-text)" : "var(--color-faint)" }}
+                />
+                <span className="flex-1">{a.name}</span>
+                {!a.installed && (
+                  <span className="text-[10px] text-[var(--color-faint)]">missing</span>
+                )}
+              </button>
+            ))}
         </div>
       )}
     </div>
@@ -221,6 +230,7 @@ export function TopBar() {
                 )}
                 {attn && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ATTN }} />}
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     ids.forEach((id) => removePane(id));
@@ -243,6 +253,7 @@ export function TopBar() {
           <div className="flex flex-none items-center gap-0.5">
             <AgentMenu />
             <button
+              type="button"
               className="icon-btn h-7 w-7"
               title="Split right"
               onClick={() => splitActive("row")}
@@ -250,6 +261,7 @@ export function TopBar() {
               <SplitSquareHorizontal size={14} />
             </button>
             <button
+              type="button"
               className="icon-btn h-7 w-7"
               title="Split down"
               onClick={() => splitActive("col")}

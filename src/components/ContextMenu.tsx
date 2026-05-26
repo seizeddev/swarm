@@ -97,6 +97,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
           );
         return (
           <button
+            type="button"
             key={i}
             role="menuitem"
             disabled={item.disabled}

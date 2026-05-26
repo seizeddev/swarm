@@ -21,7 +21,14 @@ import {
 } from "../term/mode";
 
 const ev = (p: Partial<KeyboardEvent>): KeyboardEvent =>
-  ({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, location: 0, ...p }) as KeyboardEvent;
+  ({
+    shiftKey: false,
+    ctrlKey: false,
+    altKey: false,
+    metaKey: false,
+    location: 0,
+    ...p,
+  }) as KeyboardEvent;
 
 describe("encodeKey — modes", () => {
   it("ignores ⌘ combinations (left to the app)", () => {
@@ -82,29 +89,92 @@ describe("encodeMouse", () => {
   const sgrMode = M_MOUSE_REPORT_CLICK | M_SGR_MOUSE;
 
   it("returns null for a click when no mouse mode is on", () => {
-    expect(encodeMouse({ type: "press", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false }, 0)).toBeNull();
+    expect(
+      encodeMouse(
+        { type: "press", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false },
+        0,
+      ),
+    ).toBeNull();
   });
 
   it("SGR 1006 press/release with 1-based coords and M/m finals", () => {
-    expect(encodeMouse({ type: "press", button: 0, col: 4, row: 2, shift: false, alt: false, ctrl: false }, sgrMode)).toBe("\x1b[<0;5;3M");
-    expect(encodeMouse({ type: "release", button: 0, col: 4, row: 2, shift: false, alt: false, ctrl: false }, sgrMode)).toBe("\x1b[<0;5;3m");
+    expect(
+      encodeMouse(
+        { type: "press", button: 0, col: 4, row: 2, shift: false, alt: false, ctrl: false },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<0;5;3M");
+    expect(
+      encodeMouse(
+        { type: "release", button: 0, col: 4, row: 2, shift: false, alt: false, ctrl: false },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<0;5;3m");
   });
 
   it("SGR adds the motion bit and modifier bits", () => {
-    expect(encodeMouse({ type: "move", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false }, sgrMode)).toBe("\x1b[<32;1;1M");
-    expect(encodeMouse({ type: "press", button: 2, col: 0, row: 0, shift: true, alt: true, ctrl: true }, sgrMode)).toBe("\x1b[<30;1;1M"); // 2+4+8+16
+    expect(
+      encodeMouse(
+        { type: "move", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<32;1;1M");
+    expect(
+      encodeMouse(
+        { type: "press", button: 2, col: 0, row: 0, shift: true, alt: true, ctrl: true },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<30;1;1M"); // 2+4+8+16
   });
 
   it("wheel up/down encode 64/65", () => {
-    expect(encodeMouse({ type: "wheel", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false, wheelUp: true }, sgrMode)).toBe("\x1b[<64;1;1M");
-    expect(encodeMouse({ type: "wheel", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false, wheelUp: false }, sgrMode)).toBe("\x1b[<65;1;1M");
+    expect(
+      encodeMouse(
+        {
+          type: "wheel",
+          button: 0,
+          col: 0,
+          row: 0,
+          shift: false,
+          alt: false,
+          ctrl: false,
+          wheelUp: true,
+        },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<64;1;1M");
+    expect(
+      encodeMouse(
+        {
+          type: "wheel",
+          button: 0,
+          col: 0,
+          row: 0,
+          shift: false,
+          alt: false,
+          ctrl: false,
+          wheelUp: false,
+        },
+        sgrMode,
+      ),
+    ).toBe("\x1b[<65;1;1M");
   });
 
   it("legacy X10 encoding when SGR is not negotiated", () => {
     // press left at (0,0): CSI M, button 0+32=' ', x 1+32='!', y 1+32='!'
-    expect(encodeMouse({ type: "press", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false }, clickMode)).toBe("\x1b[M !!");
+    expect(
+      encodeMouse(
+        { type: "press", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false },
+        clickMode,
+      ),
+    ).toBe("\x1b[M !!");
     // release reports button 3 (35='#')
-    expect(encodeMouse({ type: "release", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false }, clickMode)).toBe("\x1b[M#!!");
+    expect(
+      encodeMouse(
+        { type: "release", button: 0, col: 0, row: 0, shift: false, alt: false, ctrl: false },
+        clickMode,
+      ),
+    ).toBe("\x1b[M#!!");
   });
 });
 

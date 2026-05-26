@@ -66,6 +66,7 @@ export function CommandPalette({
         <Search size={16} className="flex-none text-[var(--color-faint)]" />
         <input
           ref={inputRef}
+          aria-label="Command search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}

@@ -67,7 +67,8 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
   const { menu, open: openMenu, close: closeMenu } = useContextMenu();
   const meta = statusMeta[f.status];
   const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
-  const active = ws?.editor.type === "diff" && ws.editor.file === f.path && ws.editor.staged === staged;
+  const active =
+    ws?.editor.type === "diff" && ws.editor.file === f.path && ws.editor.staged === staged;
 
   // Absolute path for reveal/copy — repo.path is the canonical workdir.
   const abs = ws ? `${ws.repo.path}/${f.path}` : f.path;
@@ -103,6 +104,7 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
       {dir && <span className="truncate text-[11px] text-[var(--color-faint)]">{dir}</span>}
       <span className="ml-auto flex items-center gap-1.5">
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             staged ? unstage(f.path) : stage(f.path);
@@ -112,7 +114,10 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
         >
           {staged ? <Minus size={13} /> : <Plus size={13} />}
         </button>
-        <span className="w-3 text-center font-mono text-[12px] font-bold" style={{ color: meta.color }}>
+        <span
+          className="w-3 text-center font-mono text-[12px] font-bold"
+          style={{ color: meta.color }}
+        >
           {meta.letter}
         </span>
       </span>
@@ -140,13 +145,19 @@ export function SourceControlPanel() {
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Source Control">
-        <button className="icon-btn h-7 w-7" title="Refresh" onClick={() => refreshStatus()}>
+        <button
+          type="button"
+          className="icon-btn h-7 w-7"
+          title="Refresh"
+          onClick={() => refreshStatus()}
+        >
           <RefreshCw size={14} />
         </button>
       </PanelHeader>
 
       <div className="px-3">
         <textarea
+          aria-label="Commit message"
           className="field h-[68px] resize-none"
           placeholder="Message (⌘Enter to commit)"
           value={ws.commitMsg}
@@ -156,11 +167,13 @@ export function SourceControlPanel() {
           }}
         />
         <button
+          type="button"
           className="btn btn-accent mt-2 w-full"
           disabled={busy || !ws.commitMsg.trim() || ws.changes.length === 0}
           onClick={() => commit()}
         >
-          <GitCommitHorizontal size={15} /> Commit{staged.length ? ` ${staged.length} staged` : " all"}
+          <GitCommitHorizontal size={15} /> Commit
+          {staged.length ? ` ${staged.length} staged` : " all"}
         </button>
       </div>
 
@@ -171,7 +184,12 @@ export function SourceControlPanel() {
               <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                 Staged ({staged.length})
               </span>
-              <button className="icon-btn h-6 w-6" title="Unstage all" onClick={() => unstageAll()}>
+              <button
+                type="button"
+                className="icon-btn h-6 w-6"
+                title="Unstage all"
+                onClick={() => unstageAll()}
+              >
                 <Minus size={13} />
               </button>
             </div>
@@ -186,7 +204,12 @@ export function SourceControlPanel() {
             Changes ({unstaged.length})
           </span>
           {unstaged.length > 0 && (
-            <button className="icon-btn h-6 w-6" title="Stage all" onClick={() => stageAll()}>
+            <button
+              type="button"
+              className="icon-btn h-6 w-6"
+              title="Stage all"
+              onClick={() => stageAll()}
+            >
               <Plus size={13} />
             </button>
           )}
@@ -251,7 +274,11 @@ export function PullRequestsPanel() {
       onContextMenu={(e) => openMenu(e, prMenu(p))}
       className="row mb-1.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5"
     >
-      <GitPullRequest size={15} className="mt-0.5 flex-none" style={{ color: checkColor(p.checks) }} />
+      <GitPullRequest
+        size={15}
+        className="mt-0.5 flex-none"
+        style={{ color: checkColor(p.checks) }}
+      />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium">{p.title}</span>
         <span className="nums mt-0.5 block truncate text-[11px] text-[var(--color-muted)]">
@@ -265,7 +292,12 @@ export function PullRequestsPanel() {
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Pull Requests">
-        <button className="icon-btn h-7 w-7" title="Refresh" onClick={() => loadPrs(undefined, true)}>
+        <button
+          type="button"
+          className="icon-btn h-7 w-7"
+          title="Refresh"
+          onClick={() => loadPrs(undefined, true)}
+        >
           <RefreshCw size={14} />
         </button>
       </PanelHeader>
@@ -347,7 +379,12 @@ export function NotificationsPanel() {
     <div className="flex h-full flex-col">
       <PanelHeader title="Notifications">
         {notifications.length > 0 && (
-          <button className="icon-btn h-7 w-7" title="Clear all" onClick={() => clearNotifications()}>
+          <button
+            type="button"
+            className="icon-btn h-7 w-7"
+            title="Clear all"
+            onClick={() => clearNotifications()}
+          >
             <Trash2 size={14} />
           </button>
         )}
@@ -398,6 +435,7 @@ export function NotificationsPanel() {
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     dismissNotification(n.id);
@@ -409,7 +447,9 @@ export function NotificationsPanel() {
                 </button>
               </div>
               {n.body && (
-                <span className="truncate pl-4 text-[12px] text-[var(--color-muted)]">{n.body}</span>
+                <span className="truncate pl-4 text-[12px] text-[var(--color-muted)]">
+                  {n.body}
+                </span>
               )}
             </div>
           ))

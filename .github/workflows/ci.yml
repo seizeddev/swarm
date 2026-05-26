@@ -27,6 +27,8 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Formatting gate (parity with `cargo fmt --check` on the Rust side).
+      - run: pnpm format:check
       # Unit tests + coverage thresholds (fails the build if coverage regresses).
       - run: pnpm test:coverage
       - run: pnpm build

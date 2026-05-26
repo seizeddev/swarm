@@ -44,10 +44,7 @@ function parseCommitPatch(patch: string): FileDiff[] {
     const plus = chunk.match(/^\+\+\+ b\/(.+)$/m)?.[1];
     const minus = chunk.match(/^--- a\/(.+)$/m)?.[1];
     const gitm = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
-    const file =
-      plus && plus !== "/dev/null"
-        ? plus
-        : gitm?.[2] ?? minus ?? "file";
+    const file = plus && plus !== "/dev/null" ? plus : (gitm?.[2] ?? minus ?? "file");
     const hunks: Hunk[] = [];
     let cur: Hunk | null = null;
     for (const raw of lines) {
@@ -56,8 +53,10 @@ function parseCommitPatch(patch: string): FileDiff[] {
         hunks.push(cur);
       } else if (cur) {
         const c = raw[0];
-        if (c === "+" && !raw.startsWith("+++")) cur.lines.push({ kind: "add", text: raw.slice(1) });
-        else if (c === "-" && !raw.startsWith("---")) cur.lines.push({ kind: "del", text: raw.slice(1) });
+        if (c === "+" && !raw.startsWith("+++"))
+          cur.lines.push({ kind: "add", text: raw.slice(1) });
+        else if (c === "-" && !raw.startsWith("---"))
+          cur.lines.push({ kind: "del", text: raw.slice(1) });
         else if (c === " ") cur.lines.push({ kind: "ctx", text: raw.slice(1) });
       }
     }
@@ -103,7 +102,7 @@ export function CommitDetail({
         <span className="selectable font-mono text-[12.5px] text-[var(--color-muted)]">
           {detail.short}
         </span>
-        <button className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
+        <button type="button" className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
           <X size={14} />
         </button>
       </div>
@@ -132,7 +131,10 @@ export function CommitDetail({
                   <span className="selectable font-mono text-[12.5px]">{f.file}</span>
                   {f.added && <span className="pill h-5 px-2 text-[10px]">added</span>}
                   {f.deleted && (
-                    <span className="pill h-5 px-2 text-[10px]" style={{ color: "var(--color-danger)" }}>
+                    <span
+                      className="pill h-5 px-2 text-[10px]"
+                      style={{ color: "var(--color-danger)" }}
+                    >
                       deleted
                     </span>
                   )}

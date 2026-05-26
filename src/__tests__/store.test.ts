@@ -163,7 +163,14 @@ beforeEach(() => {
     m[fn].mockResolvedValue(undefined);
   }
   m.commit.mockResolvedValue("deadbee");
-  for (const fn of ["discard", "checkoutRef", "createBranch", "resetTo", "revealPath", "prCheckout"]) {
+  for (const fn of [
+    "discard",
+    "checkoutRef",
+    "createBranch",
+    "resetTo",
+    "revealPath",
+    "prCheckout",
+  ]) {
     m[fn].mockResolvedValue(undefined);
   }
   m.revertCommit.mockResolvedValue("revbee0");

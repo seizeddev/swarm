@@ -106,7 +106,14 @@ describe("decodeUpdate (wire v2)", () => {
   });
 
   it("stops cleanly when truncated mid-run instead of over-reading", () => {
-    const bytes = encode(frame({ lines: [{ y: 0, runs: [run("ok")] }, { y: 1, runs: [run("cut")] }] }));
+    const bytes = encode(
+      frame({
+        lines: [
+          { y: 0, runs: [run("ok")] },
+          { y: 1, runs: [run("cut")] },
+        ],
+      }),
+    );
     const out = decodeUpdate(bytes.subarray(0, bytes.byteLength - 2));
     expect(out.lines[0].runs[0].text).toBe("ok");
     const last = out.lines[out.lines.length - 1];
@@ -114,7 +121,9 @@ describe("decodeUpdate (wire v2)", () => {
   });
 
   it("stops when a hyperlink length runs past the buffer", () => {
-    const bytes = encode(frame({ lines: [{ y: 0, runs: [run("a", 256, 257, F_HYPERLINK, "https://x")] }] }));
+    const bytes = encode(
+      frame({ lines: [{ y: 0, runs: [run("a", 256, 257, F_HYPERLINK, "https://x")] }] }),
+    );
     // Lop off the link bytes so the declared linkLen overruns.
     const out = decodeUpdate(bytes.subarray(0, bytes.byteLength - 5));
     expect(out.lines[0]?.runs[0]?.link).not.toBe("https://x");
@@ -129,7 +138,20 @@ describe("decodeUpdate (wire v2)", () => {
 describe("Grid", () => {
   it("applies a full frame, exposes mode/scroll, and reports all-dirty once", () => {
     const g = new Grid();
-    g.apply(frame({ rows: 3, mode: 0x14, displayOffset: 2, history: 50, cursorX: 4, cursorY: 1, lines: [{ y: 0, runs: [run("a")] }, { y: 2, runs: [run("c")] }] }));
+    g.apply(
+      frame({
+        rows: 3,
+        mode: 0x14,
+        displayOffset: 2,
+        history: 50,
+        cursorX: 4,
+        cursorY: 1,
+        lines: [
+          { y: 0, runs: [run("a")] },
+          { y: 2, runs: [run("c")] },
+        ],
+      }),
+    );
     expect(g.rows).toBe(3);
     expect(g.mode).toBe(0x14);
     expect(g.displayOffset).toBe(2);
@@ -143,10 +165,28 @@ describe("Grid", () => {
 
   it("a delta patches only named rows and marks them + the cursor rows dirty", () => {
     const g = new Grid();
-    g.apply(frame({ rows: 4, lines: [{ y: 0, runs: [run("0")] }, { y: 1, runs: [run("1")] }, { y: 2, runs: [run("2")] }, { y: 3, runs: [run("3")] }] }));
+    g.apply(
+      frame({
+        rows: 4,
+        lines: [
+          { y: 0, runs: [run("0")] },
+          { y: 1, runs: [run("1")] },
+          { y: 2, runs: [run("2")] },
+          { y: 3, runs: [run("3")] },
+        ],
+      }),
+    );
     g.takeDirty(); // drain the full
     const row3 = g.lines[3];
-    g.apply(frame({ kind: "delta", rows: 4, cursorX: 0, cursorY: 2, lines: [{ y: 1, runs: [run("ONE")] }] }));
+    g.apply(
+      frame({
+        kind: "delta",
+        rows: 4,
+        cursorX: 0,
+        cursorY: 2,
+        lines: [{ y: 1, runs: [run("ONE")] }],
+      }),
+    );
     const dirty = g.takeDirty();
     expect(dirty).not.toBeNull();
     expect(new Set(dirty)).toEqual(new Set([0, 1, 2])); // patched row 1 + cursor moved 0→2
