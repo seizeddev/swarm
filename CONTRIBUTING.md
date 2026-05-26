@@ -255,10 +255,12 @@ with `pnpm tauri signer generate`:
 
 To cut a release:
 
-1. **Bump the version in all four files** (they must match): `package.json`,
-   `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.lock`
-   (the last via `cargo update -p swarm --precise <version>`). Move the
-   `CHANGELOG.md` `[Unreleased]` items under the new version.
+1. **Bump the version in all four files** (they must match) with
+   `scripts/bump-version.sh <major|minor|patch|X.Y.Z>` — it updates
+   `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and
+   `src-tauri/Cargo.lock` together and verifies they agree. Then move the
+   `CHANGELOG.md` `[Unreleased]` items under the new version (the script leaves
+   the changelog, commit, and tag to you).
 2. **Tag and push:** `git tag v0.4.0 && git push origin v0.4.0`. ⚠️ `v*` tags are
    **protected — they can't be deleted or re-pointed.** If a build is wrong, bump
    to a new version; never re-tag.
