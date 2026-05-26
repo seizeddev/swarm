@@ -160,10 +160,14 @@ fn field_message(payload: &str) -> Option<String> {
     .filter(|t| !t.is_empty())
 }
 
-/// Collapse all whitespace/control characters to single spaces, trim, and cap at
-/// MAX_LEN characters — so the body is one tidy notification line.
+/// Turn an agent's (often Markdown) reply into one tidy notification line: strip
+/// Markdown syntax, collapse all whitespace/control characters to single spaces,
+/// trim, and cap at MAX_LEN characters. Without the strip, a body like
+/// `**Done** — all tests pass` reaches the OS banner verbatim (the native
+/// notification API and our in-app list render plain text, not Markdown).
 fn clean(s: &str) -> String {
-    let collapsed: String = s
+    let stripped = strip_markdown(s);
+    let collapsed: String = stripped
         .chars()
         .map(|c| {
             if c.is_control() || c.is_whitespace() {
@@ -177,6 +181,170 @@ fn clean(s: &str) -> String {
     trimmed.chars().take(MAX_LEN).collect()
 }
 
+/// Best-effort plain-text reduction of Markdown — not a full parser, just enough
+/// so notification bodies don't show raw syntax. Per line we drop block-level
+/// markers (headings, blockquotes, list bullets, code-fence lines, horizontal
+/// rules); inline we unwrap links/images to their text and remove emphasis,
+/// strikethrough, and code-span delimiters.
+fn strip_markdown(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for line in s.lines() {
+        match strip_md_line_prefix(line) {
+            // A code-fence (``` / ~~~) or horizontal-rule line carries no text.
+            None => continue,
+            Some(rest) => {
+                out.push_str(&strip_md_inline(rest));
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// Strip a line's leading block markers. Returns None for lines that are pure
+/// structure (code fences, horizontal rules) and so contribute no text.
+fn strip_md_line_prefix(line: &str) -> Option<&str> {
+    let mut t = line.trim_start();
+    let trimmed = t.trim_end();
+    // Code fence (``` or ~~~, optionally with an info string) — drop the line.
+    if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+        return None;
+    }
+    // Horizontal rule: a line of only -, * or _ (3+), possibly space-separated.
+    if trimmed.chars().filter(|c| !c.is_whitespace()).count() >= 3
+        && trimmed
+            .chars()
+            .all(|c| c == '-' || c == '*' || c == '_' || c.is_whitespace())
+    {
+        return None;
+    }
+    // Blockquote markers (possibly nested: `> > `).
+    loop {
+        let after = t.strip_prefix('>').map(str::trim_start);
+        match after {
+            Some(a) => t = a,
+            None => break,
+        }
+    }
+    // ATX heading: 1–6 leading '#' followed by a space (or end of line).
+    let hashes = t.chars().take_while(|&c| c == '#').count();
+    if (1..=6).contains(&hashes) {
+        let after = &t[hashes..];
+        if after.is_empty() || after.starts_with(' ') {
+            t = after.trim_start();
+        }
+    }
+    // List bullet: -, * or + then a space.
+    if let Some(rest) = t
+        .strip_prefix("- ")
+        .or_else(|| t.strip_prefix("* "))
+        .or_else(|| t.strip_prefix("+ "))
+    {
+        t = rest.trim_start();
+    } else {
+        // Ordered list: digits then '.' or ')' then a space.
+        let digits = t.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 {
+            let after = &t[digits..];
+            if let Some(rest) = after
+                .strip_prefix(". ")
+                .or_else(|| after.strip_prefix(") "))
+            {
+                t = rest.trim_start();
+            }
+        }
+    }
+    Some(t)
+}
+
+/// Strip inline Markdown from a single line: `[text](url)`/`![alt](url)` → text,
+/// `**x**`/`*x*`/`__x__`/`_x_` → x, `~~x~~` → x, `` `x` `` → x. Underscores and
+/// lone asterisks that aren't acting as emphasis delimiters (e.g. `snake_case`,
+/// `2 * 3`) are preserved.
+fn strip_md_inline(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            // Image marker: drop the '!', let the next iteration handle '['.
+            '!' if chars.get(i + 1) == Some(&'[') => {
+                i += 1;
+            }
+            '[' => {
+                if let Some(close) = find_char(&chars, i + 1, ']') {
+                    // `[text](url)` → text; also accept a bare `[text]`.
+                    let end = if chars.get(close + 1) == Some(&'(') {
+                        find_char(&chars, close + 2, ')').map(|p| p + 1)
+                    } else {
+                        Some(close + 1)
+                    };
+                    if let Some(end) = end {
+                        let text: String = chars[i + 1..close].iter().collect();
+                        out.push_str(&strip_md_inline(&text));
+                        i = end;
+                        continue;
+                    }
+                }
+                out.push(c);
+                i += 1;
+            }
+            '`' => {
+                while i < chars.len() && chars[i] == '`' {
+                    i += 1;
+                }
+            }
+            '*' => {
+                let start = i;
+                while i < chars.len() && chars[i] == '*' {
+                    i += 1;
+                }
+                // A run flanked by whitespace on both sides isn't emphasis (`2 * 3`).
+                let prev_ws = start == 0 || chars[start - 1].is_whitespace();
+                let next_ws = i >= chars.len() || chars[i].is_whitespace();
+                if prev_ws && next_ws {
+                    out.extend(&chars[start..i]);
+                }
+            }
+            '~' if chars.get(i + 1) == Some(&'~') => {
+                while i < chars.len() && chars[i] == '~' {
+                    i += 1;
+                }
+            }
+            '_' => {
+                let start = i;
+                while i < chars.len() && chars[i] == '_' {
+                    i += 1;
+                }
+                // Keep intra-word underscores (snake_case); drop emphasis delimiters.
+                let prev_word = start > 0 && is_word(chars[start - 1]);
+                let next_word = i < chars.len() && is_word(chars[i]);
+                if prev_word && next_word {
+                    out.extend(&chars[start..i]);
+                }
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Index of the next `needle` at or after `from`, if any.
+fn find_char(chars: &[char], from: usize, needle: char) -> Option<usize> {
+    chars[from..]
+        .iter()
+        .position(|&c| c == needle)
+        .map(|p| from + p)
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +354,29 @@ mod tests {
         assert_eq!(clean("  a\n\tb   c  "), "a b c");
         assert_eq!(clean("x\u{1b}\u{7}y"), "x y");
         assert_eq!(clean(&"a".repeat(300)).len(), MAX_LEN);
+    }
+
+    #[test]
+    fn clean_strips_markdown() {
+        // The reported bug: bold markers reached the banner verbatim.
+        assert_eq!(clean("**Done** — all tests pass"), "Done — all tests pass");
+        assert_eq!(clean("*italic* and _emphasis_"), "italic and emphasis");
+        assert_eq!(clean("use `cargo test` to run"), "use cargo test to run");
+        assert_eq!(clean("~~nope~~ yes"), "nope yes");
+        // Links/images unwrap to their text.
+        assert_eq!(clean("see [the docs](https://x.y)"), "see the docs");
+        assert_eq!(clean("![alt text](img.png) shown"), "alt text shown");
+        // Block markers across lines collapse into one line.
+        assert_eq!(clean("# Heading\n\nbody text"), "Heading body text");
+        assert_eq!(clean("> quoted reply"), "quoted reply");
+        assert_eq!(clean("- one\n- two\n- three"), "one two three");
+        assert_eq!(clean("1. first\n2. second"), "first second");
+        // Code fences drop, their content stays.
+        assert_eq!(clean("```rust\nlet x = 1;\n```"), "let x = 1;");
+        assert_eq!(clean("text\n---\nmore"), "text more");
+        // Non-emphasis underscores/asterisks survive.
+        assert_eq!(clean("run snake_case_fn now"), "run snake_case_fn now");
+        assert_eq!(clean("compute 2 * 3 = 6"), "compute 2 * 3 = 6");
     }
 
     #[test]
