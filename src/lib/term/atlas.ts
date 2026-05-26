@@ -31,6 +31,17 @@ export function glyphKey(char: string, flags: number, fg: string): string {
 
 const ATLAS_PX = 2048; // texture budget per axis (well within every GPU's limit)
 
+// Transparent gutter (device px) reserved on the right and bottom of every slot.
+// The backends sample exactly the glyph's cellW×cellH box from the slot origin,
+// but NEAREST texture sampling can pick a texel one past the edge when the cell
+// quad isn't a perfect 1:1 pixel map (fractional DPR / sub-pixel canvas size) —
+// bleeding a thin strip of the *neighbouring* slot's glyph into the cell edge.
+// Slots are stacked with no horizontal risk (a narrow glyph already leaves its 2nd
+// cell-width empty), but vertically they were flush, so a green box-drawing glyph
+// one row down in the atlas leaked a green sliver onto the bottom edge of the cell
+// above. The gutter makes any such over-read land in cleared padding instead.
+const SLOT_PAD = 2;
+
 export class GlyphAtlas {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
   private ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -66,9 +77,11 @@ export class GlyphAtlas {
 
   // (Re)compute the slot grid for the current metrics and drop all cached glyphs.
   private layout(): void {
-    // Every slot is two cells wide so a wide glyph fits without a second pass.
-    this.slotW = this.metrics.cellW * 2;
-    this.slotH = this.metrics.cellH;
+    // Every slot is two cells wide so a wide glyph fits without a second pass, plus
+    // a transparent gutter (SLOT_PAD) on the right and bottom so edge bleed from
+    // NEAREST sampling lands in cleared padding, never a neighbouring glyph.
+    this.slotW = this.metrics.cellW * 2 + SLOT_PAD;
+    this.slotH = this.metrics.cellH + SLOT_PAD;
     this.slotCols = Math.max(1, Math.floor(ATLAS_PX / this.slotW));
     const slotRows = Math.max(1, Math.floor(ATLAS_PX / this.slotH));
     this.capacity = this.slotCols * slotRows;

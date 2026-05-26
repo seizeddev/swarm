@@ -48,6 +48,15 @@ export function createRenderer(
   atlas: GlyphAtlas,
   onLost?: () => void,
 ): RendererBackend {
+  // Escape hatch for diagnosing backend-specific rendering: set
+  // `localStorage["swarm.renderer"] = "canvas2d"` (or "webgl2") to force one.
+  let forced: string | null = null;
+  try {
+    forced = localStorage.getItem("swarm.renderer");
+  } catch {
+    /* localStorage unavailable (private mode / sandbox) — ignore */
+  }
+  if (forced === "canvas2d") return new Canvas2DBackend(canvas, metrics, atlas);
   try {
     const gl = WebGL2Backend.tryCreate(canvas, metrics, atlas);
     if (gl) {
