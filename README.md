@@ -23,14 +23,33 @@ A lightweight, cross-platform desktop app. Rust core, native webview, no Electro
 
 ## Why swarm
 
-Running several Claude Code / Codex sessions at once is the new normal. The terminal is the easy part — what's missing is everything around it: what each agent changed, whether its PR is green, and getting back to exactly where you were after a restart.
+Running several Claude Code / Codex sessions at once is the new normal. The terminal is the easy part — what's missing is everything *around* it: seeing what each agent changed, whether its PR is green, and getting back to exactly where you were after a restart.
 
-[cmux](https://github.com/manaflow-ai/cmux) nailed the parallel-terminal experience but is deliberately *"a primitive, not a solution"*: it's macOS-only and leaves diffs and review to you. swarm keeps the terminal-first feel and adds the parts you keep reaching for:
+[cmux](https://github.com/manaflow-ai/cmux) nailed the parallel-terminal feel but is deliberately *"a primitive, not a solution"* — macOS-only, and it leaves diffs and review to you. swarm keeps that terminal-first feel and folds in the parts you keep reaching for: a real Git view, pull requests, and per-agent session restore — on macOS, Linux, **and** Windows, in a binary that doesn't ship a browser.
 
-- **GitHub view built in.** A VS Code-style Source Control panel (stage / commit / per-file diff via libgit2) and a Pull Requests panel from `gh` — review without leaving the app.
-- **Work how you already work.** Local, no forced branches or worktrees. Terminals are the primary unit; git is a view you open when you want it.
-- **Cross-platform & tiny.** Tauri 2 + a Rust core in a system webview. No Electron, no bundled Chromium.
-- **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine; the UI paints the cell grid on a GPU `<canvas>` (WebGL2, Canvas2D fallback). No xterm.js, so TUI agents like Claude Code render correctly — with mouse reporting, scrollback, selection/copy, and hyperlinks.
+## Features
+
+### Terminals
+
+- **A real terminal, done right.** VT emulation runs in Rust via the [Alacritty](https://github.com/alacritty/alacritty) engine and is painted on a GPU `<canvas>` (WebGL2, with a Canvas2D fallback). No xterm.js — so full-screen TUI agents like Claude Code render correctly, with mouse reporting, scrollback, selection/copy, and OSC 8 hyperlinks.
+- **Infinite terminals & splits.** Split right or down into a tiled layout with draggable dividers; every session stays alive across tab and workspace switches.
+- **Paste screenshots.** Paste an image straight into a terminal and swarm hands the agent a file path it can read — the way cmux / WezTerm / iTerm2 do it.
+
+### Agents & sessions
+
+- **Agent-aware.** Detects the CLIs you have installed — Claude Code, Codex, Gemini, OpenCode, Amp, Cursor, Aider — and launches them in the right directory through your real login shell, so they inherit your full environment.
+- **Session restore.** On relaunch, swarm rebuilds your workspaces, split layout, and working directories, and resumes each agent where it left off (`claude --resume <id>`, `codex resume <id>`, …) **with its original launch flags preserved** (e.g. `--dangerously-skip-permissions`).
+
+### Git & GitHub, built in
+
+- **Source Control.** A VS Code-style panel with staged/unstaged groups, stage/unstage, commit (⌘/Ctrl+Enter), and GitHub-style per-file diffs — all via libgit2, never shelling out to `git`.
+- **Right-click anything.** Context menus across terminals, the diff tree, PR rows, and tabs, with Git write-ops (discard, checkout, create branch, reset, revert), PR checkout, and reveal-in-Finder.
+- **Pull Requests.** Open PRs with passing / failing / pending checks, grouped by author, through your existing `gh` auth — swarm stores no tokens of its own.
+
+### Stay in flow
+
+- **Multi-project workspaces.** Open several repos at once and switch from the rail; each keeps its own terminals, source control, and PRs.
+- **Notifications that tell you *which* agent.** A pane's tab and workspace light up when an agent needs you; when swarm is in the background, a native desktop banner fires (with sound) carrying the agent's actual last message — click it to focus the window and jump straight to the pane. swarm picks up OSC 9 / 99 (kitty) / 777 sequences and the bell, with an in-app history (unread badge, click-to-pane), focus-aware suppression, and dedup.
 
 ## Install
 
@@ -44,19 +63,42 @@ Running several Claude Code / Codex sessions at once is the new normal. The term
 
 Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enable the Pull Requests panel. That's it — swarm stores no credentials and needs no further setup.
 
-> No release yet? Build it yourself in two commands — see [Development](#development).
+swarm **auto-updates**: it checks the latest GitHub release at launch, on focus, and periodically, then offers a one-click, signed update — so you only download once.
 
-## Features
+> No build for your platform yet? Build it yourself in a few commands — see [Development](#development).
 
-- **Multi-project workspaces** — open several repos at once; switch from the rail, each keeps its own terminals, source control, and PRs.
-- **Infinite terminals + splits** — split right/down into a tiled layout with draggable dividers; sessions stay alive across tab and workspace switches.
-- **Notifications** — when an agent needs you, its tab and workspace light up, and when swarm is in the background a native desktop banner fires (with sound) carrying the agent's actual last message; click it to focus the window and jump to the pane. Picks up OSC 9 / OSC 99 (kitty) / OSC 777 sequences and the bell, with an in-app history (unread badge, click-to-pane), focus-aware suppression, and dedup.
-- **Session restore (cmux-style)** — workspaces, split layout, and working dirs are rebuilt on launch, and each agent comes back where it left off: its session is resumed (`claude --resume <id>`, `codex resume <id>`, …) with its original launch flags preserved (e.g. `--dangerously-skip-permissions`).
-- **Source Control** — staged/unstaged groups, stage/unstage, commit, GitHub-style per-file diffs (libgit2, no shelling out to `git`).
-- **Right-click everywhere** — context menus across terminals, the diff tree, PR rows, and tabs, with git write-ops (discard, checkout, create branch, reset, revert), PR checkout, and reveal-in-Finder.
-- **Pull Requests** — open PRs with passing / failing / pending checks, grouped by author (via the GitHub CLI; no tokens stored by swarm).
-- **Paste screenshots** — paste an image into a terminal and swarm hands the agent a file path it can read (the way cmux / WezTerm / iTerm2 do).
-- **Agent-aware** — detects installed CLIs (Claude Code, Codex, Gemini, OpenCode, Amp, Cursor, Aider) and launches them in the right directory.
+## Keyboard shortcuts
+
+Shown with ⌘ for macOS; use **Ctrl** on Windows and Linux.
+
+**Projects**
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘ N | New project |
+| ⌘ ⇧ W | Close project |
+| ⌘ 1–9 | Jump to project 1–9 |
+| ⌘ ⇧ ] · ⌘ ⇧ [ | Next · previous project |
+
+**Terminals**
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘ T | New terminal |
+| ⌘ D | Split right |
+| ⌘ ⇧ D | Split down |
+| ⌘ W | Close terminal |
+| ⌘ C | Copy selection (sends SIGINT when there's no selection) |
+
+**Panels & view**
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘ B | Toggle sidebar |
+| ⌘ ⇧ G | Source Control |
+| ⌘ I | Notifications |
+| ⌘ , | Settings |
+| ⌘ ⇧ = · ⌘ - · ⌘ 0 | Zoom in · out · reset |
 
 ## Architecture
 
@@ -76,27 +118,26 @@ Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enab
 └──────────────────────────────────────────────────┘
 ```
 
-Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resulting cell grid (run-length-coalesced) is streamed to the frontend over a Tauri `Channel`, where it's painted on a `<canvas>` (WebGL2, Canvas2D fallback). The webview never parses ANSI and terminal text never becomes a DOM node.
+Terminal bytes are parsed by the Alacritty engine **in Rust**; only the resulting cell grid (run-length-coalesced) is streamed to the frontend over a Tauri `Channel`, where it's painted on a `<canvas>` (WebGL2, Canvas2D fallback). The webview never parses ANSI, and terminal text never becomes a DOM node.
 
 ## Performance & security
 
-- Native system webview + size-optimized Rust release profile (`lto`, `opt-level=s`, `panic=abort`, stripped).
-- No bundled Chromium, no Node runtime shipped.
+- Native system webview + a size-optimized Rust release profile (`lto`, `opt-level=s`, `panic=abort`, stripped). No bundled Chromium, no Node runtime shipped.
 - Git operations use libgit2 directly — no shelling out to `git`.
 - GitHub access is delegated to your existing `gh` auth; swarm stores no credentials.
-- Tauri's capability system scopes what the frontend may call.
+- A strict Content-Security-Policy plus a path-allowlist guard scope what the frontend can reach. The full threat model lives in [SECURITY.md](./SECURITY.md) and [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 
 ## Development
 
-Prerequisites: [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. You **don't** need to install pnpm — it's pinned in `package.json` and activated by Corepack (bundled with Node).
+Want to hack on swarm? The full guide — prerequisites, project layout, house rules, and how to reproduce the CI gate locally — is in **[CONTRIBUTING.md](./CONTRIBUTING.md)**. The short version:
 
 ```bash
 git clone https://github.com/seizeddev/swarm.git
 cd swarm
-corepack enable     # activates the pinned pnpm — one time, no manual install
+corepack enable     # activates the pinned pnpm (bundled with Node 20+)
 pnpm install
-pnpm tauri dev      # run the app
-pnpm tauri build    # produce a release bundle
+pnpm tauri dev      # run the app (frontend HMR + Rust core)
+pnpm tauri build    # build an installable bundle
 
 # Rust core
 cd src-tauri && cargo test
@@ -106,6 +147,4 @@ cd src-tauri && cargo test
 
 [GNU General Public License v3.0 or later](./LICENSE) © swarm contributors.
 
-swarm is **copyleft**: you may use, study, share, and modify it freely, but any
-distributed derivative must also be released under the GPLv3. This keeps swarm
-and its forks open — no one can ship a closed-source commercial version.
+swarm is **copyleft**: you may use, study, share, and modify it freely, but any distributed derivative must also be released under the GPLv3. This keeps swarm and its forks open — no one can ship a closed-source commercial version.
