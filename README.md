@@ -145,7 +145,7 @@ cd src-tauri && cargo test
 
 ## License
 
-[GNU General Public License v3.0 or later](./LICENSE) © swarm contributors.
+[GNU General Public License v3.0 or later](./LICENSE) © 2026-present Valentin Weinert and the swarm contributors.
 
 swarm is **copyleft**: you may use, study, share, and modify it freely, but any distributed derivative must also be released under the GPLv3. This keeps swarm and its forks open — no one can ship a closed-source commercial version.
 
