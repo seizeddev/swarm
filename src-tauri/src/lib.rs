@@ -219,6 +219,58 @@ fn events_dir() -> AppResult<String> {
     Ok(d.to_string_lossy().into_owned())
 }
 
+/// Best-effort: drop pasted-image temp files older than a day so the directory
+/// doesn't grow without bound. Any failure (unreadable dir, missing mtime) is
+/// ignored — pruning must never block a paste.
+fn prune_clipboard_dir(dir: &std::path::Path) {
+    const MAX_AGE_SECS: u64 = 24 * 60 * 60;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let aged = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .is_some_and(|d| d.as_secs() > MAX_AGE_SECS);
+        if aged {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Persist an image pasted into a terminal and return its absolute path. A PTY
+/// can't carry raw image bytes, so — like cmux/WezTerm/iTerm2 — the frontend
+/// pastes this path and the CLI agent (Claude Code, Codex) reads the image off
+/// disk. The bytes arrive base64-encoded straight from the WebKit paste event,
+/// which avoids the macOS pasteboard-type mismatch that makes Claude's own
+/// `«class PNGf»` read miss WebKit's `public.png` images. `ext` is allowlisted
+/// before it reaches the filename.
+#[tauri::command]
+fn save_clipboard_image(data: String, ext: String) -> AppResult<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| error::AppError::Other(format!("invalid image data: {e}")))?;
+    let dir = swarm_dir()?.join("clipboard");
+    std::fs::create_dir_all(&dir)?;
+    prune_clipboard_dir(&dir);
+    let ext = match ext.to_ascii_lowercase().as_str() {
+        e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "tiff" | "bmp") => e.to_string(),
+        _ => "png".to_string(),
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("paste-{stamp}.{ext}"));
+    std::fs::write(&path, &bytes)?;
+    restrict_file(&path);
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Emit a native notification and, on click, focus the window and tell the
 /// frontend which pane to open (`notif:activate`). macOS only: `send_notification`
 /// blocks until the user interacts, so it runs on a detached thread — one cheap
@@ -713,6 +765,7 @@ pub fn run() {
             claude_session_exists,
             save_session,
             load_session,
+            save_clipboard_image,
             events_dir,
             prepare_codex_home,
             notify_os,

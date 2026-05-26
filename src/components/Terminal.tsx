@@ -7,6 +7,7 @@ import { measureCell, type CellMetrics } from "../lib/term/metrics";
 import { GlyphAtlas } from "../lib/term/atlas";
 import { createRenderer, type RendererBackend, type RenderFrame } from "../lib/term/renderer";
 import { encodeKey, encodeMouse, focusEvent, reportsMouse, wheelFallback, wrapPaste } from "../lib/term/input";
+import { bytesToBase64, pickClipboardImage } from "../lib/term/clipboard";
 import { wheelScrollsBuffer } from "../lib/term/mode";
 import { pixelToCell, orderCells, expandWord, expandLine, rowText, type Cell } from "../lib/term/select";
 import { openExternal } from "../lib/external";
@@ -463,9 +464,21 @@ export function Terminal({
 
   const onPaste = (e: React.ClipboardEvent) => {
     const text = e.clipboardData.getData("text");
+    // Grab the image File reference synchronously — clipboardData is only live
+    // during the event, but the File it hands back can be read async afterwards.
+    const image = text ? null : pickClipboardImage(e.clipboardData);
     e.preventDefault();
     const id = ptyIdRef.current;
-    if (!id || !text) return;
+    if (!id) return;
+    if (!text) {
+      // No text but an image (a screenshot, a copied picture): a PTY can't carry
+      // raw image bytes, so — like cmux/iTerm2/WezTerm — persist it to a temp file
+      // and paste the *path* for the agent to read off disk. (Claude Code's own
+      // clipboard read misses WebKit images: it wants the legacy «class PNGf»
+      // pasteboard type, but WKWebView publishes them as public.png.)
+      if (image) void pasteImage(id, image.file, image.ext);
+      return;
+    }
     const mode = gridRef.current.mode;
     const wrapped = wrapPaste(text, mode);
     // Bracketed paste tells the program the bytes are a paste (no per-newline
@@ -480,6 +493,22 @@ export function Terminal({
       }
     }
     api.ptyWrite(id, wrapped);
+  };
+
+  // Save a pasted image to a temp file via the core, then paste its path. Sent as
+  // a bracketed paste (when the program asked for it) so a TUI sees one paste
+  // event — matching how a drag-and-dropped file arrives, which is what makes
+  // Claude Code attach the image.
+  const pasteImage = async (id: string, file: File, ext: string) => {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length === 0) return;
+      const path = await api.saveClipboardImage(bytesToBase64(bytes), ext);
+      if (ptyIdRef.current !== id) return; // pane changed while we were saving
+      api.ptyWrite(id, wrapPaste(path, gridRef.current.mode));
+    } catch {
+      /* couldn't read or save the image — nothing to paste */
+    }
   };
 
   // Pointer → viewport cell, from the canvas's CSS box.

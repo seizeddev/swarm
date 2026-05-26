@@ -82,6 +82,11 @@ export const api = {
     return invoke<void>("pty_attach", { id, onUpdate: channel });
   },
   ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
+  // Persist a clipboard image (base64-encoded bytes from the WebKit paste event)
+  // to a temp file in the core and return its absolute path, which the caller
+  // then pastes into the PTY so a CLI agent can read the image off disk.
+  saveClipboardImage: (data: string, ext: string) =>
+    invoke<string>("save_clipboard_image", { data, ext }),
   ptyResize: (id: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { id, cols, rows }),
   // Scroll the viewport through scrollback by `delta` lines (>0 = back into
