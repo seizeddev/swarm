@@ -366,13 +366,28 @@ fn frame(u: &WireUpdate) -> InvokeResponseBody {
 /// launch. `exec "$0" "$@"` replaces the shell in place (no extra process, same PTY)
 /// and passes argv through verbatim without re-quoting.
 ///
+/// A plain "shell" pane is the exception: there is no agent to exec, so we launch the
+/// user's login shell *directly* as an interactive login shell (`-il`), exactly as
+/// Terminal.app does — sourcing `.zprofile`/`.zshrc` and dropping the user at their
+/// real prompt. We deliberately resolve `$SHELL` (`agents::default_shell`) instead of
+/// `/bin/bash`: macOS ships the frozen GPLv2 bash 3.2, so spawning `bash` greeted the
+/// user with "The default interactive shell is now zsh" instead of their actual zsh.
+/// Routing a bare shell through the `exec "$0" "$@"` wrapper would also nest a second
+/// shell. This branch additionally heals older persisted panes that stored `bash`.
+///
 /// On Windows there is no login-shell convention to source: a GUI process already
 /// inherits the user's full environment, and `cmd.exe`/PowerShell have no portable
 /// `-ilc exec` equivalent. So we spawn the command directly; a "shell" pane resolves
-/// to `%COMSPEC%` (cmd.exe) via the frontend's pane defaults.
+/// to PowerShell via the frontend's pane defaults.
 #[cfg(unix)]
 fn build_command(opts: &SpawnOpts) -> CommandBuilder {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let shell = crate::agents::default_shell();
+    // Bare shell pane (no agent sub-command): launch the user's real login shell.
+    if opts.args.is_empty() && is_login_shell_command(&opts.command) {
+        let mut cmd = CommandBuilder::new(&shell);
+        cmd.arg("-il");
+        return cmd;
+    }
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-ilc");
     cmd.arg("exec \"$0\" \"$@\"");
@@ -381,6 +396,22 @@ fn build_command(opts: &SpawnOpts) -> CommandBuilder {
         cmd.arg(a);
     }
     cmd
+}
+
+/// True if `command` names an interactive shell (so a pane running it with no args is
+/// a "shell" pane to launch as a login shell, not an agent to wrap in `exec`). Matches
+/// on the basename so both `zsh` and `/bin/zsh` qualify; no real agent is named like a
+/// shell, so this never misclassifies claude/codex/etc.
+#[cfg(unix)]
+fn is_login_shell_command(command: &str) -> bool {
+    let name = std::path::Path::new(command)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(command);
+    matches!(
+        name,
+        "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | "nu"
+    )
 }
 
 #[cfg(windows)]
@@ -1118,5 +1149,70 @@ mod tests {
         let tb: String = b.lines[0].runs.iter().map(|r| r.text.clone()).collect();
         assert_eq!(ta, tb);
         assert_eq!(a.lines[0].runs.len(), b.lines[0].runs.len());
+    }
+
+    #[cfg(unix)]
+    fn spawn_opts(command: &str, args: &[&str]) -> SpawnOpts {
+        SpawnOpts {
+            cwd: "/tmp".into(),
+            command: command.into(),
+            args: args.iter().map(|a| (*a).to_string()).collect(),
+            env: vec![],
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_pane_launches_login_shell_directly() {
+        // A bare shell pane runs the user's `$SHELL` as an interactive login shell
+        // (`-il`), never the macOS-frozen `/bin/bash` 3.2 and never nested in `exec`.
+        let shell = crate::agents::default_shell();
+        for cmd in [shell.as_str(), "bash", "zsh", "/bin/zsh", "fish"] {
+            let argv = build_command(&spawn_opts(cmd, &[]))
+                .get_argv()
+                .iter()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(argv, vec![shell.clone(), "-il".to_string()], "cmd={cmd}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_is_wrapped_in_login_shell_exec() {
+        // A real agent is routed through `$SHELL -ilc 'exec "$0" "$@"' <cmd> <args>`
+        // so it inherits the user's full login environment.
+        let shell = crate::agents::default_shell();
+        let argv = build_command(&spawn_opts("claude", &["--continue"]))
+            .get_argv()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            argv,
+            vec![
+                shell,
+                "-ilc".to_string(),
+                "exec \"$0\" \"$@\"".to_string(),
+                "claude".to_string(),
+                "--continue".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_name_with_args_is_not_a_shell_pane() {
+        // `bash -c …` (a shell *invoked as an agent* with args) keeps the exec wrapper
+        // rather than collapsing to a bare login shell.
+        let argv = build_command(&spawn_opts("bash", &["-c", "echo hi"]))
+            .get_argv()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(argv.contains(&"exec \"$0\" \"$@\"".to_string()));
+        assert_eq!(argv.last().unwrap(), "echo hi");
     }
 }

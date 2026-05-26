@@ -7,7 +7,9 @@ use std::path::Path;
 pub struct AgentDef {
     pub id: &'static str,
     pub name: &'static str,
-    pub command: &'static str,
+    /// The launch command. Static for real agents; for the "shell" pane this is the
+    /// user's login shell, resolved from `$SHELL` at runtime (see `default_shell`).
+    pub command: String,
     pub args: &'static [&'static str],
     pub installed: bool,
     /// Args that resume the agent's most recent session in the cwd (for restore).
@@ -45,14 +47,23 @@ const REGISTRY: &[Reg] = &[
     reg("amp", "Amp", "amp", &[]),
     reg("cursor", "Cursor CLI", "cursor-agent", &[]),
     reg("aider", "Aider", "aider", &[]),
-    reg("shell", "Shell", default_shell(), &[]),
+    // Command is filled at runtime from `default_shell()` (see `list_agents`); the
+    // registry literal is only a fallback if `$SHELL` is unset on a non-Unix build.
+    reg("shell", "Shell", "", &[]),
 ];
 
-const fn default_shell() -> &'static str {
+/// The user's interactive login shell — what a "shell" pane should launch.
+///
+/// On Unix we honour `$SHELL` (zsh on modern macOS, whatever the user set elsewhere)
+/// and fall back to `/bin/zsh`. We deliberately do NOT hardcode `bash`: macOS ships
+/// the frozen GPLv2 bash 3.2 at `/bin/bash`, so launching it greeted the user with
+/// "The default interactive shell is now zsh" instead of their real shell — the bug
+/// this fixes. On Windows there is no `$SHELL` convention, so we use PowerShell.
+pub(crate) fn default_shell() -> String {
     if cfg!(windows) {
-        "powershell"
+        "powershell".to_string()
     } else {
-        "bash"
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
     }
 }
 
@@ -84,13 +95,22 @@ pub(crate) fn on_path(cmd: &str) -> bool {
 pub fn list_agents() -> Vec<AgentDef> {
     REGISTRY
         .iter()
-        .map(|r| AgentDef {
-            id: r.id,
-            name: r.name,
-            command: r.command,
-            args: r.args,
-            installed: on_path(r.command),
-            resume: r.resume,
+        .map(|r| {
+            // The shell pane launches the user's real login shell, not the registry
+            // literal (which is empty for "shell"). Every other agent is its own name.
+            let command = if r.id == "shell" {
+                default_shell()
+            } else {
+                r.command.to_string()
+            };
+            AgentDef {
+                id: r.id,
+                name: r.name,
+                installed: on_path(&command),
+                command,
+                args: r.args,
+                resume: r.resume,
+            }
         })
         .collect()
 }
@@ -178,7 +198,12 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(sh, "powershell");
         } else {
-            assert_eq!(sh, "bash");
+            // Honours $SHELL when set, else falls back to /bin/zsh — never bash 3.2.
+            assert_eq!(
+                sh,
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+            );
+            assert_ne!(sh, "bash", "must not launch macOS' frozen /bin/bash");
         }
     }
 
