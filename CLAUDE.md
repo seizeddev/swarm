@@ -5,6 +5,10 @@
 - Never guess. Act on knowledge — verify with code analysis, the docs, online research, or by running it.
 - If you don't know, find out. Don't assume.
 
+# Code style
+
+- **Comments earn their place — don't comment everywhere, comment where it helps.** Prefer code that reads on its own (clear names, small functions); a comment should tell the reader something the code can't. **Do** comment the *why*: a non-obvious rationale, a constraint or gotcha, a "don't remove this — it fixes X" note, a wire-format/protocol detail, or a doc comment on a public API. **Don't** narrate the *what* (`// increment i`, `// loop over items`), restate the next line, leave section-divider noise, or keep commented-out code. The test: *would deleting this comment lose knowledge?* If no, delete it. This codebase already follows that — most existing comments are load-bearing "why" notes; keep them.
+
 # Project knowledge (learnings)
 
 ## Build & verify
