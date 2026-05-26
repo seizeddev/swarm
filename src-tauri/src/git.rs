@@ -658,6 +658,11 @@ mod tests {
             let mut cfg = repo.config().unwrap();
             cfg.set_str("user.name", "swarm-test").unwrap();
             cfg.set_str("user.email", "test@swarm.local").unwrap();
+            // Keep checked-out content byte-identical to what we write: without
+            // this, git's CRLF conversion (autocrlf defaults on under Git for
+            // Windows) checks `a.txt` back out as "hello\r\nworld\r\n", so the
+            // discard/reset assertions comparing against "hello\nworld\n" fail.
+            cfg.set_bool("core.autocrlf", false).unwrap();
         }
         commit_file(&repo, "a.txt", "hello\nworld\n", "init");
         repo
