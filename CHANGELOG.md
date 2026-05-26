@@ -4,14 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-05-26
 
-### Changed
-
-- **New GPU terminal renderer.** The terminal is now painted on a `<canvas>` — a WebGL2 backend (instanced glyph quads) with an automatic Canvas2D fallback (and context-loss recovery), replacing the old DOM cell-grid. Both backends share one glyph atlas, so text is crisp and identical either way. Cell metrics are locked to integer device pixels, fixing the sub-pixel cursor/text drift and the occasional few-pixel gap at the bottom on resize.
+A terminal and interaction release. No data migration required; sessions
+persisted by 0.3.x are restored as-is.
 
 ### Added
 
+- **App-wide right-click context menus.** Terminals, the source-control tree, PR rows, and tabs now have context menus, backed by new libgit2 write operations — discard, checkout, create branch, reset, revert — plus PR checkout and a guarded "Reveal in Finder". The menu is portaled to the document body so panel overflow can't clip it, and it shows even over a mouse-reporting TUI (the right-click isn't forwarded to the program).
+- **Agent session restore (cmux-style).** Agents and their launch flags now survive a restart: each pane's session id and argv are captured via per-agent hooks, and the native resume command is rebuilt on relaunch (e.g. `claude --resume <id> --dangerously-skip-permissions`, `codex resume <id>`), with swarm's own injected flags filtered out.
+- **Clipboard image paste.** Pasting a screenshot into a terminal writes it to a temp file and pastes the path (as cmux / WezTerm / iTerm2 do), so agents such as Claude Code and Codex can read it off disk; text paste still wins when present.
+- **Close projects.** Remove a workspace from the rail via its context menu or ⌘/Ctrl+Shift+W; the removal is persisted immediately.
 - **Mouse-reporting terminals.** Click, drag, and wheel are reported to mouse-aware TUIs (vim, htop, btop, …) via SGR 1006 (with a legacy fallback).
 - **Scrollback.** Scroll the wheel to page back through history, with a quiet scrollbar indicator; typing snaps back to the live tail.
 - **Selection & copy.** Drag to select, double-click for a word, triple-click for a line, with copy-on-select; ⌘/Ctrl+C copies a selection (and still sends SIGINT when there's none).
@@ -19,7 +22,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Fuller keyboard.** Function keys, modified arrows/navigation (CSI `1;<mod>`), application-cursor (DECCKM/SS3) and keypad modes, bracketed paste, and focus reporting.
 - **Cross-platform spawn.** The Windows path spawns the command directly (no Unix login-shell wrapper), so terminals work on Windows as well as macOS/Linux.
 
+### Changed
+
+- **New GPU terminal renderer.** The terminal is now painted on a `<canvas>` — a WebGL2 backend (instanced glyph quads) with an automatic Canvas2D fallback (and context-loss recovery), replacing the old DOM cell-grid. Both backends share one glyph atlas, so text is crisp and identical either way. Cell metrics are locked to integer device pixels, fixing the sub-pixel cursor/text drift and the occasional few-pixel gap at the bottom on resize.
+- **Menu "Paste" reads the clipboard natively** (the OS clipboard, in Rust) instead of `navigator.clipboard.readText()`, which raised a modal DOM-paste permission prompt in WKWebView that stalled the UI; the menu paste is now instant and prompt-free.
+- Agents are launched through the user's real `$SHELL` login shell rather than macOS' system `bash`, so they inherit the user's actual shell environment.
+
+### Performance
+
+- **Frame emission is paced to ~60 fps.** A chatty TUI (token-by-token agent streaming, spinners, box redraws) used to flood the WKWebView main thread with per-frame evals and freeze the UI for seconds; frames are now coalesced to one repaint per ~16 ms budget.
+
+### Fixed
+
+- **Instant split-down resize.** Closing a split-down pane left an agent (Claude/Ink) stuck at half height until a keystroke; resizes are now driven from the layout fraction (WKWebView's `ResizeObserver` is unreliable for a height-only grow) with a SIGWINCH nudge so the TUI repaints full-height immediately.
+- **Glyph edge-bleed.** Thin coloured slivers at cell edges (the atlas over-reading the adjacent slot) are gone — atlas slots now carry a padding gutter.
+- Notification bodies are stripped of Markdown so banners read as plain text.
+- The whole top chrome band is a window-drag region, not just the title.
+- The WKWebView native right-click menu (Reload / Inspect Element) is suppressed in favour of the app's own menus.
+- Dropped the traffic-light padding in fullscreen so the title hugs the left edge.
+
 ## [0.3.1] - 2026-05-25
+
+### Fixed
+
+- **Linux build.** The freedesktop notification click handler called `notify-rust`'s `wait_for_action` against the wrong (async/`ActionResponse`) signature, breaking the Linux build; it now uses the synchronous `FnOnce(&str)` API. macOS and Windows were unaffected.
+
+## [0.3.0] - 2026-05-25
 
 A notifications release. No data migration required; the persisted session
 format is unchanged.
@@ -39,7 +67,6 @@ format is unchanged.
 
 - **Exactly one clean Claude notification per turn.** Claude Code emits its own intermediate terminal notifications alongside swarm's Stop hook, which could double-notify or show a non-final message; the Stop hook now tags its notification with a sentinel so a Claude pane keeps only that one, carrying the true last assistant message.
 - **Regaining window focus** now clears the visible pane's attention state and marks its notifications read, without needing an extra click into the terminal.
-- **Linux build.** The freedesktop notification click handler called `notify-rust`'s `wait_for_action` against the wrong (async/`ActionResponse`) signature, breaking the Linux build; it now uses the synchronous `FnOnce(&str)` API. macOS and Windows were unaffected.
 
 ### Internal
 
@@ -119,7 +146,11 @@ First public release.
 - Pre-1.0: interfaces and persisted snapshot format may change.
 - Licensed under **GPL-3.0-or-later**.
 
-[Unreleased]: https://github.com/seizeddev/swarm/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/seizeddev/swarm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/seizeddev/swarm/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/seizeddev/swarm/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/seizeddev/swarm/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/seizeddev/swarm/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/seizeddev/swarm/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/seizeddev/swarm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/seizeddev/swarm/releases/tag/v0.1.0

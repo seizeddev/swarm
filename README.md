@@ -51,9 +51,11 @@ Optional: install [`gh`](https://cli.github.com) and run `gh auth login` to enab
 - **Multi-project workspaces** — open several repos at once; switch from the rail, each keeps its own terminals, source control, and PRs.
 - **Infinite terminals + splits** — split right/down into a tiled layout with draggable dividers; sessions stay alive across tab and workspace switches.
 - **Notifications** — when an agent needs you, its tab and workspace light up, and when swarm is in the background a native desktop banner fires (with sound) carrying the agent's actual last message; click it to focus the window and jump to the pane. Picks up OSC 9 / OSC 99 (kitty) / OSC 777 sequences and the bell, with an in-app history (unread badge, click-to-pane), focus-aware suppression, and dedup.
-- **Session restore** — workspaces, split layout, and working dirs are rebuilt on launch; agents relaunch with their resume command (`claude --continue`, `codex resume --last`).
+- **Session restore (cmux-style)** — workspaces, split layout, and working dirs are rebuilt on launch, and each agent comes back where it left off: its session is resumed (`claude --resume <id>`, `codex resume <id>`, …) with its original launch flags preserved (e.g. `--dangerously-skip-permissions`).
 - **Source Control** — staged/unstaged groups, stage/unstage, commit, GitHub-style per-file diffs (libgit2, no shelling out to `git`).
+- **Right-click everywhere** — context menus across terminals, the diff tree, PR rows, and tabs, with git write-ops (discard, checkout, create branch, reset, revert), PR checkout, and reveal-in-Finder.
 - **Pull Requests** — open PRs with passing / failing / pending checks, grouped by author (via the GitHub CLI; no tokens stored by swarm).
+- **Paste screenshots** — paste an image into a terminal and swarm hands the agent a file path it can read (the way cmux / WezTerm / iTerm2 do).
 - **Agent-aware** — detects installed CLIs (Claude Code, Codex, Gemini, OpenCode, Amp, Cursor, Aider) and launches them in the right directory.
 
 ## Architecture
