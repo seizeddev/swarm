@@ -19,6 +19,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Native (out-of-WebView) clipboard read. The menu "Paste" reads here instead of
+# `navigator.clipboard.readText()` — that JS API raises WKWebView's modal DOM-paste
+# permission prompt (a second "Paste" button + main-thread stall); reading in the
+# native process sidesteps it entirely. (Ctrl+V is unaffected — it's a real paste event.)
+tauri-plugin-clipboard-manager = "2"
 # Self-update: checks the GitHub release endpoint, downloads + verifies the
 # signed artifact, and installs it. `process` provides relaunch() after install.
 tauri-plugin-process = "2"

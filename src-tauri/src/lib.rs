@@ -368,6 +368,19 @@ fn save_clipboard_image(data: String, ext: String) -> AppResult<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Read the system clipboard's text in the native process. The terminal's
+/// context-menu "Paste" calls this instead of `navigator.clipboard.readText()`:
+/// that JS API raises WKWebView's modal DOM-paste permission prompt (the stray
+/// second "Paste" button, plus a multi-second main-thread stall while its nested
+/// run loop is up). Reading via the OS clipboard here has no WebView gate. Returns
+/// the empty string when the clipboard holds no text (e.g. an image), so the
+/// caller simply pastes nothing rather than erroring.
+#[tauri::command]
+fn read_clipboard_text(app: tauri::AppHandle) -> AppResult<String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt as _;
+    Ok(app.clipboard().read_text().unwrap_or_default())
+}
+
 /// Emit a native notification and, on click, focus the window and tell the
 /// frontend which pane to open (`notif:activate`). macOS only: `send_notification`
 /// blocks until the user interacts, so it runs on a detached thread — one cheap
@@ -692,6 +705,7 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init());
     // Self-update plugins are desktop-only; the JS side drives check/install.
     #[cfg(desktop)]
@@ -870,6 +884,7 @@ pub fn run() {
             save_session,
             load_session,
             save_clipboard_image,
+            read_clipboard_text,
             events_dir,
             prepare_codex_home,
             notify_os,

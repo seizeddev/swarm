@@ -509,14 +509,20 @@ export function Terminal({
   };
 
   // Menu-triggered paste: the clipboard isn't carried on a synthetic event, so
-  // read it explicitly. Image paste stays on the native event path (the File
-  // ref is only live there); this covers text, which is the common case.
+  // read it explicitly. Read via the *native* clipboard (the Rust core), NOT
+  // `navigator.clipboard.readText()` — the latter raises WKWebView's modal
+  // DOM-paste permission prompt (a stray second "Paste" button + a multi-second
+  // main-thread stall). Image paste stays on the native event path (the File ref
+  // is only live there); this covers text, the common case. Refocus the canvas
+  // afterwards so keystrokes land immediately (the menu click took focus).
   const pasteFromClipboard = async () => {
     try {
-      const text = await navigator.clipboard?.readText();
+      const text = await api.readClipboardText();
       if (text) pasteText(text);
     } catch {
-      /* clipboard read denied — nothing to paste */
+      /* clipboard read failed — nothing to paste */
+    } finally {
+      wrapRef.current?.focus();
     }
   };
 

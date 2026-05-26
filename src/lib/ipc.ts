@@ -100,6 +100,9 @@ export const api = {
   // then pastes into the PTY so a CLI agent can read the image off disk.
   saveClipboardImage: (data: string, ext: string) =>
     invoke<string>("save_clipboard_image", { data, ext }),
+  // Native clipboard read — used by the menu "Paste" to dodge WKWebView's
+  // DOM-paste permission prompt that `navigator.clipboard.readText()` raises.
+  readClipboardText: () => invoke<string>("read_clipboard_text"),
   ptyResize: (id: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { id, cols, rows }),
   // Scroll the viewport through scrollback by `delta` lines (>0 = back into

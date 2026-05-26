@@ -44,6 +44,9 @@ allow = [
   "CC0-1.0",
   "MIT-0",
   "CDLA-Permissive-2.0",
+  # Boost Software License — permissive, GPL-3.0-compatible. Pulled in by
+  # tauri-plugin-clipboard-manager's Windows backend (clipboard-win, error-code).
+  "BSL-1.0",
   "GPL-3.0-or-later",
 ]
 
