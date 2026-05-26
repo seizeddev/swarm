@@ -12,7 +12,7 @@ const TEXT_DECODER = new TextDecoder();
 
 // Wire format version — must match WIRE_VERSION in terminal.rs. A frame whose
 // first byte differs is from an incompatible core and is dropped (no-op).
-export const WIRE_VERSION = 2;
+const WIRE_VERSION = 2;
 
 // Header: u8 version · u8 kind · u8 cursorVisible · u8 _reserved · u16 cols ·
 // u16 rows · u16 cursorX · i32 cursorY · u32 mode · u32 displayOffset ·

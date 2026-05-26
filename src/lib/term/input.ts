@@ -206,8 +206,8 @@ export function encodeMouse(e: MouseEventInfo, mode: number): string | null {
 // told the run is a paste — so it won't treat embedded newlines as Enter, and the
 // multi-line execution-guard confirm in the orchestrator can be skipped. Otherwise
 // the text is sent verbatim (and the orchestrator keeps the confirm).
-export const BRACKET_PASTE_START = `${ESC}[200~`;
-export const BRACKET_PASTE_END = `${ESC}[201~`;
+const BRACKET_PASTE_START = `${ESC}[200~`;
+const BRACKET_PASTE_END = `${ESC}[201~`;
 export const pasteIsBracketed = (mode: number): boolean => hasMode(mode, M_BRACKETED_PASTE);
 export function wrapPaste(text: string, mode: number): string {
   return pasteIsBracketed(mode) ? `${BRACKET_PASTE_START}${text}${BRACKET_PASTE_END}` : text;
