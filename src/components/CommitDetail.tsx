@@ -90,7 +90,14 @@ export function CommitDetail({
   }, [repoPath, oid]);
 
   const files = useMemo(() => parseCommitPatch(patch), [patch]);
-  if (!detail) return <div className="p-6 text-sm text-[var(--color-muted)]">Loading…</div>;
+  if (!detail)
+    return (
+      <div className="flex flex-col gap-3 p-6" aria-busy="true" aria-label="Loading commit">
+        <div className="skeleton h-5 w-2/3" />
+        <div className="skeleton h-3.5 w-2/5" />
+        <div className="skeleton mt-3 h-24 w-full" />
+      </div>
+    );
 
   const [title, ...rest] = detail.message.trim().split("\n");
   const body = rest.join("\n").trim();

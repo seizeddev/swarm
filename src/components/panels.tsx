@@ -44,7 +44,7 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
   conflicted: { letter: "!", color: "var(--color-warning)" },
 };
 
-function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-11 flex-none items-center justify-between px-4">
       <span className="label-caps font-semibold">{title}</span>
@@ -116,7 +116,7 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
             e.stopPropagation();
             staged ? unstage(f.path) : stage(f.path);
           }}
-          className="icon-btn h-5 w-5 opacity-0 transition group-hover:opacity-100"
+          className="icon-btn h-6 w-6 opacity-0 transition group-hover:opacity-100"
           title={staged ? "Unstage" : "Stage"}
         >
           {staged ? <Minus size={13} /> : <Plus size={13} />}

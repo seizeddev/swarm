@@ -37,12 +37,15 @@ export function PrView({
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<PrDetail | null>(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     setDetail(null);
+    setLoading(true);
     api
       .prDetail(repoPath, pr.number)
       .then(setDetail)
-      .catch(() => setDetail(null));
+      .catch(() => setDetail(null))
+      .finally(() => setLoading(false));
   }, [repoPath, pr.number]);
 
   const checks = pr.checks ? `Checks ${pr.checks}` : "No checks";
@@ -92,12 +95,31 @@ export function PrView({
             />
           </div>
 
+          {loading && (
+            <section
+              className="mt-8 flex flex-col gap-3"
+              aria-busy="true"
+              aria-label="Loading pull request"
+            >
+              <div className="skeleton h-3.5 w-1/4" />
+              <div className="skeleton h-4 w-full" />
+              <div className="skeleton h-4 w-5/6" />
+              <div className="skeleton h-4 w-2/3" />
+            </section>
+          )}
+
           {detail && detail.body.trim() && (
             <section className="mt-8">
               <SectionLabel>Description</SectionLabel>
               <div className="mt-3">
                 <Suspense
-                  fallback={<p className="text-base text-[var(--color-faint)]">Rendering…</p>}
+                  fallback={
+                    <div className="flex flex-col gap-2.5" aria-busy="true">
+                      <div className="skeleton h-4 w-full" />
+                      <div className="skeleton h-4 w-4/5" />
+                      <div className="skeleton h-4 w-2/3" />
+                    </div>
+                  }
                 >
                   <Markdown>{detail.body.trim()}</Markdown>
                 </Suspense>

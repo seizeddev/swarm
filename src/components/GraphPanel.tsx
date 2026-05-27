@@ -8,6 +8,7 @@ import { buildGraph, laneColor } from "../lib/graph";
 import { useActiveWorkspace, useStore } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
+import { PanelHeader } from "./panels";
 import type { MenuItem } from "../lib/menu";
 import type { CommitInfo } from "../lib/types";
 
@@ -145,14 +146,11 @@ export function GraphPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-11 flex-none items-center justify-between px-4">
-        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
-          History
-        </span>
+      <PanelHeader title="History">
         <button type="button" className="icon-btn h-7 w-7" title="Refresh" onClick={load}>
           <RefreshCw size={14} className={loading ? "spin" : ""} />
         </button>
-      </div>
+      </PanelHeader>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         <div className="relative" style={{ height: virt.getTotalSize(), minWidth: "100%" }}>

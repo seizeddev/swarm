@@ -265,7 +265,7 @@ export function TopBar() {
                   title="Close terminal"
                   // The active tab keeps its × visible (you can always close the
                   // current terminal at a glance); inactive tabs reveal it on hover.
-                  className={`icon-btn h-5 w-5 transition ${
+                  className={`icon-btn h-6 w-6 transition ${
                     active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                   }`}
                 >

@@ -366,7 +366,15 @@ export function DiffEditor({
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} className="absolute inset-0 overflow-auto">
           {loading ? (
-            <div className="p-4 text-sm text-[var(--color-muted)]">Loading diff…</div>
+            <div className="flex flex-col gap-2 p-4" aria-busy="true" aria-label="Loading diff">
+              {Array.from({ length: 14 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="skeleton h-3.5"
+                  style={{ width: `${45 + ((i * 41) % 50)}%` }}
+                />
+              ))}
+            </div>
           ) : view.length === 0 ? (
             <div className="p-4 text-sm text-[var(--color-muted)]">
               No textual diff (binary or unchanged).
