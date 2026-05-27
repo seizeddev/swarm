@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { useEffect, useRef, useState } from "react";
+import { Modal } from "./Modal";
+import { useDialogStore } from "../lib/dialog";
+
+/**
+ * Renders the active dialog request (see lib/dialog.ts) over the shared Modal.
+ * Mounted once in App. Confirm/cancel settle the request's Promise; closing the
+ * Modal (Escape / backdrop) counts as cancel — false for confirm, null for prompt.
+ */
+export function DialogHost() {
+  const current = useDialogStore((s) => s.current);
+  const resolveCurrent = useDialogStore((s) => s.resolveCurrent);
+  const [value, setValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Reset the field whenever a new prompt becomes current, and focus it.
+  useEffect(() => {
+    if (current?.kind === "prompt") {
+      setValue(current.opts.defaultValue ?? "");
+      // Defer so the input exists and the Modal's mount animation has begun.
+      queueMicrotask(() => inputRef.current?.focus());
+    }
+  }, [current]);
+
+  if (!current) return null;
+
+  const { opts } = current;
+  const cancel = () => resolveCurrent(current.kind === "prompt" ? null : false);
+  const confirm = () => resolveCurrent(current.kind === "prompt" ? value : true);
+
+  return (
+    <Modal onClose={cancel} labelledBy="dialog-title">
+      <form
+        className="flex flex-col gap-4 p-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          confirm();
+        }}
+      >
+        <div className="flex flex-col gap-1.5">
+          <h2 id="dialog-title" className="text-md font-semibold">
+            {opts.title}
+          </h2>
+          {opts.body && <p className="text-sm text-[var(--color-muted)]">{opts.body}</p>}
+        </div>
+
+        {current.kind === "prompt" && (
+          <input
+            ref={inputRef}
+            className="field"
+            value={value}
+            placeholder={current.opts.placeholder}
+            aria-labelledby="dialog-title"
+            onChange={(e) => setValue(e.target.value)}
+          />
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn" onClick={cancel}>
+            {opts.cancelLabel ?? "Cancel"}
+          </button>
+          <button
+            type="submit"
+            className={opts.destructive ? "btn" : "btn btn-accent"}
+            style={
+              opts.destructive
+                ? {
+                    color: "var(--color-danger)",
+                    background: "var(--color-danger-soft)",
+                    borderColor: "rgba(224, 122, 114, 0.30)",
+                  }
+                : undefined
+            }
+          >
+            {opts.confirmLabel ?? (opts.destructive ? "Delete" : "Confirm")}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

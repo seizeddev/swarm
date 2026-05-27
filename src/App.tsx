@@ -11,6 +11,7 @@ import { TopBar } from "./components/TopBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { Shortcuts } from "./components/Shortcuts";
 import { AgentIntegrations } from "./components/AgentIntegrations";
+import { DialogHost } from "./components/DialogHost";
 import { buildCommands, type CommandHandlers } from "./lib/commands";
 import { dispatchDrop } from "./lib/drop";
 import { applyPanelWidth, currentPanelWidth } from "./lib/panel";
@@ -281,6 +282,7 @@ export default function App() {
       {paletteOpen && <CommandPalette handlers={handlers} onClose={() => setPaletteOpen(false)} />}
       {shortcutsOpen && <Shortcuts onClose={() => setShortcutsOpen(false)} />}
       {integrationsOpen && <AgentIntegrations onClose={() => setIntegrationsOpen(false)} />}
+      <DialogHost />
     </div>
   );
 }
