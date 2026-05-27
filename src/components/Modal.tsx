@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { focusablesWithin } from "../lib/focus";
 
 /**
  * A centred modal overlay — the shared surface for the command palette, the
@@ -21,6 +22,8 @@ export function Modal({
   align?: "center" | "top";
   labelledBy?: string;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -32,6 +35,34 @@ export function Modal({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
+  // Focus trap + restore: remember what was focused, move focus into the dialog,
+  // and on close hand it back — so keyboard users aren't dropped at the top of
+  // the page. (The Tab/Shift+Tab cycle itself is handled in onKeyDown below.)
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusables = dialogRef.current ? focusablesWithin(dialogRef.current) : [];
+    (focusables[0] ?? dialogRef.current)?.focus();
+    return () => previouslyFocused?.focus?.();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab" || !dialogRef.current) return;
+    const focusables = focusablesWithin(dialogRef.current);
+    if (focusables.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   return createPortal(
     <div
       className={`animate-fade-in fixed inset-0 z-[80] flex justify-center bg-black/50 ${
@@ -41,12 +72,15 @@ export function Modal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
-        className="surface animate-scale-in mx-4 flex max-h-[76vh] w-full max-w-lg flex-col overflow-hidden"
+        tabIndex={-1}
+        className="surface animate-scale-in mx-4 flex max-h-[76vh] w-full max-w-lg flex-col overflow-hidden focus:outline-none"
         // Clicks inside the card must not fall through to the backdrop's close.
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
       >
         {children}
       </div>
