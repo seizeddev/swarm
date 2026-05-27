@@ -22,6 +22,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useActiveWorkspace, useStore } from "../store";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
+import { checkGlyph } from "../lib/checks";
 import { openExternal } from "../lib/external";
 import type { ChangeStatus, FileChange } from "../lib/types";
 
@@ -245,14 +246,6 @@ export function SourceControlPanel() {
   );
 }
 
-function checkColor(checks: string | null) {
-  return checks === "failing"
-    ? "var(--color-danger)"
-    : checks === "pending"
-      ? "var(--color-warning)"
-      : "var(--color-muted)"; // passing/none stay neutral — monochrome chrome
-}
-
 export function PullRequestsPanel() {
   const ws = useActiveWorkspace();
   const { ghAvailable, openPr, loadPrs, prCheckout } = useStore(
@@ -283,28 +276,30 @@ export function PullRequestsPanel() {
     { label: "Copy Number", icon: <Copy size={14} />, onClick: () => copy(`#${p.number}`) },
   ];
 
-  const Row = (p: (typeof ws.prs)[number]) => (
-    <div
-      key={p.number}
-      data-active={ws.editor.type === "pr" && ws.editor.pr.number === p.number}
-      onClick={() => openPr(p)}
-      onContextMenu={(e) => openMenu(e, prMenu(p))}
-      className="row mb-1.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5"
-    >
-      <GitPullRequest
-        size={15}
-        className="mt-0.5 flex-none"
-        style={{ color: checkColor(p.checks) }}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-base font-medium">{p.title}</span>
-        <span className="nums mt-0.5 block truncate text-xs text-[var(--color-muted)]">
-          #{p.number} · {p.author} · {p.headRef}
+  const Row = (p: (typeof ws.prs)[number]) => {
+    const glyph = checkGlyph(p.checks);
+    const Glyph = glyph.Icon;
+    return (
+      <div
+        key={p.number}
+        data-active={ws.editor.type === "pr" && ws.editor.pr.number === p.number}
+        onClick={() => openPr(p)}
+        onContextMenu={(e) => openMenu(e, prMenu(p))}
+        className="row mb-1.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5"
+      >
+        <span className="mt-0.5 flex-none" title={glyph.label}>
+          <Glyph size={15} role="img" aria-label={glyph.label} style={{ color: glyph.color }} />
         </span>
-      </span>
-      {p.isDraft && <span className="pill pill-muted h-5 px-2 text-2xs">draft</span>}
-    </div>
-  );
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-base font-medium">{p.title}</span>
+          <span className="nums mt-0.5 block truncate text-xs text-[var(--color-muted)]">
+            #{p.number} · {p.author} · {p.headRef}
+          </span>
+        </span>
+        {p.isDraft && <span className="pill pill-muted h-5 px-2 text-2xs">draft</span>}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col">

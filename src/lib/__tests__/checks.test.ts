@@ -35,9 +35,7 @@ describe("checkGlyph", () => {
   // The a11y guarantee: status is encoded by SHAPE, so the four states are
   // distinguishable without relying on colour alone.
   it("gives a distinct glyph per state", () => {
-    const icons = new Set(
-      ["passing", "failing", "pending", null].map((v) => checkGlyph(v).Icon),
-    );
+    const icons = new Set(["passing", "failing", "pending", null].map((v) => checkGlyph(v).Icon));
     expect(icons.size).toBe(4);
   });
 });
