@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Every path is owned by the sole maintainer. Combined with branch protection
+# (require_code_owner_reviews on main), this gates PRs on owner review.
+* @valewnrt

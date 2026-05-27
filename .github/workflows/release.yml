@@ -101,6 +101,21 @@ jobs:
       # can verify (gh attestation verify) the binary came from this workflow at
       # this commit — not a forged upload to the release.
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: ${{ join(fromJSON(steps.tauri.outputs.artifactPaths), ',') }}
+
+      # The step above only writes to GitHub's attestation store, which
+      # Scorecard's Signed-Releases check can't see — it inspects release
+      # *assets*. So also upload the in-toto bundle (SLSA provenance v1) as a
+      # *.intoto.jsonl release asset. Asset name is unique per matrix job
+      # (os+target) to avoid collisions; --clobber makes reruns idempotent.
+      - name: Upload provenance to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash # git-bash on windows-latest too → one script for all 4 matrix OSes
+        run: |
+          dest="swarm-${{ matrix.os }}-${{ matrix.target || 'default' }}.intoto.jsonl"
+          cp "${{ steps.attest.outputs.bundle-path }}" "$dest"
+          gh release upload "$GITHUB_REF_NAME" "$dest" --clobber
