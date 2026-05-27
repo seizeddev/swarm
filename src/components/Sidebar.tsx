@@ -554,7 +554,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           <div
             className="m-3 rounded-xl border p-3 text-sm"
             style={{
-              borderColor: "rgba(255, 107, 107, 0.30)",
+              borderColor: "rgba(224, 122, 114, 0.30)",
               background: "var(--color-danger-soft)",
               color: "var(--color-danger)",
             }}

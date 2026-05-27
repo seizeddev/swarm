@@ -145,11 +145,7 @@ export function PrView({
 }
 
 function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="flex items-center text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
-      {children}
-    </p>
-  );
+  return <p className="label-caps flex items-center font-semibold">{children}</p>;
 }
 
 function StatusRow({

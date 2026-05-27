@@ -33,8 +33,8 @@ function copy(text: string) {
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
 const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
-  added: { letter: "A", color: "#c9c6c0" },
-  untracked: { letter: "U", color: "#c9c6c0" },
+  added: { letter: "A", color: "var(--color-text)" },
+  untracked: { letter: "U", color: "var(--color-text)" },
   modified: { letter: "M", color: "var(--color-muted)" },
   deleted: { letter: "D", color: "var(--color-danger)" },
   renamed: { letter: "R", color: "var(--color-muted)" },
@@ -45,9 +45,7 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
 function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-11 flex-none items-center justify-between px-4">
-      <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
-        {title}
-      </span>
+      <span className="label-caps font-semibold">{title}</span>
       <div className="flex items-center gap-1">{children}</div>
     </div>
   );
@@ -204,9 +202,7 @@ export function SourceControlPanel() {
         {staged.length > 0 && (
           <>
             <div className="flex items-center justify-between px-1 py-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                Staged ({staged.length})
-              </span>
+              <span className="label-caps font-semibold">Staged ({staged.length})</span>
               <button
                 type="button"
                 className="icon-btn h-6 w-6"
@@ -223,9 +219,7 @@ export function SourceControlPanel() {
         )}
 
         <div className="flex items-center justify-between px-1 py-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-            Changes ({unstaged.length})
-          </span>
+          <span className="label-caps font-semibold">Changes ({unstaged.length})</span>
           {unstaged.length > 0 && (
             <button
               type="button"
@@ -335,13 +329,11 @@ export function PullRequestsPanel() {
           <>
             {mine.length > 0 && (
               <>
-                <p className="px-1 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                  Created by me
-                </p>
+                <p className="px-1 py-1.5 label-caps font-semibold">Created by me</p>
                 {mine.map(Row)}
               </>
             )}
-            <p className="px-1 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+            <p className="px-1 py-1.5 label-caps font-semibold">
               {mine.length ? "All open" : "Open"}
             </p>
             {others.map(Row)}
