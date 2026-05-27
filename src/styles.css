@@ -34,7 +34,10 @@
      Tiers ≈ 93 / 58 / 40 % white = primary / muted / faint. */
   --color-text: rgba(255, 255, 255, 0.93);
   --color-muted: rgba(255, 255, 255, 0.58);
-  --color-faint: rgba(255, 255, 255, 0.4);
+  /* 0.53, not the old 0.40 — faint at 0.40 was ~3.8:1 on --color-bg (below the
+     WCAG-AA 4.5:1 floor for body text); 0.53 lifts it to ~5.7:1 while still
+     reading as the quietest tier. */
+  --color-faint: rgba(255, 255, 255, 0.53);
 
   --color-accent: rgba(255, 255, 255, 0.93);
   --color-accent-2: #ffffff;
@@ -58,6 +61,29 @@
 
   --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
+
+  /* The app owns its own typographic scale and overrides Tailwind's defaults —
+     a modular ladder so every chrome label/body/heading snaps to one of these
+     rungs instead of the dozen ad-hoc half-pixel sizes (12.5/11.5/13.5…) that
+     had accreted across components. Each rung pairs a default line-height (the
+     `--text-*--line-height` Tailwind reads). NOTE: this governs UI/chrome text
+     only — the terminal grid (.term) and the monospace code/diff line metric are
+     measured, integer-device-pixel-locked functional values and are NOT on this
+     scale. */
+  --text-2xs: 10px; /* pills, badges, terminal count, "missing" */
+  --text-2xs--line-height: 14px;
+  --text-xs: 11px; /* uppercase labels, kbd, faint metadata */
+  --text-xs--line-height: 16px;
+  --text-sm: 12px; /* secondary body */
+  --text-sm--line-height: 16px;
+  --text-base: 13px; /* primary body / rows / menus */
+  --text-base--line-height: 18px;
+  --text-md: 14px; /* buttons, inputs */
+  --text-md--line-height: 20px;
+  --text-lg: 18px; /* empty-view headings */
+  --text-lg--line-height: 24px;
+  --text-2xl: 26px; /* PR-title hero */
+  --text-2xl--line-height: 30px;
 }
 
 /* ── Design scales ────────────────────────────────────────────────────
@@ -473,6 +499,61 @@ svg.lucide {
     height: 0.5px;
     background: var(--color-border);
   }
+
+  /* The one canonical interactive menu row (command palette, context menu,
+     dropdown items). Replaces the per-call-site hover tints that had drifted
+     to 0.02/0.04/0.06, and gives every item a real keyboard focus ring — the
+     bespoke menu buttons had none. Width/padding/gap come from the call site;
+     this owns the interaction states. */
+  .menu-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    border-radius: var(--radius-control);
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .menu-item:hover {
+    background: var(--tint-hover);
+  }
+  .menu-item:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+  .menu-item:disabled,
+  .menu-item[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Section labels — the small uppercase headers above lists/panels. Unifies the
+     ~6 hand-rolled variants (some tracking-wide, some -wider, different sizes)
+     into one rung of the type scale. */
+  .label-caps {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-muted);
+  }
+
+  /* Loading placeholder — a quiet brightness sweep over a recessed bar, used in
+     place of "Loading…" text while diff/PR/commit data streams in. The sweep
+     rests (no animation) under prefers-reduced-motion via the global rule below. */
+  .skeleton {
+    background: var(--color-recessed);
+    border-radius: var(--radius-chip);
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.05) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s var(--ease-out) infinite;
+  }
 }
 
 /* ── Terminal grid ───────────────────────────────────────────────── */
@@ -585,6 +666,14 @@ svg.lucide {
   }
   to {
     opacity: 1;
+  }
+}
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
   }
 }
 @keyframes scale-in {
