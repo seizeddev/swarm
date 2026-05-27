@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { clampMenuPosition, type MenuItem, type MenuState } from "../lib/menu";
+import { rovingIndex } from "../lib/roving";
 
 /**
  * Tiny hook that owns one menu's open/closed state. `open(e, items)` summons it
@@ -31,6 +32,19 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
   // Render off-screen for one frame, measure, then place clamped — avoids a
   // flash at the raw cursor point when the menu would overflow an edge.
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Keyboard nav: the index of the focused actionable item. Refs to each
+  // actionable button let ↑/↓/Home/End move focus across them.
+  const [activeIdx, setActiveIdx] = useState(0);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Focus the first item when the menu opens (so it's keyboard-operable
+  // immediately); rAF lets the buttons mount + the clamped position settle first.
+  useEffect(() => {
+    if (!menu) return;
+    setActiveIdx(0);
+    const r = requestAnimationFrame(() => itemRefs.current[0]?.focus());
+    return () => cancelAnimationFrame(r);
+  }, [menu]);
 
   useLayoutEffect(() => {
     if (!menu) {
@@ -66,6 +80,20 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
 
   if (!menu) return null;
 
+  // Map each entry to its actionable-item index (-1 for separators, headers, and
+  // disabled items — none of which take focus), so roving navigation skips them.
+  let actionCount = 0;
+  const actionIndex = menu.items.map((item) =>
+    item.kind === "separator" || item.kind === "header" || item.disabled ? -1 : actionCount++,
+  );
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const next = rovingIndex(activeIdx, e.key, actionCount);
+    if (next === null) return;
+    e.preventDefault();
+    setActiveIdx(next);
+    itemRefs.current[next]?.focus();
+  };
+
   // Portal to <body> so the menu escapes every overflow/transform ancestor — a
   // panel's `overflow-auto` plus the `transform`-based entrance animations would
   // otherwise clip a fixed-positioned child (the menu was cut off at the panel
@@ -83,6 +111,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
       }}
       // Stop a click inside from bubbling to row/pane handlers underneath.
       onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={onKeyDown}
     >
       {menu.items.map((item, i) => {
         if (item.kind === "separator") return <div key={i} className="divider my-1" />;
@@ -95,17 +124,22 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
               {item.label}
             </p>
           );
+        const ai = actionIndex[i];
         return (
           <button
             type="button"
             key={i}
+            ref={(el) => {
+              if (ai >= 0) itemRefs.current[ai] = el;
+            }}
             role="menuitem"
             disabled={item.disabled}
+            tabIndex={ai === activeIdx ? 0 : -1}
             onClick={() => {
               onClose();
               item.onClick();
             }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06] disabled:cursor-default disabled:opacity-40"
+            className="menu-item gap-2.5 px-2 py-2 text-base"
             style={item.destructive ? { color: "var(--color-danger)" } : undefined}
           >
             {item.icon && (
