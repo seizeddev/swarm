@@ -236,7 +236,7 @@ function RailUpdate() {
           The pl-2 wrapper is a hover bridge (abuts the icon, no dead gap), so
           the mouse can travel from icon to card without the popover flickering.
           pointer-events flip on so links/buttons inside are clickable. */}
-      <div className="pointer-events-none absolute bottom-0 left-full z-50 pl-2 opacity-0 transition-opacity duration-[var(--dur-fast)] group-hover:pointer-events-auto group-hover:opacity-100">
+      <div className="pointer-events-none absolute bottom-0 left-full z-50 pl-2 opacity-0 transition-opacity duration-[var(--dur-fast)] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <div className="surface animate-scale-in w-64 p-3">
           <div className="flex items-center gap-2.5">
             <span
