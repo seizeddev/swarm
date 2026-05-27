@@ -22,7 +22,7 @@ import {
   TERM_SELECTION,
 } from "../theme";
 import type { CellMetrics } from "./metrics";
-import type { GlyphAtlas } from "./atlas";
+import { ATLAS_PX, type GlyphAtlas } from "./atlas";
 import type { RenderFrame, RendererBackend } from "./renderer";
 import { cellInRange } from "./select";
 
@@ -105,8 +105,6 @@ function link(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram 
   }
   return p;
 }
-
-const ATLAS_PX = 2048;
 
 export class WebGL2Backend implements RendererBackend {
   readonly kind = "webgl2" as const;

@@ -29,7 +29,13 @@ export function glyphKey(char: string, flags: number, fg: string): string {
    need a real 2D context, unavailable in the node test env. glyphKey above (the
    only pure logic) is exported and unit-tested; the rest is exercised live. */
 
-const ATLAS_PX = 2048; // texture budget per axis (well within every GPU's limit)
+// Texture budget per axis (well within every GPU's limit). 1024² (4 MB CPU backing +
+// 4 MB GPU texture) holds ~900 glyph slots at the current metrics — far more than a
+// terminal needs (ASCII + box-drawing + a few hundred styled/coloured variants) — and
+// the LRU eviction below degrades gracefully if exceeded. Shared with webgl2.ts for
+// UV normalisation: the two MUST agree or every glyph UV is wrong (skewed text), so
+// this is the single source of truth — don't re-declare the literal there.
+export const ATLAS_PX = 1024;
 
 // Transparent gutter (device px) reserved on the right and bottom of every slot.
 // The backends sample exactly the glyph's cellW×cellH box from the slot origin,

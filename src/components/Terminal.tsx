@@ -88,6 +88,9 @@ export function Terminal({
   const fitStable = useRef<{ cols: number; rows: number } | null>(null);
   const lastSent = useRef<{ cols: number; rows: number } | null>(null);
   const resizeTimer = useRef<number | undefined>(undefined);
+  // Debounce timer for tearing down a hidden pane's GPU/canvas resources (see the
+  // [visible] effect): fast tab-flipping mustn't thrash teardown/rebuild.
+  const releaseTimer = useRef<number | undefined>(undefined);
   const wPctRef = useRef(wPct);
   const hPctRef = useRef(hPct);
   // CSS-px cell size, derived from the (device-px) metrics — used for hit-testing
@@ -171,6 +174,52 @@ export function Terminal({
     if (!canvas || !m || !atlas) return;
     rendererRef.current?.dispose();
     rendererRef.current = createRenderer(canvas, m, atlas, rebuildRenderer);
+    const dims = lastSent.current;
+    if (dims) applyCanvasSize(dims.cols, dims.rows);
+    gridRef.current.markAllDirty();
+    scheduleRender();
+  };
+
+  // ── Hidden-pane resource release ──────────────────────────────────────────────
+  // A pane that's off screen (an inactive tab / the editor open — never an unfocused
+  // *visible* split sibling, which must keep painting a live agent) holds an unused
+  // WebGL context + glyph atlas + full canvas drawing buffer. Free them while hidden
+  // and rebuild on show — the PTY (Rust) and the grid model live on, so re-show is
+  // lossless. Graphics memory then scales with *visible* panes, and we stop pinning a
+  // scarce WebGL context (~16/page) per background tab.
+  const releaseRenderer = () => {
+    if (!rendererRef.current) return;
+    if (raf.current != null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = undefined;
+    }
+    rendererRef.current.dispose();
+    rendererRef.current = null;
+    // WebGL's dispose() doesn't free the canvas backing store, and this also covers
+    // the Canvas2D fallback — sizing the element to 0 releases the drawing buffer.
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    atlasRef.current = null; // 4-MB backing now GC-able; gridRef/metricsRef/ptyIdRef/lastSent stay
+  };
+
+  const scheduleReleaseRenderer = () => {
+    if (releaseTimer.current != null) return;
+    releaseTimer.current = window.setTimeout(() => {
+      releaseTimer.current = undefined;
+      if (!visibleRef.current) releaseRenderer();
+    }, 750);
+  };
+
+  // Rebuild the atlas + renderer for a pane coming back on screen. measureMetrics()
+  // reconstructs both (its null-branches re-read font/DPR, so a background DPR change
+  // is handled), then we restore the committed size and repaint. ptySetVisible(true)
+  // makes Rust push a full frame, so there's no blank flash.
+  const restoreRenderer = () => {
+    if (rendererRef.current != null || ptyIdRef.current == null) return;
+    if (!measureMetrics()) return;
     const dims = lastSent.current;
     if (dims) applyCanvasSize(dims.cols, dims.rows);
     gridRef.current.markAllDirty();
@@ -379,6 +428,10 @@ export function Terminal({
         cancelAnimationFrame(fitRaf.current);
         fitRaf.current = undefined;
       }
+      if (releaseTimer.current != null) {
+        clearTimeout(releaseTimer.current);
+        releaseTimer.current = undefined;
+      }
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
@@ -458,9 +511,18 @@ export function Terminal({
     const id = ptyIdRef.current;
     if (id) api.ptySetVisible(id, visible).catch(() => {});
     if (visible) {
+      // Cancel any pending teardown first — a quick flip back mustn't release after
+      // we've decided to show. Restore is never debounced (instant repaint).
+      if (releaseTimer.current != null) {
+        clearTimeout(releaseTimer.current);
+        releaseTimer.current = undefined;
+      }
+      restoreRenderer();
       gridRef.current.markAllDirty();
       scheduleRender();
       requestFit();
+    } else {
+      scheduleReleaseRenderer();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
