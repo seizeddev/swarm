@@ -8,6 +8,7 @@ vi.mock("../lib/ipc", () => ({
   api: {
     registerRoot: vi.fn(),
     repoInfo: vi.fn(),
+    initRepo: vi.fn(),
     statusAndStats: vi.fn(),
     gitLog: vi.fn(),
     commitDetail: vi.fn(),
@@ -110,6 +111,7 @@ const repo = (path = "/repo"): RepoInfo => ({
   path,
   name: path.split("/").pop()!,
   headBranch: "main",
+  isRepo: true,
 });
 
 const INITIAL = {
@@ -224,6 +226,48 @@ describe("addWorkspace", () => {
     expect(s().error).toBe("not a git repository");
     expect(s().busy).toBe(false);
     expect(s().workspaces).toHaveLength(0);
+  });
+
+  it("opens a plain (non-git) folder without erroring, and skips git status/PR loads", async () => {
+    m.ghAvailable.mockResolvedValue(true);
+    m.repoInfo.mockResolvedValue({
+      path: "/new-project",
+      name: "new-project",
+      headBranch: null,
+      isRepo: false,
+    });
+    await s().addWorkspace("/new-project");
+    const st = s();
+    expect(st.error).toBeNull();
+    expect(st.workspaces).toHaveLength(1);
+    expect(st.workspaces[0].repo.isRepo).toBe(false);
+    expect(st.panes).toHaveLength(1); // terminal still spawns
+    // No git/PR commands run for a folder that isn't a repo yet.
+    expect(m.statusAndStats).not.toHaveBeenCalled();
+    expect(m.prList).not.toHaveBeenCalled();
+  });
+
+  it("initRepo turns an opened plain folder into a git repo and wires it up", async () => {
+    m.repoInfo.mockResolvedValue({
+      path: "/new-project",
+      name: "new-project",
+      headBranch: null,
+      isRepo: false,
+    });
+    await s().addWorkspace("/new-project");
+    m.initRepo.mockResolvedValue({
+      path: "/new-project",
+      name: "new-project",
+      headBranch: "main",
+      isRepo: true,
+    });
+    await s().initRepo();
+    const ws = s().workspaces[0];
+    expect(m.initRepo).toHaveBeenCalledWith("/new-project");
+    expect(ws.repo.isRepo).toBe(true);
+    expect(ws.repo.headBranch).toBe("main");
+    // Now that it's a repo, status is read.
+    expect(m.statusAndStats).toHaveBeenCalledWith("/new-project");
   });
 
   it("loads the gh login and PRs when gh is available", async () => {
@@ -1631,7 +1675,12 @@ describe("git write-ops (context-menu actions)", () => {
 
   it("checkoutRef moves HEAD: re-fetches repo info and bumps gitNonce", async () => {
     await s().addWorkspace("/repo");
-    m.repoInfo.mockResolvedValue({ path: "/repo", name: "repo", headBranch: "feature" });
+    m.repoInfo.mockResolvedValue({
+      path: "/repo",
+      name: "repo",
+      headBranch: "feature",
+      isRepo: true,
+    });
     await s().checkoutRef("feature");
     expect(m.checkoutRef).toHaveBeenCalledWith("/repo", "feature");
     expect(s().gitNonce).toBe(1);

@@ -3,6 +3,8 @@ export interface RepoInfo {
   path: string;
   name: string;
   headBranch: string | null;
+  // false when the opened path is a plain folder with no git repo yet.
+  isRepo: boolean;
 }
 
 export type ChangeStatus =

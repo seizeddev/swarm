@@ -128,17 +128,43 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
 
 export function SourceControlPanel() {
   const ws = useActiveWorkspace();
-  const { setCommitMsg, commit, stageAll, unstageAll, refreshStatus, busy } = useStore(
+  const { setCommitMsg, commit, stageAll, unstageAll, refreshStatus, initRepo, busy } = useStore(
     useShallow((s) => ({
       setCommitMsg: s.setCommitMsg,
       commit: s.commit,
       stageAll: s.stageAll,
       unstageAll: s.unstageAll,
       refreshStatus: s.refreshStatus,
+      initRepo: s.initRepo,
       busy: s.busy,
     })),
   );
   if (!ws) return null;
+
+  // A plain folder (no git repo yet) — offer to initialize one. Terminals/agents
+  // already work; this just turns on source control.
+  if (!ws.repo.isRepo) {
+    return (
+      <div className="flex h-full flex-col">
+        <PanelHeader title="Source Control" />
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <GitBranch size={22} className="text-[var(--color-muted)]" />
+          <p className="text-[13px] text-[var(--color-muted)]">
+            This folder isn’t a Git repository yet.
+          </p>
+          <button
+            type="button"
+            className="btn btn-accent"
+            disabled={busy}
+            onClick={() => initRepo()}
+          >
+            <GitBranch size={15} /> Initialize Repository
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const staged = ws.changes.filter((c) => c.staged);
   const unstaged = ws.changes.filter((c) => c.unstaged);
 

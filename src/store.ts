@@ -231,6 +231,7 @@ interface State {
   showTerminal(): void;
   setCommitMsg(s: string): void;
 
+  initRepo(wsId?: string): Promise<void>;
   stage(path: string): Promise<void>;
   unstage(path: string): Promise<void>;
   stageAll(): Promise<void>;
@@ -637,7 +638,7 @@ export const useStore = create<State>((set, get) => {
           for (const w of workspaces) {
             api.watchWorktree(w.id, w.repo.path).catch(() => {});
             get().refreshStatus(w.id);
-            if (gh) {
+            if (gh && w.repo.isRepo) {
               ghLoginOnce().then((l) => patch(w.id, { ghLogin: l }));
               get().loadPrs(w.id);
             }
@@ -677,7 +678,7 @@ export const useStore = create<State>((set, get) => {
         api.watchWorktree(id, repo.path).catch(() => {});
         get().addPane(undefined, id);
         await get().refreshStatus(id);
-        if (gh) {
+        if (gh && repo.isRepo) {
           ghLoginOnce().then((l) => patch(id, { ghLogin: l }));
           get().loadPrs(id);
         }
@@ -745,9 +746,31 @@ export const useStore = create<State>((set, get) => {
 
     async refreshStatus(wsId) {
       const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
-      if (!ws) return;
+      if (!ws || !ws.repo.isRepo) return; // a plain folder has no git status to read
       const { changes, stats } = await api.statusAndStats(ws.repo.path);
       patch(ws.id, { changes, diffStats: stats });
+    },
+
+    // Turn an opened plain folder into a git repo (the SCM panel's Initialize
+    // button). The same path everything else uses: re-read repo info, then wire
+    // up the watcher/status/PRs as a freshly-opened real repo would.
+    async initRepo(wsId) {
+      const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
+      if (!ws || ws.repo.isRepo) return;
+      set({ busy: true, error: null });
+      try {
+        const repo = await api.initRepo(ws.repo.path);
+        patch(ws.id, { repo });
+        await get().refreshStatus(ws.id);
+        if (get().ghAvailable) {
+          ghLoginOnce().then((l) => patch(ws.id, { ghLogin: l }));
+          get().loadPrs(ws.id);
+        }
+      } catch (e: any) {
+        set({ error: e?.message ?? String(e) });
+      } finally {
+        set({ busy: false });
+      }
     },
 
     setPanel(panel) {

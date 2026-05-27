@@ -51,6 +51,11 @@ export function GraphPanel() {
 
   const load = () => {
     if (!ws) return;
+    if (!ws.repo.isRepo) {
+      setCommits([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     api
       .gitLog(ws.repo.path, 300)
@@ -58,7 +63,7 @@ export function GraphPanel() {
       .finally(() => setLoading(false));
   };
   // Reload on repo switch and after any HEAD-mutating op (gitNonce bump).
-  useEffect(load, [ws?.repo.path, gitNonce]);
+  useEffect(load, [ws?.repo.path, ws?.repo.isRepo, gitNonce]);
 
   const commitMenu = (c: CommitInfo): MenuItem[] => [
     { kind: "header", label: c.short },

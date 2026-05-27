@@ -16,6 +16,9 @@ pub struct RepoInfo {
     pub path: String,
     pub name: String,
     pub head_branch: Option<String>,
+    /// `false` when `path` is a plain folder with no git repo yet. The workspace
+    /// still opens (terminals/agents work); the SCM panel offers to `git init`.
+    pub is_repo: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,16 +65,44 @@ fn repo_basename(repo: &Repository) -> String {
 }
 
 pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
-    let repo = open_main(path)?;
-    let wd = workdir(&repo)?;
-    let head = repo.head().ok();
-    Ok(RepoInfo {
-        path: wd.to_string_lossy().into_owned(),
-        name: repo_basename(&repo),
-        head_branch: head
-            .as_ref()
-            .and_then(|h| h.shorthand().ok().map(str::to_owned)),
-    })
+    match open_main(path) {
+        Ok(repo) => {
+            let wd = workdir(&repo)?;
+            let head = repo.head().ok();
+            Ok(RepoInfo {
+                path: wd.to_string_lossy().into_owned(),
+                name: repo_basename(&repo),
+                head_branch: head
+                    .as_ref()
+                    .and_then(|h| h.shorthand().ok().map(str::to_owned)),
+                is_repo: true,
+            })
+        }
+        // Not a git repo (and none in any parent): open it as a plain folder so the
+        // user can run terminals/agents in a fresh project dir and `git init` later.
+        Err(AppError::Git(e)) if e.code() == git2::ErrorCode::NotFound => Ok(folder_info(path)),
+        Err(e) => Err(e),
+    }
+}
+
+/// `RepoInfo` for a path that isn't a git repository yet.
+fn folder_info(path: &str) -> RepoInfo {
+    let name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "folder".into());
+    RepoInfo {
+        path: path.to_string(),
+        name,
+        head_branch: None,
+        is_repo: false,
+    }
+}
+
+/// `git init` a folder so it becomes a real repository, returning its fresh info.
+pub fn init_repo(path: &str) -> AppResult<RepoInfo> {
+    Repository::init(path)?;
+    repo_info(path)
 }
 
 fn short_oid(oid: &git2::Oid) -> String {
@@ -691,6 +722,35 @@ mod tests {
         let info = repo_info(path).unwrap();
         assert_eq!(info.name, dir.file_name().unwrap().to_string_lossy());
         assert!(info.head_branch.is_some());
+        assert!(info.is_repo);
+    }
+
+    #[test]
+    fn repo_info_on_plain_folder_reports_not_a_repo() {
+        // A fresh empty project dir with no git repo (and none in any parent)
+        // must open as a plain folder, not error — so the user can run terminals
+        // in it and `git init` later.
+        let dir = scratch();
+        let path = dir.to_str().unwrap();
+
+        let info = repo_info(path).unwrap();
+        assert!(!info.is_repo);
+        assert!(info.head_branch.is_none());
+        assert_eq!(info.name, dir.file_name().unwrap().to_string_lossy());
+        assert_eq!(info.path, path);
+    }
+
+    #[test]
+    fn init_repo_makes_a_plain_folder_a_repository() {
+        let dir = scratch();
+        let path = dir.to_str().unwrap();
+        assert!(!repo_info(path).unwrap().is_repo);
+
+        let info = super::init_repo(path).unwrap();
+        assert!(info.is_repo);
+        // It's a real repo now: a second open succeeds and status reads cleanly.
+        assert!(repo_info(path).unwrap().is_repo);
+        assert!(changes(path).unwrap().is_empty());
     }
 
     #[test]

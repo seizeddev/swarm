@@ -18,7 +18,12 @@ import { buildCommands, filterCommands, type CommandHandlers } from "../commands
 import { useStore } from "../../store";
 import type { RepoInfo } from "../types";
 
-const repo = (name: string): RepoInfo => ({ path: `/${name}`, name, headBranch: "main" });
+const repo = (name: string): RepoInfo => ({
+  path: `/${name}`,
+  name,
+  headBranch: "main",
+  isRepo: true,
+});
 
 const handlers = (): CommandHandlers => ({
   newWorkspace: vi.fn(),

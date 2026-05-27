@@ -49,6 +49,12 @@ async fn repo_info(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult
 }
 
 #[tauri::command]
+async fn init_repo(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<git::RepoInfo> {
+    reg.ensure_within_root(&path)?;
+    off_thread(move || git::init_repo(&path)).await
+}
+
+#[tauri::command]
 async fn file_diff_hunks(
     reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
@@ -914,6 +920,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             register_root,
             repo_info,
+            init_repo,
             file_diff_hunks,
             status_and_stats,
             git_log,

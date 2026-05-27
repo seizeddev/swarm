@@ -21,6 +21,7 @@ export const api = {
   // Must be called before any git/PTY command touches that root.
   registerRoot: (path: string) => invoke<void>("register_root", { path }),
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
+  initRepo: (path: string) => invoke<RepoInfo>("init_repo", { path }),
   fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>
     invoke<DiffHunk[]>("file_diff_hunks", { worktreePath, file, staged }),
   statusAndStats: (worktreePath: string) =>
