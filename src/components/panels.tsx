@@ -23,6 +23,7 @@ import { useActiveWorkspace, useStore } from "../store";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { checkGlyph } from "../lib/checks";
+import { confirmDialog } from "../lib/dialog";
 import { openExternal } from "../lib/external";
 import type { ChangeStatus, FileChange } from "../lib/types";
 
@@ -81,8 +82,15 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
       label: "Discard Changes",
       icon: <Undo2 size={14} />,
       destructive: true,
-      onClick: () => {
-        if (globalThis.confirm(`Discard changes to “${f.path}”?\n\nThis cannot be undone.`))
+      onClick: async () => {
+        if (
+          await confirmDialog({
+            title: `Discard changes to “${f.path}”?`,
+            body: "This cannot be undone.",
+            confirmLabel: "Discard",
+            destructive: true,
+          })
+        )
           discardFiles([f.path]);
       },
     },

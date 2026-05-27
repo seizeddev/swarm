@@ -12,6 +12,7 @@ import {
   splitId,
 } from "./lib/layout";
 import { loadSnap, saveSnap } from "./lib/persist";
+import { confirmDialog } from "./lib/dialog";
 import { notifyOS } from "./lib/notify";
 import { updater } from "./lib/updater";
 import type { AgentDef, DiffStatsInfo, FileChange, PrSummary, RepoInfo } from "./lib/types";
@@ -203,7 +204,7 @@ interface State {
   hydrate(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   closeWorkspace(id: string): void;
-  closeWorkspaceWithConfirm(id: string): void;
+  closeWorkspaceWithConfirm(id: string): Promise<void>;
   setActiveWorkspace(id: string): void;
   cycleWorkspace(dir: number): void;
   focusWorkspaceIndex(i: number): void;
@@ -721,7 +722,7 @@ export const useStore = create<State>((set, get) => {
     // work (a Claude / Codex session). A bare shell, or an empty workspace,
     // closes without a prompt. Shared by the rail's context menu and the
     // Project ▸ Close Project menu item (Cmd+Shift+W).
-    closeWorkspaceWithConfirm(id) {
+    async closeWorkspaceWithConfirm(id) {
       const ws = get().workspaces.find((w) => w.id === id);
       if (!ws) return;
       const running = get().panes.filter(
@@ -730,9 +731,12 @@ export const useStore = create<State>((set, get) => {
       if (running.length) {
         const kinds = [...new Set(running.map((p) => p.agentId))].join(", ");
         const plural = running.length > 1 ? "s" : "";
-        const ok = globalThis.confirm(
-          `Close “${ws.repo.name}”?\n\n${running.length} running agent${plural} (${kinds}) will be stopped.`,
-        );
+        const ok = await confirmDialog({
+          title: `Close “${ws.repo.name}”?`,
+          body: `${running.length} running agent${plural} (${kinds}) will be stopped.`,
+          confirmLabel: "Close",
+          destructive: true,
+        });
         if (!ok) return;
       }
       get().closeWorkspace(id);

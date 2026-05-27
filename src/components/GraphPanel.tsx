@@ -6,6 +6,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api } from "../lib/ipc";
 import { buildGraph, laneColor } from "../lib/graph";
 import { useActiveWorkspace, useStore } from "../store";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import type { CommitInfo } from "../lib/types";
@@ -73,16 +74,29 @@ export function GraphPanel() {
     {
       label: "Create Branch here…",
       icon: <GitBranch size={14} />,
-      onClick: () => {
-        const name = globalThis.prompt(`New branch at ${c.short}:`)?.trim();
+      onClick: async () => {
+        const name = (
+          await promptDialog({
+            title: "Create Branch",
+            body: `New branch starting at ${c.short}.`,
+            placeholder: "branch name",
+            confirmLabel: "Create",
+          })
+        )?.trim();
         if (name) createBranchAt(name, c.oid);
       },
     },
     {
       label: "Revert Commit",
       icon: <Undo2 size={14} />,
-      onClick: () => {
-        if (globalThis.confirm(`Revert ${c.short}?\n\nCreates a new commit undoing its changes.`))
+      onClick: async () => {
+        if (
+          await confirmDialog({
+            title: `Revert ${c.short}?`,
+            body: "Creates a new commit undoing its changes.",
+            confirmLabel: "Revert",
+          })
+        )
           revertCommit(c.oid);
       },
     },
@@ -95,11 +109,14 @@ export function GraphPanel() {
       label: "Reset to Here (discard)",
       icon: <GitCommitHorizontal size={14} />,
       destructive: true,
-      onClick: () => {
+      onClick: async () => {
         if (
-          globalThis.confirm(
-            `Hard-reset to ${c.short}?\n\nAll uncommitted changes will be lost. This cannot be undone.`,
-          )
+          await confirmDialog({
+            title: `Hard-reset to ${c.short}?`,
+            body: "All uncommitted changes will be lost. This cannot be undone.",
+            confirmLabel: "Hard Reset",
+            destructive: true,
+          })
         )
           resetTo(c.oid, "hard");
       },

@@ -25,6 +25,7 @@ import {
   type Cell,
 } from "../lib/term/select";
 import { openExternal } from "../lib/external";
+import { confirmDialog } from "../lib/dialog";
 import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
@@ -594,13 +595,13 @@ export function Terminal({
       if (image) void pasteImage(id, image.file, image.ext);
       return;
     }
-    pasteText(text);
+    void pasteText(text);
   };
 
   // Write clipboard text to the PTY: bracketed when the program asked for it,
   // otherwise guarded against accidentally auto-running multi-line content.
   // Shared by the paste event and the context-menu "Paste" item.
-  const pasteText = (text: string) => {
+  const pasteText = async (text: string) => {
     const id = ptyIdRef.current;
     if (!id || !text) return;
     const mode = gridRef.current.mode;
@@ -611,9 +612,12 @@ export function Terminal({
       const multiline = /[\r\n]/.test(text.replace(/[\r\n]+$/, ""));
       if (multiline) {
         const count = text.replace(/[\r\n]+$/, "").split(/\r\n|\r|\n/).length;
-        if (!window.confirm(`Paste ${count} lines into the terminal? Lines may run as commands.`)) {
-          return;
-        }
+        const ok = await confirmDialog({
+          title: `Paste ${count} lines into the terminal?`,
+          body: "Each newline may run as a separate command.",
+          confirmLabel: "Paste",
+        });
+        if (!ok) return;
       }
     }
     api.ptyWrite(id, wrapped);
@@ -629,7 +633,7 @@ export function Terminal({
   const pasteFromClipboard = async () => {
     try {
       const text = await api.readClipboardText();
-      if (text) pasteText(text);
+      if (text) await pasteText(text);
     } catch {
       /* clipboard read failed — nothing to paste */
     } finally {

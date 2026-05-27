@@ -68,9 +68,16 @@ vi.mock("../lib/notify", () => ({
   notifyOS: vi.fn(),
 }));
 
+// Mock the dialog boundary: closeWorkspaceWithConfirm awaits confirmDialog, so
+// the spy lets a test decide the user's answer without rendering DialogHost.
+vi.mock("../lib/dialog", () => ({
+  confirmDialog: vi.fn(),
+}));
+
 import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
 import { notifyOS } from "../lib/notify";
+import { confirmDialog } from "../lib/dialog";
 import {
   __resetNetworkCaches,
   CLAUDE_NOTIF_SENTINEL,
@@ -81,6 +88,7 @@ import {
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const notifyOSMock = notifyOS as unknown as ReturnType<typeof vi.fn>;
+const confirmDialogMock = confirmDialog as unknown as ReturnType<typeof vi.fn>;
 
 const SHELL: AgentDef = {
   id: "shell",
@@ -640,17 +648,16 @@ describe("workspace navigation", () => {
     expect(m.unwatchWorktree).toHaveBeenCalledWith(ids[1]);
   });
 
-  it("closeWorkspaceWithConfirm closes a shell-only workspace without prompting", () => {
+  it("closeWorkspaceWithConfirm closes a shell-only workspace without prompting", async () => {
     const ids = s().workspaces.map((w) => w.id);
-    const confirm = vi.fn().mockReturnValue(false);
-    vi.stubGlobal("confirm", confirm);
-    s().closeWorkspaceWithConfirm(ids[1]);
-    expect(confirm).not.toHaveBeenCalled();
+    confirmDialogMock.mockResolvedValue(false);
+    await s().closeWorkspaceWithConfirm(ids[1]);
+    expect(confirmDialogMock).not.toHaveBeenCalled();
     expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
-    vi.unstubAllGlobals();
+    confirmDialogMock.mockReset();
   });
 
-  it("closeWorkspaceWithConfirm prompts when a running agent would be killed", () => {
+  it("closeWorkspaceWithConfirm prompts when a running agent would be killed", async () => {
     const ids = s().workspaces.map((w) => w.id);
     m.ptyKill.mockResolvedValue(undefined);
     // Promote ids[1]'s pane to a live Claude agent (non-shell + a PTY).
@@ -659,19 +666,18 @@ describe("workspace navigation", () => {
         p.workspaceId === ids[1] ? { ...p, agentId: "claude", ptyId: "pty-1" } : p,
       ),
     }));
-    const confirm = vi.fn().mockReturnValue(false);
-    vi.stubGlobal("confirm", confirm);
-    s().closeWorkspaceWithConfirm(ids[1]);
+    confirmDialogMock.mockResolvedValue(false);
+    await s().closeWorkspaceWithConfirm(ids[1]);
     // Declined → nothing closes.
-    expect(confirm).toHaveBeenCalledOnce();
+    expect(confirmDialogMock).toHaveBeenCalledOnce();
     expect(s().workspaces.map((w) => w.id)).toEqual(ids);
 
-    confirm.mockReturnValue(true);
-    s().closeWorkspaceWithConfirm(ids[1]);
+    confirmDialogMock.mockResolvedValue(true);
+    await s().closeWorkspaceWithConfirm(ids[1]);
     // Accepted → closed, and its live PTY reaped.
     expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
     expect(m.ptyKill).toHaveBeenCalledWith("pty-1");
-    vi.unstubAllGlobals();
+    confirmDialogMock.mockReset();
   });
 
   it("closeWorkspace persists immediately so the close survives a quit", () => {
@@ -685,13 +691,12 @@ describe("workspace navigation", () => {
     expect(snap.workspaces.map((w: { id: string }) => w.id)).toEqual([ids[1], ids[2]]);
   });
 
-  it("closeWorkspaceWithConfirm is a no-op for an unknown id", () => {
-    const confirm = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("confirm", confirm);
-    s().closeWorkspaceWithConfirm("nope");
-    expect(confirm).not.toHaveBeenCalled();
+  it("closeWorkspaceWithConfirm is a no-op for an unknown id", async () => {
+    confirmDialogMock.mockResolvedValue(true);
+    await s().closeWorkspaceWithConfirm("nope");
+    expect(confirmDialogMock).not.toHaveBeenCalled();
     expect(s().workspaces).toHaveLength(3);
-    vi.unstubAllGlobals();
+    confirmDialogMock.mockReset();
   });
 });
 
