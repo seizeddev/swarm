@@ -333,12 +333,12 @@ export function DiffEditor({
   return (
     <div ref={rootRef} className="flex h-full flex-col bg-[var(--color-bg)]">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
-        <span className="selectable truncate font-mono text-[12.5px] text-[var(--color-text)]">
+        <span className="selectable truncate font-mono text-base text-[var(--color-text)]">
           {file}
         </span>
-        {staged && <span className="pill h-5 px-2 text-[11px]">staged</span>}
+        {staged && <span className="pill h-5 px-2 text-xs">staged</span>}
         {!loading && (added > 0 || removed > 0) && (
-          <span className="nums flex-none font-mono text-[11px]">
+          <span className="nums flex-none font-mono text-xs">
             <span style={{ color: "var(--color-success)" }}>+{added}</span>{" "}
             <span style={{ color: "var(--color-danger)" }}>−{removed}</span>
           </span>

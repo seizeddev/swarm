@@ -129,7 +129,7 @@ export function GraphPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-11 flex-none items-center justify-between px-4">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           History
         </span>
         <button type="button" className="icon-btn h-7 w-7" title="Refresh" onClick={load}>
@@ -206,7 +206,7 @@ export function GraphPanel() {
                 {r.commit.refs.map((ref) => (
                   <span
                     key={ref}
-                    className="pill h-[18px] flex-none px-1.5 text-[10px]"
+                    className="pill h-[18px] flex-none px-1.5 text-2xs"
                     style={
                       r.commit.isHead
                         ? { background: "rgba(255,255,255,0.18)", color: "#fff" }
@@ -216,8 +216,8 @@ export function GraphPanel() {
                     {ref}
                   </span>
                 ))}
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">{r.commit.summary}</span>
-                <span className="flex-none font-mono text-[10px] text-[var(--color-faint)]">
+                <span className="min-w-0 flex-1 truncate text-base">{r.commit.summary}</span>
+                <span className="flex-none font-mono text-2xs text-[var(--color-faint)]">
                   {relTime(r.commit.time)}
                 </span>
               </div>
@@ -225,7 +225,7 @@ export function GraphPanel() {
           })}
 
           {!loading && !commits.length && (
-            <p className="p-4 text-[13px] text-[var(--color-muted)]">No commits.</p>
+            <p className="p-4 text-base text-[var(--color-muted)]">No commits.</p>
           )}
         </div>
       </div>

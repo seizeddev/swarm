@@ -73,13 +73,13 @@ export function CommandPalette({
           placeholder="Type a command…"
           spellCheck={false}
           autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-faint)]"
+          className="min-w-0 flex-1 bg-transparent text-md text-[var(--color-text)] outline-none placeholder:text-[var(--color-faint)]"
         />
       </div>
 
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {results.length === 0 ? (
-          <p className="px-2.5 py-6 text-center text-[13px] text-[var(--color-muted)]">
+          <p className="px-2.5 py-6 text-center text-base text-[var(--color-muted)]">
             No matching commands
           </p>
         ) : (
@@ -90,10 +90,10 @@ export function CommandPalette({
               data-active={i === active}
               onMouseMove={() => setActive(i)}
               onClick={() => run(cmd)}
-              className="row flex w-full items-center justify-between gap-3 border-transparent bg-transparent px-2.5 py-2 text-left text-[13px] text-[var(--color-text)]"
+              className="row flex w-full items-center justify-between gap-3 border-transparent bg-transparent px-2.5 py-2 text-left text-base text-[var(--color-text)]"
             >
               <span className="truncate">{cmd.label}</span>
-              <span className="flex-none text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
+              <span className="flex-none text-xs uppercase tracking-wide text-[var(--color-faint)]">
                 {cmd.group}
               </span>
             </button>

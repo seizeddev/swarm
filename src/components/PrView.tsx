@@ -54,7 +54,7 @@ export function PrView({
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
         <GitPullRequest size={15} style={{ color: checkColor(pr.checks) }} />
-        <span className="nums text-[12.5px] text-[var(--color-muted)]">#{pr.number}</span>
+        <span className="nums text-base text-[var(--color-muted)]">#{pr.number}</span>
         <button type="button" className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
           <X size={14} />
         </button>
@@ -67,12 +67,12 @@ export function PrView({
             {pr.isDraft && <span className="pill pill-muted">draft</span>}
           </div>
 
-          <h1 className="selectable mt-3 text-[26px] font-bold leading-tight tracking-[-0.02em]">
+          <h1 className="selectable mt-3 text-2xl font-bold leading-tight tracking-[-0.02em]">
             {pr.title}
           </h1>
-          <p className="mt-2.5 text-[13px] text-[var(--color-muted)]">
+          <p className="mt-2.5 text-base text-[var(--color-muted)]">
             <span className="text-[var(--color-text)]">{pr.author}</span> wants to merge{" "}
-            <code className="selectable rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-[var(--color-text)]">
+            <code className="selectable rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text)]">
               {pr.headRef}
             </code>
           </p>
@@ -97,7 +97,7 @@ export function PrView({
               <SectionLabel>Description</SectionLabel>
               <div className="mt-3">
                 <Suspense
-                  fallback={<p className="text-[13px] text-[var(--color-faint)]">Rendering…</p>}
+                  fallback={<p className="text-base text-[var(--color-faint)]">Rendering…</p>}
                 >
                   <Markdown>{detail.body.trim()}</Markdown>
                 </Suspense>
@@ -109,7 +109,7 @@ export function PrView({
             <section className="mt-8">
               <SectionLabel>
                 {detail.files.length} file{detail.files.length === 1 ? "" : "s"} changed
-                <span className="nums ml-2 font-mono text-[11px]">
+                <span className="nums ml-2 font-mono text-xs">
                   <span style={{ color: "var(--color-success)" }}>+{detail.additions}</span>{" "}
                   <span style={{ color: "var(--color-danger)" }}>−{detail.deletions}</span>
                 </span>
@@ -118,10 +118,10 @@ export function PrView({
                 {detail.files.map((f) => (
                   <div key={f.path} className="flex items-center gap-3 px-4 py-2.5">
                     <FileText size={14} className="flex-none text-[var(--color-faint)]" />
-                    <span className="selectable min-w-0 flex-1 truncate font-mono text-[12.5px]">
+                    <span className="selectable min-w-0 flex-1 truncate font-mono text-base">
                       {f.path}
                     </span>
-                    <span className="nums flex-none font-mono text-[11px]">
+                    <span className="nums flex-none font-mono text-xs">
                       <span style={{ color: "var(--color-success)" }}>+{f.additions}</span>{" "}
                       <span style={{ color: "var(--color-danger)" }}>−{f.deletions}</span>
                     </span>
@@ -146,7 +146,7 @@ export function PrView({
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="flex items-center text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+    <p className="flex items-center text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
       {children}
     </p>
   );
@@ -166,8 +166,8 @@ function StatusRow({
   return (
     <div className="flex items-center gap-3 py-3.5">
       <span className="flex-none">{icon}</span>
-      <span className="w-20 flex-none text-[13px] text-[var(--color-muted)]">{label}</span>
-      <span className="flex-1 text-[13px] capitalize" style={{ color: tone }}>
+      <span className="w-20 flex-none text-base text-[var(--color-muted)]">{label}</span>
+      <span className="flex-1 text-base capitalize" style={{ color: tone }}>
         {value}
       </span>
     </div>

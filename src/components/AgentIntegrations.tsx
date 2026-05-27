@@ -70,10 +70,10 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose} labelledBy="integrations-title">
       <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h2 id="integrations-title" className="text-[14px] font-semibold text-[var(--color-text)]">
+        <h2 id="integrations-title" className="text-md font-semibold text-[var(--color-text)]">
           Agent Integrations
         </h2>
-        <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-muted)]">
+        <p className="mt-0.5 text-sm leading-relaxed text-[var(--color-muted)]">
           swarm installs a small hook into each agent's config so turn-completion notifications and
           session restore work — even for an agent you start by hand in a shell. Review and toggle
           each one here.
@@ -82,7 +82,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {rows === null ? (
-          <p className="flex items-center gap-2 px-1 py-6 text-[13px] text-[var(--color-muted)]">
+          <p className="flex items-center gap-2 px-1 py-6 text-base text-[var(--color-muted)]">
             <Loader2 size={14} className="spin" /> Loading…
           </p>
         ) : (
@@ -94,7 +94,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                   onClick={() => setSelected((s) => (s === r.id ? null : r.id))}
                   className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/[0.04]"
                 >
-                  <span className="flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
+                  <span className="flex-1 truncate text-base font-medium text-[var(--color-text)]">
                     {r.name}
                   </span>
                   <StatusBadge row={r} />
@@ -103,13 +103,13 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                 {selected === r.id && (
                   <div className="border-t border-[var(--color-border)] p-3">
                     {!r.onPath && (
-                      <p className="mb-2 text-[12px] text-[var(--color-muted)]">
+                      <p className="mb-2 text-sm text-[var(--color-muted)]">
                         Not found on your PATH — the hook is harmless if installed, but the agent
                         isn't available to launch.
                       </p>
                     )}
                     <p
-                      className="mb-2 truncate text-[11.5px] text-[var(--color-faint)]"
+                      className="mb-2 truncate text-sm text-[var(--color-faint)]"
                       title={r.configPath}
                     >
                       {r.isPlugin ? "Plugin file: " : "Config: "}
@@ -123,7 +123,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                         type="button"
                         disabled={busy}
                         onClick={() => act(r.id, true)}
-                        className="btn h-8 flex-1 text-[12.5px]"
+                        className="btn h-8 flex-1 text-base"
                       >
                         {busy ? (
                           <Loader2 size={13} className="spin" />
@@ -138,7 +138,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                         type="button"
                         disabled={busy || !r.installed}
                         onClick={() => act(r.id, false)}
-                        className="btn h-8 flex-1 text-[12.5px]"
+                        className="btn h-8 flex-1 text-base"
                         style={r.installed ? { color: "var(--color-danger)" } : undefined}
                       >
                         <Trash2 size={13} />
@@ -154,7 +154,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
 
         {error && (
           <div
-            className="mt-2 rounded-xl border p-2.5 text-[12px]"
+            className="mt-2 rounded-xl border p-2.5 text-sm"
             style={{
               borderColor: "rgba(224, 122, 114, 0.30)",
               background: "var(--color-danger-soft)",
@@ -173,7 +173,7 @@ function StatusBadge({ row }: { row: IntegrationStatus }) {
   if (row.installed) {
     return (
       <span
-        className="flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+        className="flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
         style={{ background: "var(--color-success-soft)", color: "var(--color-success)" }}
       >
         <Check size={11} /> Installed
@@ -181,7 +181,7 @@ function StatusBadge({ row }: { row: IntegrationStatus }) {
     );
   }
   return (
-    <span className="flex-none rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--color-faint)] ring-1 ring-inset ring-[var(--color-border)]">
+    <span className="flex-none rounded-full px-2 py-0.5 text-xs font-medium text-[var(--color-faint)] ring-1 ring-inset ring-[var(--color-border)]">
       {row.onPath ? "Not installed" : "Not on PATH"}
     </span>
   );
@@ -198,7 +198,7 @@ function DiffView({
 }) {
   if (!preview) {
     return (
-      <p className="flex items-center gap-2 text-[12px] text-[var(--color-muted)]">
+      <p className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
         <Loader2 size={13} className="spin" /> Loading diff…
       </p>
     );
@@ -208,7 +208,7 @@ function DiffView({
   const changed = lines.some((l) => l.kind !== "ctx");
   if (!changed) {
     return (
-      <p className="text-[12px] text-[var(--color-muted)]">
+      <p className="text-sm text-[var(--color-muted)]">
         {row.installed
           ? "swarm's hook is present; removing it makes no other change."
           : "No change — already up to date."}
@@ -216,7 +216,7 @@ function DiffView({
     );
   }
   return (
-    <pre className="max-h-56 overflow-auto rounded-lg bg-[var(--color-recessed)] p-2.5 text-[11.5px] leading-relaxed">
+    <pre className="max-h-56 overflow-auto rounded-lg bg-[var(--color-recessed)] p-2.5 text-sm leading-relaxed">
       {lines.map((l, i) => (
         <div
           key={i}

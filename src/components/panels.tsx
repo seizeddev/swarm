@@ -45,7 +45,7 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
 function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-11 flex-none items-center justify-between px-4">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+      <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
         {title}
       </span>
       <div className="flex items-center gap-1">{children}</div>
@@ -100,8 +100,8 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
       onContextMenu={(e) => openMenu(e, items)}
       className="group row cv-row mb-1 flex cursor-pointer items-center gap-2 px-2.5 py-1.5"
     >
-      <span className="truncate text-[13px]">{f.path.split("/").pop()}</span>
-      {dir && <span className="truncate text-[11px] text-[var(--color-faint)]">{dir}</span>}
+      <span className="truncate text-base">{f.path.split("/").pop()}</span>
+      {dir && <span className="truncate text-xs text-[var(--color-faint)]">{dir}</span>}
       <span className="ml-auto flex items-center gap-1.5">
         <button
           type="button"
@@ -114,10 +114,7 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
         >
           {staged ? <Minus size={13} /> : <Plus size={13} />}
         </button>
-        <span
-          className="w-3 text-center font-mono text-[12px] font-bold"
-          style={{ color: meta.color }}
-        >
+        <span className="w-3 text-center font-mono text-sm font-bold" style={{ color: meta.color }}>
           {meta.letter}
         </span>
       </span>
@@ -149,7 +146,7 @@ export function SourceControlPanel() {
         <PanelHeader title="Source Control" />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <GitBranch size={22} className="text-[var(--color-muted)]" />
-          <p className="text-[13px] text-[var(--color-muted)]">
+          <p className="text-base text-[var(--color-muted)]">
             This folder isn’t a Git repository yet.
           </p>
           <button
@@ -207,7 +204,7 @@ export function SourceControlPanel() {
         {staged.length > 0 && (
           <>
             <div className="flex items-center justify-between px-1 py-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                 Staged ({staged.length})
               </span>
               <button
@@ -226,7 +223,7 @@ export function SourceControlPanel() {
         )}
 
         <div className="flex items-center justify-between px-1 py-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
             Changes ({unstaged.length})
           </span>
           {unstaged.length > 0 && (
@@ -245,7 +242,7 @@ export function SourceControlPanel() {
         ))}
 
         {ws.changes.length === 0 && (
-          <p className="flex items-center gap-2 px-1 py-4 text-[13px] text-[var(--color-muted)]">
+          <p className="flex items-center gap-2 px-1 py-4 text-base text-[var(--color-muted)]">
             <Check size={14} /> No local changes
           </p>
         )}
@@ -306,12 +303,12 @@ export function PullRequestsPanel() {
         style={{ color: checkColor(p.checks) }}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium">{p.title}</span>
-        <span className="nums mt-0.5 block truncate text-[11px] text-[var(--color-muted)]">
+        <span className="block truncate text-base font-medium">{p.title}</span>
+        <span className="nums mt-0.5 block truncate text-xs text-[var(--color-muted)]">
           #{p.number} · {p.author} · {p.headRef}
         </span>
       </span>
-      {p.isDraft && <span className="pill pill-muted h-5 px-2 text-[10px]">draft</span>}
+      {p.isDraft && <span className="pill pill-muted h-5 px-2 text-2xs">draft</span>}
     </div>
   );
 
@@ -329,22 +326,22 @@ export function PullRequestsPanel() {
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {!ghAvailable ? (
-          <p className="px-1 py-4 text-[13px] text-[var(--color-muted)]">
+          <p className="px-1 py-4 text-base text-[var(--color-muted)]">
             GitHub CLI (<code>gh</code>) not found. Install it and run <code>gh auth login</code>.
           </p>
         ) : ws.prs.length === 0 ? (
-          <p className="px-1 py-4 text-[13px] text-[var(--color-muted)]">No open pull requests.</p>
+          <p className="px-1 py-4 text-base text-[var(--color-muted)]">No open pull requests.</p>
         ) : (
           <>
             {mine.length > 0 && (
               <>
-                <p className="px-1 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                <p className="px-1 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   Created by me
                 </p>
                 {mine.map(Row)}
               </>
             )}
-            <p className="px-1 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+            <p className="px-1 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
               {mine.length ? "All open" : "Open"}
             </p>
             {others.map(Row)}
@@ -417,7 +414,7 @@ export function NotificationsPanel() {
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {notifications.length === 0 ? (
-          <p className="flex items-center gap-2 px-1 py-4 text-[13px] text-[var(--color-muted)]">
+          <p className="flex items-center gap-2 px-1 py-4 text-base text-[var(--color-muted)]">
             <Bell size={14} /> No notifications
           </p>
         ) : (
@@ -445,19 +442,19 @@ export function NotificationsPanel() {
                       : { background: "var(--color-text)" }
                   }
                 />
-                <span className="flex-1 truncate text-[13px] font-medium">{n.title}</span>
+                <span className="flex-1 truncate text-base font-medium">{n.title}</span>
                 {n.source === "terminal" && (
                   // Untrusted origin: this text came from a program in the
                   // terminal, so mark it plainly and never act on its content.
                   <span
-                    className="flex-none rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-faint)]"
+                    className="flex-none rounded px-1.5 py-0.5 text-2xs uppercase tracking-wide text-[var(--color-faint)]"
                     style={{ background: "rgba(255,255,255,0.06)" }}
                     title="Reported by a program running in the terminal"
                   >
                     terminal
                   </span>
                 )}
-                <span className="nums text-[11px] text-[var(--color-faint)]">
+                <span className="nums text-xs text-[var(--color-faint)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
                 <button
@@ -473,9 +470,7 @@ export function NotificationsPanel() {
                 </button>
               </div>
               {n.body && (
-                <span className="truncate pl-4 text-[12px] text-[var(--color-muted)]">
-                  {n.body}
-                </span>
+                <span className="truncate pl-4 text-sm text-[var(--color-muted)]">{n.body}</span>
               )}
             </div>
           ))

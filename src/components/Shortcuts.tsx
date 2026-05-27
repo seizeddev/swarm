@@ -57,7 +57,7 @@ const GROUPS: Group[] = [
 function Key({ children }: { children: string }) {
   return (
     <kbd
-      className="nums inline-grid min-w-[22px] place-items-center rounded-[6px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-muted)]"
+      className="nums inline-grid min-w-[22px] place-items-center rounded-[6px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-muted)]"
       style={{ boxShadow: "inset 0 0.5px 0 rgba(255,255,255,0.08)" }}
     >
       {children}
@@ -69,7 +69,7 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose} labelledBy="shortcuts-title">
       <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h2 id="shortcuts-title" className="text-[14px] font-semibold text-[var(--color-text)]">
+        <h2 id="shortcuts-title" className="text-md font-semibold text-[var(--color-text)]">
           Keyboard Shortcuts
         </h2>
       </div>
@@ -77,13 +77,13 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           {GROUPS.map((g) => (
             <section key={g.title}>
-              <h3 className="mb-2 text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
+              <h3 className="mb-2 text-xs uppercase tracking-wide text-[var(--color-faint)]">
                 {g.title}
               </h3>
               <ul className="flex flex-col gap-2">
                 {g.items.map((s) => (
                   <li key={s.action} className="flex items-center justify-between gap-3">
-                    <span className="text-[12.5px] text-[var(--color-muted)]">{s.action}</span>
+                    <span className="text-base text-[var(--color-muted)]">{s.action}</span>
                     <span className="flex flex-none items-center gap-1">
                       {s.keys.map((k, i) => (
                         <Key key={i}>{k}</Key>

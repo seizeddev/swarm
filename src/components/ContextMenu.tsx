@@ -90,7 +90,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
           return (
             <p
               key={i}
-              className="truncate px-2 py-1.5 text-[11px] uppercase tracking-wide text-[var(--color-faint)]"
+              className="truncate px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--color-faint)]"
             >
               {item.label}
             </p>
@@ -105,7 +105,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
               onClose();
               item.onClick();
             }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06] disabled:cursor-default disabled:opacity-40"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06] disabled:cursor-default disabled:opacity-40"
             style={item.destructive ? { color: "var(--color-danger)" } : undefined}
           >
             {item.icon && (

@@ -83,7 +83,7 @@ function WorkspaceSquare({
       onClick={() => setActiveWorkspace(id)}
       onContextMenu={(e) => onMenu(e, id)}
       title={name}
-      className="relative grid h-8 w-8 place-items-center rounded-[8px] text-[11px] font-bold transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]"
+      className="relative grid h-8 w-8 place-items-center rounded-[8px] text-xs font-bold transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]"
       style={{
         background: active ? "var(--color-surface-2)" : "transparent",
         color: active ? "var(--color-text)" : "var(--color-muted)",
@@ -138,7 +138,7 @@ function RailButton({
       {children}
       {!!badge && (
         <span
-          className="nums absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold"
+          className="nums absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-2xs font-bold"
           // Translucent at rest; on the shown tab it goes solid so it reads as
           // a deliberate count, not a faint overlay.
           style={
@@ -246,10 +246,10 @@ function RailUpdate() {
               {config.icon}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12.5px] font-semibold text-[var(--color-text)]">
+              <span className="block truncate text-base font-semibold text-[var(--color-text)]">
                 {config.title}
               </span>
-              <span className="nums block truncate text-[11px] text-[var(--color-muted)]">
+              <span className="nums block truncate text-xs text-[var(--color-muted)]">
                 {config.sub}
               </span>
             </span>
@@ -265,7 +265,7 @@ function RailUpdate() {
           )}
 
           {update.notes && !busy && (
-            <p className="mt-2.5 max-h-32 overflow-y-auto whitespace-pre-line text-[11.5px] leading-relaxed text-[var(--color-muted)]">
+            <p className="mt-2.5 max-h-32 overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-[var(--color-muted)]">
               {update.notes}
             </p>
           )}
@@ -533,10 +533,10 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
               <div className="mx-auto mb-5 grid h-14 w-14 place-items-center text-[var(--color-muted)] opacity-90">
                 <SwarmMark size={40} />
               </div>
-              <p className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+              <p className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]">
                 No project open
               </p>
-              <p className="mx-auto mb-5 mt-1 max-w-[200px] text-[12.5px] leading-relaxed text-[var(--color-muted)]">
+              <p className="mx-auto mb-5 mt-1 max-w-[200px] text-base leading-relaxed text-[var(--color-muted)]">
                 Open a git repository to start working with terminals, diffs and pull requests.
               </p>
               <button
@@ -552,7 +552,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
 
         {error && (
           <div
-            className="m-3 rounded-xl border p-3 text-[12px]"
+            className="m-3 rounded-xl border p-3 text-sm"
             style={{
               borderColor: "rgba(255, 107, 107, 0.30)",
               background: "var(--color-danger-soft)",
@@ -626,10 +626,10 @@ function RenameWorkspaceModal({
         }}
         className="p-4"
       >
-        <h2 id="rename-title" className="mb-1 text-[14px] font-semibold text-[var(--color-text)]">
+        <h2 id="rename-title" className="mb-1 text-md font-semibold text-[var(--color-text)]">
           Rename Project
         </h2>
-        <p className="mb-3 text-[12px] text-[var(--color-muted)]">
+        <p className="mb-3 text-sm text-[var(--color-muted)]">
           Display name only — the folder isn't touched. Leave blank to use “{repoName}”.
         </p>
         <input
@@ -639,13 +639,13 @@ function RenameWorkspaceModal({
           onChange={(e) => setValue(e.target.value)}
           placeholder={repoName}
           spellCheck={false}
-          className="w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-3 py-2 text-[13px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-border-strong)]"
+          className="w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-3 py-2 text-base text-[var(--color-text)] outline-none focus-visible:border-[var(--color-border-strong)]"
         />
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn h-9 text-[13px]">
+          <button type="button" onClick={onClose} className="btn h-9 text-base">
             Cancel
           </button>
-          <button type="submit" className="btn btn-accent h-9 text-[13px]">
+          <button type="submit" className="btn btn-accent h-9 text-base">
             Save
           </button>
         </div>

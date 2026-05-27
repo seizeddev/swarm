@@ -99,7 +99,7 @@ export function CommitDetail({
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-[var(--color-border)] px-4">
-        <span className="selectable font-mono text-[12.5px] text-[var(--color-muted)]">
+        <span className="selectable font-mono text-base text-[var(--color-muted)]">
           {detail.short}
         </span>
         <button type="button" className="icon-btn ml-auto h-7 w-7" onClick={onClose} title="Close">
@@ -110,15 +110,15 @@ export function CommitDetail({
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl px-4 py-5 md:px-6 md:py-6">
           {/* message */}
-          <h1 className="selectable text-[18px] font-semibold leading-snug tracking-[-0.015em]">
+          <h1 className="selectable text-lg font-semibold leading-snug tracking-[-0.015em]">
             {title}
           </h1>
           {body && (
-            <pre className="selectable mt-2 whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-[var(--color-muted)]">
+            <pre className="selectable mt-2 whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-[var(--color-muted)]">
               {body}
             </pre>
           )}
-          <p className="mt-3 text-[12px] text-[var(--color-faint)]">
+          <p className="mt-3 text-sm text-[var(--color-faint)]">
             {detail.author} · {date} · {detail.files.length} file
             {detail.files.length === 1 ? "" : "s"} changed
           </p>
@@ -128,11 +128,11 @@ export function CommitDetail({
             {files.map((f) => (
               <div key={f.file} className="surface overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3.5 py-2">
-                  <span className="selectable font-mono text-[12.5px]">{f.file}</span>
-                  {f.added && <span className="pill h-5 px-2 text-[10px]">added</span>}
+                  <span className="selectable font-mono text-base">{f.file}</span>
+                  {f.added && <span className="pill h-5 px-2 text-2xs">added</span>}
                   {f.deleted && (
                     <span
-                      className="pill h-5 px-2 text-[10px]"
+                      className="pill h-5 px-2 text-2xs"
                       style={{ color: "var(--color-danger)" }}
                     >
                       deleted

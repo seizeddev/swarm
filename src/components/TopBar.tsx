@@ -37,7 +37,7 @@ function AgentMenu() {
       </button>
       {open && (
         <div className="surface animate-scale-in absolute right-0 top-9 z-50 w-52 p-1.5">
-          <p className="px-2 py-1.5 text-[11px] uppercase tracking-wide text-[var(--color-faint)]">
+          <p className="px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--color-faint)]">
             Spawn
           </p>
           <button
@@ -46,7 +46,7 @@ function AgentMenu() {
               addPane();
               setOpen(false);
             }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
           >
             <TerminalSquare size={14} className="text-[var(--color-muted)]" />
             <span className="flex-1">Shell</span>
@@ -61,7 +61,7 @@ function AgentMenu() {
                   addPane(a);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
               >
                 <span
                   className="h-2 w-2 flex-none rounded-full"
@@ -69,7 +69,7 @@ function AgentMenu() {
                 />
                 <span className="flex-1">{a.name}</span>
                 {!a.installed && (
-                  <span className="text-[10px] text-[var(--color-faint)]">missing</span>
+                  <span className="text-2xs text-[var(--color-faint)]">missing</span>
                 )}
               </button>
             ))}
@@ -183,11 +183,11 @@ export function TopBar() {
           className={`flex h-full flex-none items-center gap-2 pr-3 ${fullscreen ? "pl-3" : "pl-8"}`}
           style={{ width: "var(--panel-w)" }}
         >
-          <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+          <h1 className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--color-text)]">
             {ws.repo.name}
           </h1>
           {ws.repo.headBranch && (
-            <span className="truncate text-[11.5px] text-[var(--color-muted)]">
+            <span className="truncate text-sm text-[var(--color-muted)]">
               ⎇ {ws.repo.headBranch}
             </span>
           )}
@@ -221,12 +221,12 @@ export function TopBar() {
                 onContextMenu={(e) =>
                   openMenu(e, tabMenu(t.id, ids, head?.title ?? "Shell", ws.tabs.length))
                 }
-                className="group row flex h-8 cursor-pointer items-center gap-2 px-3 text-[12.5px]"
+                className="group row flex h-8 cursor-pointer items-center gap-2 px-3 text-base"
               >
                 <TerminalSquare size={13} className="text-[var(--color-muted)]" />
                 <span className="max-w-[150px] truncate">{head?.title ?? "Shell"}</span>
                 {ids.length > 1 && (
-                  <span className="nums text-[10px] text-[var(--color-faint)]">{ids.length}</span>
+                  <span className="nums text-2xs text-[var(--color-faint)]">{ids.length}</span>
                 )}
                 {attn && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ATTN }} />}
                 <button

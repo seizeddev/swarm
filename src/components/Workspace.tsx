@@ -198,10 +198,10 @@ export function Workspace() {
               <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-text)]">
                 <SwarmMark size={56} />
               </div>
-              <p className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+              <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
                 No terminals open
               </p>
-              <p className="mx-auto mt-1.5 max-w-[300px] text-[13px] leading-relaxed text-[var(--color-muted)]">
+              <p className="mx-auto mt-1.5 max-w-[300px] text-base leading-relaxed text-[var(--color-muted)]">
                 Open a terminal to start an agent or shell in{" "}
                 <span className="text-[var(--color-text)]">{ws.repo.name}</span>.
               </p>
@@ -222,10 +222,10 @@ export function Workspace() {
               <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-80">
                 <SwarmMark size={60} />
               </div>
-              <p className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+              <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
                 Welcome to swarm
               </p>
-              <p className="mx-auto mt-1.5 max-w-[280px] text-[13px] leading-relaxed text-[var(--color-muted)]">
+              <p className="mx-auto mt-1.5 max-w-[280px] text-base leading-relaxed text-[var(--color-muted)]">
                 Add a project with the <span className="text-[var(--color-text)]">+</span> in the
                 sidebar to spin up terminals, review diffs and ship pull requests.
               </p>

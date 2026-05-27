@@ -173,7 +173,7 @@ body {
 /* Rendered markdown (PR/issue bodies). Monochrome by design — hierarchy via
    weight/brightness, the one ornament being underlined links. */
 .md {
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.65;
   color: var(--color-muted);
   word-break: break-word;
