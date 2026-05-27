@@ -4,6 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Plus, SplitSquareHorizontal, SplitSquareVertical, TerminalSquare, X } from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
 import { leaves } from "../lib/layout";
+import { rovingIndex } from "../lib/roving";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import type { AgentDef } from "../lib/types";
@@ -110,6 +111,23 @@ export function TopBar() {
   );
   const { menu, open: openMenu, close: closeMenu } = useContextMenu();
 
+  // Roving tabindex for the tab strip: exactly one tab is Tab-reachable (the
+  // selected one, or the first when the editor is showing something else), and
+  // ←/→/Home/End move both selection and focus across the strip.
+  const tabRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tabs = ws?.tabs ?? [];
+  const activeTabIndex = tabs.findIndex(
+    (t) => ws?.activeTab === t.id && ws?.editor.type === "terminal",
+  );
+  const rovingTab = activeTabIndex >= 0 ? activeTabIndex : 0;
+  const onTabKey = (e: React.KeyboardEvent, i: number) => {
+    const next = rovingIndex(i, e.key, tabs.length);
+    if (next === null) return;
+    e.preventDefault();
+    selectTab(tabs[next].id);
+    tabRefs.current[next]?.focus();
+  };
+
   // Build the right-click menu for a tab. Split/close act on this tab; the close
   // variants mirror VS Code (Close, Close Others, Close to the Right). The last
   // remaining tab can't "close others", so that item disables itself.
@@ -203,8 +221,12 @@ export function TopBar() {
           showIdentity || fullscreen ? "pl-3" : "pl-8"
         }`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
-          {ws?.tabs.map((t) => {
+        <div
+          role="tablist"
+          aria-label="Terminal tabs"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
+        >
+          {ws?.tabs.map((t, i) => {
             const active = ws.activeTab === t.id && ws.editor.type === "terminal";
             const ids = leaves(t.layout);
             const head =
@@ -214,10 +236,15 @@ export function TopBar() {
             return (
               <div
                 key={t.id}
+                ref={(el) => {
+                  tabRefs.current[i] = el;
+                }}
                 role="tab"
                 aria-selected={active}
+                tabIndex={i === rovingTab ? 0 : -1}
                 data-active={active}
                 onClick={() => selectTab(t.id)}
+                onKeyDown={(e) => onTabKey(e, i)}
                 onContextMenu={(e) =>
                   openMenu(e, tabMenu(t.id, ids, head?.title ?? "Shell", ws.tabs.length))
                 }
