@@ -73,7 +73,6 @@
 - **`release.yml` uses a two-phase pattern on purpose**: a `create-release` job makes one draft and outputs its `release_id`; every build job uploads via `releaseId`. **Do not** go back to per-job `releaseDraft: true` — parallel matrix jobs then race and produce duplicate drafts with artifacts split across them.
 - `tauri-action` intermittently fails uploads with transient **`Bad credentials`** (and `actions/checkout` auth blips). Just `gh run rerun <run-id> --failed` — partial reruns keep `create-release`'s output, so artifacts land in the same draft and `latest.json` merges across platforms.
 - Builds are **unsigned** (no Developer ID cert; only "Apple Development" certs exist in the keychain). For local install, ad-hoc sign works: `codesign --force --deep --sign - /Applications/swarm.app`.
-- **SLSA provenance is also uploaded as a release asset** (`*.intoto.jsonl`, one per matrix job, named `swarm-<os>-<target>`). The `attest-build-provenance` step writes only to GitHub's attestation store (still verifiable via `gh attestation verify`); OpenSSF Scorecard's Signed-Releases check inspects release *assets*, so an extra `gh release upload --clobber` of `steps.attest.outputs.bundle-path` exposes the in-toto bundle on the release itself. Don't remove it — it's what makes Signed-Releases score.
 
 ## Security & supply chain
 
