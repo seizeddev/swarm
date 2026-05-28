@@ -97,6 +97,7 @@ pub fn record_session_start(agent: &str, payload: &str) {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);
+    crate::fsperm::restrict_dir(&dir);
     let _ = write_record_atomic(&path, &rec);
 }
 

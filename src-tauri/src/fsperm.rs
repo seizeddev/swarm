@@ -27,7 +27,6 @@ pub fn restrict_file(path: &Path) {
 
 /// Tighten a directory to owner-only (`0700`) on Unix. Same best-effort posture
 /// as [`restrict_file`].
-#[allow(dead_code)] // consumed by M-3/M-4/L-1 in this PR
 pub fn restrict_dir(path: &Path) {
     #[cfg(unix)]
     {

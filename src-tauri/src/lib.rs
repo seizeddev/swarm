@@ -375,6 +375,7 @@ fn load_session() -> Option<String> {
 fn events_dir() -> AppResult<String> {
     let d = swarm_dir()?.join("events");
     std::fs::create_dir_all(&d)?;
+    fsperm::restrict_dir(&d);
     Ok(d.to_string_lossy().into_owned())
 }
 
@@ -430,6 +431,7 @@ fn save_clipboard_image(data: String, ext: String) -> AppResult<String> {
     }
     let dir = swarm_dir()?.join("clipboard");
     std::fs::create_dir_all(&dir)?;
+    fsperm::restrict_dir(&dir);
     prune_clipboard_dir(&dir);
     let ext = match ext.to_ascii_lowercase().as_str() {
         e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "tiff" | "bmp") => e.to_string(),
@@ -595,6 +597,7 @@ fn prepare_codex_home() -> AppResult<String> {
     let src = home.join(".codex");
     let dst = swarm_dir()?.join("codex-home");
     std::fs::create_dir_all(&dst)?;
+    fsperm::restrict_dir(&dst);
     #[cfg(unix)]
     if src.is_dir() {
         for e in std::fs::read_dir(&src)?.flatten() {
@@ -618,6 +621,7 @@ fn prepare_codex_home() -> AppResult<String> {
     // session for `codex resume <id>` on restart.
     let hooks_path = dst.join("hooks.json");
     let _ = std::fs::write(&hooks_path, agent_hooks::codex_session_hooks_json(&bin));
+    fsperm::restrict_file(&hooks_path);
     let hooks_real = std::fs::canonicalize(&hooks_path).unwrap_or_else(|_| hooks_path.clone());
 
     let raw = std::fs::read_to_string(src.join("config.toml")).unwrap_or_default();
@@ -1141,6 +1145,28 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn l1_events_dir_creates_with_0700_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = events_dir().expect("events_dir must succeed when $HOME is set");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "events dir should be 0700, got {mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn l1_clipboard_dir_creates_with_0700_on_unix() {
+        // `save_clipboard_image` creates `~/.swarm/clipboard` lazily — we
+        // pre-create it through the same chmod path and verify the mode.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = swarm_dir().unwrap().join("clipboard");
+        std::fs::create_dir_all(&dir).unwrap();
+        fsperm::restrict_dir(&dir);
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "clipboard dir should be 0700, got {mode:o}");
+    }
 
     #[cfg(unix)]
     #[test]
