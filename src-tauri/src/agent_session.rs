@@ -43,9 +43,16 @@ pub struct ResumeCommand {
     pub session_id: String,
 }
 
-/// A pane id must be a bare token we can use as a filename — never a path piece.
+/// A pane id (or session id) must be a bare token we can safely embed in a
+/// filename, an `--resume` argv slot, or a TOML key. Restrict to ASCII
+/// alphanumeric plus `.`, `_`, `-` — Windows-reserved chars (`*?<>|:"`),
+/// path separators (`/\\`), control chars (`\0` and friends), shell
+/// metacharacters, and whitespace are all rejected. The previous allowlist
+/// only banned `/`, `\\`, `..`, `\0`, which let `pane*x` or `pane:x` through.
 fn safe_token(s: &str) -> bool {
-    !s.is_empty() && !s.contains('/') && !s.contains('\\') && !s.contains("..") && !s.contains('\0')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
 }
 
 fn sessions_dir() -> Option<PathBuf> {
@@ -837,6 +844,23 @@ mod tests {
         assert!(!safe_token(""));
         assert!(!safe_token("a/b"));
         assert!(!safe_token("../x"));
+    }
+
+    #[test]
+    fn l7_safe_token_rejects_windows_reserved_and_shell_metacharacters() {
+        // The previous allowlist only banned `/`, `\\`, `..`, `\0`, which
+        // would let a hostile pane id like `pane:1`, `pane*`, `pane?`,
+        // `pane|cmd` through. Now we restrict to `[A-Za-z0-9._-]`.
+        for bad in [
+            "pane:1", "pane*x", "pane?", "pane<a", "pane>b", "pane|c", "pane\"d", "pane'e",
+            "pane f", "pane\tg", "pane;h", "pane&i", "pane$j", "pane`k", "pane(l)", "pane[m]",
+            "pane{n}",
+        ] {
+            assert!(!safe_token(bad), "{bad:?} should be rejected");
+        }
+        // The whole legitimate alphabet survives — alnum + the three
+        // accent-mark chars users actually need in pane ids.
+        assert!(safe_token("pane-abc_123.def"));
     }
 
     #[test]
