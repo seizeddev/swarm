@@ -83,23 +83,56 @@ pub fn run(args: &[String]) {
         }
         "event" => {
             let msg = field_message(&payload).unwrap_or_else(|| FALLBACK.to_string());
-            if let Ok(path_str) = std::env::var("SWARM_EVENT_FILE") {
-                // Containment check: the renderer set `SWARM_EVENT_FILE` from
-                // swarm's events_dir, but a compromised renderer could swap it
-                // for `/etc/passwd` (or any other writable file) before spawn.
-                // Refuse anything that doesn't sit DIRECTLY under
-                // `~/.swarm/events/` — the same containment posture as
-                // discard_paths.
-                if let Some(path) = validated_event_file(&path_str) {
-                    use std::io::Write;
-                    if let Ok(mut f) = crate::fsperm::open_options_owner_only().open(path) {
-                        let _ = writeln!(f, "{msg}");
-                    }
-                }
-            }
+            write_event_line(&msg);
+        }
+        // Claude Code's `Notification` hook fires mid-turn when Claude is
+        // waiting for the user: tool-permission prompts ("Claude needs your
+        // permission to use Bash"), the 60s idle reminder, and plan mode's
+        // `ExitPlanMode` approval. `Stop` doesn't fire for these (Claude is
+        // paused, not done), so without this hook a paused Claude looks
+        // silent. The payload's `message` field carries the user-visible
+        // reason; we forward it through the same events-file path generic
+        // agents use, which lands in `pane:notify` → `onPaneNotify` and
+        // bypasses the Claude OSC sentinel filter (that's Stop's path).
+        "claude-notification" => {
+            let msg = claude_notification_message(&payload);
+            write_event_line(&msg);
         }
         _ => {}
     }
+}
+
+/// Append a notification body to the per-pane `SWARM_EVENT_FILE` if one is set
+/// and points inside the events root. The fs watcher picks up the modify and
+/// emits `pane:notify`. Best-effort everywhere — the helper never errors a hook.
+fn write_event_line(msg: &str) {
+    let Ok(path_str) = std::env::var("SWARM_EVENT_FILE") else {
+        return;
+    };
+    // Containment check: the renderer set `SWARM_EVENT_FILE` from swarm's
+    // events_dir, but a compromised renderer could swap it for `/etc/passwd`
+    // (or any other writable file) before spawn. Refuse anything that doesn't
+    // sit DIRECTLY under `~/.swarm/events/` — the same containment posture
+    // as discard_paths.
+    let Some(path) = validated_event_file(&path_str) else {
+        return;
+    };
+    use std::io::Write;
+    if let Ok(mut f) = crate::fsperm::open_options_owner_only().open(path) {
+        let _ = writeln!(f, "{msg}");
+    }
+}
+
+/// Extract the user-visible reason from Claude's Notification hook payload.
+/// Falls back to `FALLBACK` ("Turn complete") when the message field is
+/// missing/blank so the user still sees *something* in the banner.
+fn claude_notification_message(payload: &str) -> String {
+    serde_json::from_str::<Value>(payload)
+        .ok()
+        .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_owned))
+        .map(|s| clean(&s))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| FALLBACK.to_string())
 }
 
 /// For Claude's Stop hook. Like cmux (`summarizeClaudeHookStop`): prefer the
@@ -456,6 +489,37 @@ mod tests {
         // Non-emphasis underscores/asterisks survive.
         assert_eq!(clean("run snake_case_fn now"), "run snake_case_fn now");
         assert_eq!(clean("compute 2 * 3 = 6"), "compute 2 * 3 = 6");
+    }
+
+    #[test]
+    fn claude_notification_message_extracts_message_field() {
+        // The documented Notification-hook field — what Claude shows in its
+        // own (now-disabled) banner. We surface it verbatim, sanitised.
+        assert_eq!(
+            claude_notification_message(
+                r#"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#
+            ),
+            "Claude needs your permission to use Bash"
+        );
+    }
+
+    #[test]
+    fn claude_notification_message_strips_markdown_and_truncates() {
+        // `clean` runs over the message so a TUI-friendly payload (newlines,
+        // bold markers) doesn't reach the banner verbatim.
+        assert_eq!(
+            claude_notification_message(r#"{"message":"**Waiting**\nfor your input"}"#),
+            "Waiting for your input"
+        );
+    }
+
+    #[test]
+    fn claude_notification_message_falls_back_when_missing_or_blank() {
+        // Older Claude / unexpected schema: no `message` field → user still
+        // sees a generic banner instead of nothing at all.
+        assert_eq!(claude_notification_message(r#"{}"#), FALLBACK);
+        assert_eq!(claude_notification_message(r#"{"message":""}"#), FALLBACK);
+        assert_eq!(claude_notification_message("not json"), FALLBACK);
     }
 
     #[test]

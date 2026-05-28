@@ -138,11 +138,31 @@ function claudeSettings(bin: string): string {
   return JSON.stringify({
     preferredNotifChannel: "notifications_disabled",
     hooks: {
+      // Turn-complete (Claude finished responding to the user). OSC 777 with
+      // our sentinel, written to the terminal via `terminalSequence`.
       Stop: [
         {
           matcher: "",
           hooks: [
             { type: "command", command: `"${bin}" --notify-helper claude-stop`, timeout: 10 },
+          ],
+        },
+      ],
+      // Mid-turn pauses where Claude needs the user — tool-permission prompts
+      // ("Claude needs your permission to use Bash"), the 60s idle reminder,
+      // and plan mode's `ExitPlanMode` approval. Stop doesn't fire for these
+      // (Claude is waiting, not done), so without this hook a paused Claude
+      // looks silent. Routes through SWARM_EVENT_FILE → `pane:notify` →
+      // `onPaneNotify`, the same path generic agents use.
+      Notification: [
+        {
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `"${bin}" --notify-helper claude-notification`,
+              timeout: 10,
+            },
           ],
         },
       ],
@@ -1041,8 +1061,13 @@ export const useStore = create<State>((set, get) => {
     onNotify(ptyId, title, body) {
       const pane = get().panes.find((p) => p.pty?.id === ptyId);
       // Suppress entirely only when you're already looking at the pane (window
-      // in front AND this is the visible pane). Otherwise record it in-app, and
-      // if the window is backgrounded, escalate to an OS banner with sound.
+      // in front AND this is the visible pane). Otherwise record it in-app and
+      // escalate to an OS banner: by symmetry with the suppression rule, *any*
+      // pane the user isn't looking at — backgrounded window, different
+      // workspace, different tab, or hidden behind a diff/PR view — warrants
+      // a banner. The previous `!windowFocused` gate dropped the
+      // cross-workspace + cross-editor cases (only the small in-app bell
+      // remained, easy to miss).
       if (!pane || lookingAtPane(pane)) return;
       // On a Claude pane our Stop hook is the source of truth (sentinel title);
       // drop Claude Code's own terminal notifications so a turn fires once, with
@@ -1063,7 +1088,7 @@ export const useStore = create<State>((set, get) => {
         notifications: [notif, ...s.notifications].slice(0, 100),
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
       }));
-      if (!get().windowFocused) notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
+      notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
     },
 
     onPaneNotify(paneId, body) {
@@ -1083,7 +1108,7 @@ export const useStore = create<State>((set, get) => {
         notifications: [notif, ...s.notifications].slice(0, 100),
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
       }));
-      if (!get().windowFocused) notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
+      notifyOS(notif.title, body, pane.paneId, pane.workspaceId);
     },
 
     onTitle(ptyId, title) {
