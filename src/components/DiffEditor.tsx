@@ -260,6 +260,7 @@ export function DiffEditor({
   // Hunks are parsed in Rust (libgit2 gives line numbers directly), so even a
   // 10k-line patch never blocks the JS main thread with a string parse.
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   // View preference is sticky across files and sessions.
   const [split, setSplit] = useState(() => localStorage.getItem("diffSplit") === "1");
@@ -282,9 +283,13 @@ export function DiffEditor({
 
   useEffect(() => {
     setLoading(true);
+    setTruncated(false);
     api
       .fileDiffHunks(repoPath, file, staged)
-      .then((b) => setHunks(b.hunks))
+      .then((b) => {
+        setHunks(b.hunks);
+        setTruncated(b.truncated);
+      })
       .catch(() => setHunks([]))
       .finally(() => setLoading(false));
   }, [repoPath, file, staged]);
@@ -363,6 +368,15 @@ export function DiffEditor({
           <X size={14} />
         </button>
       </div>
+      {truncated && (
+        <div
+          role="status"
+          className="flex-none border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1.5 text-xs text-[var(--color-muted)]"
+          data-testid="diff-truncated"
+        >
+          Diff truncated — showing the first 5,000 lines.
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} className="absolute inset-0 overflow-auto">
           {loading ? (

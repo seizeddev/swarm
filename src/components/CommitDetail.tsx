@@ -81,12 +81,17 @@ export function CommitDetail({
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [patch, setPatch] = useState("");
+  const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
     setPatch("");
     setDetail(null);
+    setTruncated(false);
     api.commitDetail(repoPath, oid).then(setDetail);
-    api.commitDiff(repoPath, oid).then((d) => setPatch(d.patch));
+    api.commitDiff(repoPath, oid).then((d) => {
+      setPatch(d.patch);
+      setTruncated(d.truncated);
+    });
   }, [repoPath, oid]);
 
   const files = useMemo(() => parseCommitPatch(patch), [patch]);
@@ -129,6 +134,17 @@ export function CommitDetail({
             {detail.author} · {date} · {detail.files.length} file
             {detail.files.length === 1 ? "" : "s"} changed
           </p>
+
+          {truncated && (
+            <div
+              role="status"
+              className="surface mt-4 px-3.5 py-2 text-sm text-[var(--color-muted)]"
+              data-testid="diff-truncated"
+            >
+              Diff truncated — showing the first 5,000 lines. Open the commit in your editor for the
+              full patch.
+            </div>
+          )}
 
           {/* per-file diffs, stacked */}
           <div className="mt-5 space-y-4">
