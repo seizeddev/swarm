@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { lineDiff, tokenize, wordDiff } from "../diff";
+import { lineDiff, shouldWordDiff, tokenize, wordDiff } from "../diff";
 
 const text = (segs: { text: string }[]) => segs.map((s) => s.text).join("");
 const changed = (segs: { text: string; changed: boolean }[]) =>
@@ -71,6 +71,34 @@ describe("tokenize", () => {
   it("keeps a string with an embedded keyword as one string", () => {
     expect(kinds('"return value"', "string")).toEqual(['"return value"']);
     expect(kinds('"return value"', "keyword")).toHaveLength(0);
+  });
+});
+
+describe("shouldWordDiff", () => {
+  it("accepts pairs of similar length", () => {
+    expect(shouldWordDiff("const x = 1;", "const y = 2;")).toBe(true);
+    expect(shouldWordDiff("a", "b")).toBe(true);
+  });
+
+  it("rejects a length ratio above 2.5", () => {
+    // 4:1 — the audit's regression case (e.g. a one-char ctx line paired
+    // with a long edited line). word-diff would just light up the long side.
+    expect(shouldWordDiff("x", "x".repeat(4))).toBe(false);
+    // 2.5:1 is the boundary — strictly less than 2.5 passes.
+    expect(shouldWordDiff("a".repeat(2), "a".repeat(5))).toBe(false);
+    expect(shouldWordDiff("a".repeat(2), "a".repeat(4))).toBe(true);
+  });
+
+  it("rejects pairs where either side exceeds 500 chars", () => {
+    expect(shouldWordDiff("x".repeat(501), "x".repeat(501))).toBe(false);
+    expect(shouldWordDiff("x".repeat(501), "x".repeat(400))).toBe(false);
+  });
+
+  it("rejects when either side is empty", () => {
+    // wordDiff handles "" itself, but there is no useful word diff to compute
+    // — it would just be one whole-side "changed" segment.
+    expect(shouldWordDiff("", "abc")).toBe(false);
+    expect(shouldWordDiff("abc", "")).toBe(false);
   });
 });
 

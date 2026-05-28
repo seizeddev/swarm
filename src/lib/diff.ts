@@ -19,6 +19,18 @@ function pushSeg(segs: Seg[], text: string, changed: boolean): void {
   else segs.push({ text, changed });
 }
 
+// Cheap gate before paying for wordDiff. A long line vs. a short one will
+// almost always be flagged "too different" by the post-hoc similarity cutoff
+// anyway, so don't even run the O(n·m) LCS. Also skip pairs where either
+// side is past 500 chars — the quadratic cost dwarfs the perceptual benefit.
+export function shouldWordDiff(a: string, b: string): boolean {
+  const max = Math.max(a.length, b.length);
+  const min = Math.min(a.length, b.length);
+  if (max > 500) return false;
+  if (min === 0) return false;
+  return max / min < 2.5;
+}
+
 // LCS-based word diff between a removed line `a` and the added line `b`. Returns
 // the segments for each side, with `changed` marking the spans unique to that
 // side. O(n·m) on token counts — fine for single lines.

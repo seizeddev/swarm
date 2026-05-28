@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Columns2, X } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "../lib/ipc";
-import { tokenize, wordDiff, type Seg } from "../lib/diff";
+import { shouldWordDiff, tokenize, wordDiff, type Seg } from "../lib/diff";
 import type { DiffHunk, DiffLine } from "../lib/types";
 
 // One flat scroll row: a hunk header, or a single diff line carrying optional
@@ -43,7 +43,10 @@ function buildRows(hunks: DiffHunk[]): Row[] {
         const adds = lines.slice(d, a);
         const paired = Math.min(dels.length, adds.length);
         dels.forEach((line, p) => {
-          const wd = p < paired ? wordDiff(line.text, adds[p].text) : null;
+          const wd =
+            p < paired && shouldWordDiff(line.text, adds[p].text)
+              ? wordDiff(line.text, adds[p].text)
+              : null;
           rows.push({
             type: "line",
             line,
@@ -51,7 +54,10 @@ function buildRows(hunks: DiffHunk[]): Row[] {
           });
         });
         adds.forEach((line, p) => {
-          const wd = p < paired ? wordDiff(dels[p].text, line.text) : null;
+          const wd =
+            p < paired && shouldWordDiff(dels[p].text, line.text)
+              ? wordDiff(dels[p].text, line.text)
+              : null;
           rows.push({
             type: "line",
             line,
@@ -178,7 +184,8 @@ function buildSplitRows(hunks: DiffHunk[]): SplitRow[] {
         for (let p = 0; p < Math.max(dels.length, adds.length); p++) {
           const dl = dels[p];
           const ad = adds[p];
-          const wd = p < paired ? wordDiff(dl.text, ad.text) : null;
+          const wd =
+            p < paired && shouldWordDiff(dl.text, ad.text) ? wordDiff(dl.text, ad.text) : null;
           rows.push({
             type: "pair",
             left: dl
