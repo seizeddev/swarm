@@ -330,11 +330,11 @@ describe("pane creation", () => {
     expect(pane.args).toContain("--settings");
   });
 
-  it("wires Claude's Notification hook so permission prompts and plan mode notify", () => {
+  it("wires Claude's Notification hook so permission prompts and idle pauses notify", () => {
     // `preferredNotifChannel: notifications_disabled` kills Claude's built-in
-    // desktop notifications. Without an explicit Notification hook, mid-turn
-    // pauses — permission requests ("Claude needs your permission to use Bash"),
-    // the idle prompt, and plan mode's ExitPlanMode approval — never reach swarm.
+    // desktop notifications. Without an explicit Notification hook, the events
+    // routed through Claude's own notification flow — subagent permission
+    // prompts, the 60s idle reminder, MCP elicitation — never reach swarm.
     // The hook re-invokes our notify-helper, which forwards the `message` to the
     // events file → watcher → `pane:notify`.
     useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
@@ -349,6 +349,31 @@ describe("pane creation", () => {
       expect(cmds).toContain("--notify-helper claude-notification");
       // Stop is still wired (turn-complete notification path).
       expect(settings.hooks.Stop).toBeTruthy();
+    });
+  });
+
+  it("wires PreToolUse for AskUserQuestion + ExitPlanMode so interactive prompts notify instantly", () => {
+    // AskUserQuestion (multiple-choice prompt) and ExitPlanMode (plan-approval
+    // prompt) are `requiresUserInteraction` tools with their own UI flow — the
+    // Notification hook only fires for them indirectly via the idle reminder
+    // after `messageIdleNotifThresholdMs` (~60s). PreToolUse with a matcher
+    // on these tool names fires the instant Claude calls the tool, so the user
+    // sees the OS banner immediately rather than minutes later.
+    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
+    return addWorkspace("/repo").then(() => {
+      s().addPane(CLAUDE);
+      const pane = s().panes.find((p) => p.agentId === "claude")!;
+      const idx = pane.args.indexOf("--settings");
+      const settings = JSON.parse(pane.args[idx + 1]);
+      expect(settings.hooks.PreToolUse).toBeTruthy();
+      const arr = settings.hooks.PreToolUse;
+      // The matcher is a regex Claude evaluates against the tool name; either
+      // alternation or two separate entries is fine, but BOTH tools must be
+      // covered by the registered command(s).
+      const serialized = JSON.stringify(arr);
+      expect(serialized).toContain("AskUserQuestion");
+      expect(serialized).toContain("ExitPlanMode");
+      expect(serialized).toContain("--notify-helper claude-pretool");
     });
   });
 
