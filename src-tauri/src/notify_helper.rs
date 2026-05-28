@@ -85,17 +85,28 @@ pub fn run(args: &[String]) {
             let msg = field_message(&payload).unwrap_or_else(|| FALLBACK.to_string());
             write_event_line(&msg);
         }
-        // Claude Code's `Notification` hook fires mid-turn when Claude is
-        // waiting for the user: tool-permission prompts ("Claude needs your
-        // permission to use Bash"), the 60s idle reminder, and plan mode's
-        // `ExitPlanMode` approval. `Stop` doesn't fire for these (Claude is
-        // paused, not done), so without this hook a paused Claude looks
-        // silent. The payload's `message` field carries the user-visible
-        // reason; we forward it through the same events-file path generic
-        // agents use, which lands in `pane:notify` → `onPaneNotify` and
-        // bypasses the Claude OSC sentinel filter (that's Stop's path).
+        // Claude Code's `Notification` hook fires whenever Claude calls
+        // `executeNotificationHooks` (`uc` in 2.1.153) — the central point
+        // for the 60s idle reminder, subagent permission prompts, MCP
+        // elicitation, auth events. The payload's `message` field carries
+        // the user-visible reason. Forwarded through the same events-file
+        // path generic agents use, landing in `pane:notify` →
+        // `onPaneNotify` (bypasses the Claude OSC sentinel filter, which
+        // is Stop's path only).
         "claude-notification" => {
             let msg = claude_notification_message(&payload);
+            write_event_line(&msg);
+        }
+        // Claude's two top-level `requiresUserInteraction` tools —
+        // `AskUserQuestion` and `ExitPlanMode` — render their own UI rather
+        // than going through the notification flow, so the Notification hook
+        // catches them only via the eventual idle reminder. PreToolUse with
+        // a tool-name matcher fires the moment Claude calls the tool, giving
+        // the user an instant banner. Body = the first question (for
+        // AskUserQuestion) or a fixed "Plan ready for review" label
+        // (matching Claude's own push-notification text for ExitPlanMode).
+        "claude-pretool" => {
+            let msg = claude_pretool_message(&payload);
             write_event_line(&msg);
         }
         _ => {}
@@ -133,6 +144,45 @@ fn claude_notification_message(payload: &str) -> String {
         .map(|s| clean(&s))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| FALLBACK.to_string())
+}
+
+/// Body for the PreToolUse hook on Claude's two interactive tools. Reads
+/// `tool_name` from the payload and produces a tailored line:
+/// - `AskUserQuestion` → the first question text (or its header), so the
+///   banner tells the user *what* Claude wants to know.
+/// - `ExitPlanMode` → "Plan ready for review", matching the label Claude
+///   uses for its own push-notification surface.
+///
+/// Other tool names (the matcher is set by the caller, but a future change
+/// might broaden it) fall back to "<tool> needs your input".
+fn claude_pretool_message(payload: &str) -> String {
+    let v: Option<Value> = serde_json::from_str(payload).ok();
+    let tool = v
+        .as_ref()
+        .and_then(|v| v.get("tool_name").and_then(Value::as_str))
+        .unwrap_or("");
+    match tool {
+        "AskUserQuestion" => v
+            .as_ref()
+            .and_then(|v| v.pointer("/tool_input/questions").and_then(Value::as_array))
+            .and_then(|qs| qs.first())
+            .and_then(|q| {
+                // Schema requires `question`, but defend against a blank one:
+                // `Value::as_str` returns `Some("")` for an empty JSON string,
+                // so we'd need an explicit emptiness check before falling back
+                // to the short `header` chip.
+                q.get("question")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| q.get("header").and_then(Value::as_str))
+            })
+            .map(clean)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "Question waiting for your answer".to_string()),
+        "ExitPlanMode" => "Plan ready for review".to_string(),
+        "" => FALLBACK.to_string(),
+        other => format!("{other} needs your input"),
+    }
 }
 
 /// For Claude's Stop hook. Like cmux (`summarizeClaudeHookStop`): prefer the
@@ -511,6 +561,56 @@ mod tests {
             claude_notification_message(r#"{"message":"**Waiting**\nfor your input"}"#),
             "Waiting for your input"
         );
+    }
+
+    #[test]
+    fn claude_pretool_message_ask_user_question_uses_first_question() {
+        // Multi-question payload: we show the user the FIRST question so the
+        // banner is meaningful, not "Claude is asking something".
+        assert_eq!(
+            claude_pretool_message(
+                r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which library should we use for date formatting?","header":"Library"},{"question":"Which timezone?","header":"TZ"}]}}"#
+            ),
+            "Which library should we use for date formatting?"
+        );
+    }
+
+    #[test]
+    fn claude_pretool_message_ask_user_question_falls_back_to_header() {
+        // `question` is required by the schema but defend against it being
+        // empty — show `header` (the short chip) rather than a blank banner.
+        assert_eq!(
+            claude_pretool_message(
+                r#"{"tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"","header":"Auth method"}]}}"#
+            ),
+            "Auth method"
+        );
+    }
+
+    #[test]
+    fn claude_pretool_message_exit_plan_mode_is_fixed_label() {
+        // The plan body can be many KB; we surface a stable label instead so
+        // the banner is readable. Matches Claude's own push-notif text
+        // (`describeToolUseForPush` in 2.1.153).
+        assert_eq!(
+            claude_pretool_message(
+                "{\"tool_name\":\"ExitPlanMode\",\"tool_input\":{\"plan\":\"## Step 1\\nDo X\\n## Step 2...\"}}"
+            ),
+            "Plan ready for review"
+        );
+    }
+
+    #[test]
+    fn claude_pretool_message_unknown_tool_falls_back() {
+        // Should the matcher widen in the future, an unknown tool name still
+        // produces a sensible banner instead of silence or "Turn complete".
+        assert_eq!(
+            claude_pretool_message(r#"{"tool_name":"FutureInteractiveTool"}"#),
+            "FutureInteractiveTool needs your input"
+        );
+        // Missing tool_name → generic fallback.
+        assert_eq!(claude_pretool_message("{}"), FALLBACK);
+        assert_eq!(claude_pretool_message("not json"), FALLBACK);
     }
 
     #[test]

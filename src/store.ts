@@ -148,12 +148,11 @@ function claudeSettings(bin: string): string {
           ],
         },
       ],
-      // Mid-turn pauses where Claude needs the user — tool-permission prompts
-      // ("Claude needs your permission to use Bash"), the 60s idle reminder,
-      // and plan mode's `ExitPlanMode` approval. Stop doesn't fire for these
-      // (Claude is waiting, not done), so without this hook a paused Claude
-      // looks silent. Routes through SWARM_EVENT_FILE → `pane:notify` →
-      // `onPaneNotify`, the same path generic agents use.
+      // Mid-turn pauses Claude surfaces through its notification flow — the 60s
+      // idle reminder ("Claude is waiting for your input"), subagent permission
+      // prompts, MCP elicitation. Doesn't fire instantly for the top-level
+      // `requiresUserInteraction` tools (those have their own UI flow); the
+      // PreToolUse hook below covers them.
       Notification: [
         {
           matcher: "",
@@ -161,6 +160,25 @@ function claudeSettings(bin: string): string {
             {
               type: "command",
               command: `"${bin}" --notify-helper claude-notification`,
+              timeout: 10,
+            },
+          ],
+        },
+      ],
+      // Instant notification for Claude's two `requiresUserInteraction` tools:
+      // `AskUserQuestion` (multiple-choice prompt) and `ExitPlanMode` (plan-
+      // approval prompt). The Notification hook would catch these only via the
+      // idle reminder (~60s after Claude paused); PreToolUse fires the moment
+      // Claude calls the tool, so the OS banner is immediate. The matcher is a
+      // regex over the tool name (verified against Claude 2.1.153's hook
+      // dispatcher — `matchQuery:H` where H is the tool name).
+      PreToolUse: [
+        {
+          matcher: "AskUserQuestion|ExitPlanMode",
+          hooks: [
+            {
+              type: "command",
+              command: `"${bin}" --notify-helper claude-pretool`,
               timeout: 10,
             },
           ],
