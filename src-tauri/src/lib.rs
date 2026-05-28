@@ -351,6 +351,41 @@ struct SessionEnvelope {
     workspaces: Vec<serde_json::Value>,
 }
 
+/// Subset of the session schema we read at startup to register each
+/// workspace's root. Anything that lands in `session.json` was written there
+/// by swarm itself — it's the persisted record of "the user opened these
+/// folders" — so we treat it as the authority on trusted roots.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionRootsWorkspace {
+    repo_path: String,
+}
+#[derive(serde::Deserialize)]
+struct SessionRoots {
+    workspaces: Vec<SessionRootsWorkspace>,
+}
+
+/// Register the workspace roots listed in `session.json`. Called from
+/// `setup()` after `load_trusted`, **unconditionally** and additively: the
+/// session file is the user-state-of-record, so every restart should make
+/// its workspaces' paths trusted again — `trusted-roots.json` may have
+/// diverged (e.g. it was added later, or it lists a different set), and we
+/// never want hydrate to drop a workspace just because the two files don't
+/// agree. `register` canonicalises; a path that no longer exists is silently
+/// skipped (the workspace will fall out at hydrate time, same as before).
+fn load_workspace_roots_from_session(reg: &WorkspaceRegistry, swarm_dir: &std::path::Path) {
+    let session_path = swarm_dir.join("session.json");
+    let Ok(raw) = std::fs::read_to_string(&session_path) else {
+        return;
+    };
+    let Ok(sess) = serde_json::from_str::<SessionRoots>(&raw) else {
+        return;
+    };
+    for ws in sess.workspaces {
+        let _ = reg.register(&ws.repo_path);
+    }
+}
+
 #[tauri::command]
 fn save_session(data: String) -> AppResult<()> {
     // Schema-validate before write: a malformed snapshot (renderer bug,
@@ -1076,14 +1111,27 @@ pub fn run() {
             // request notification authorization. No-op unless bundled.
             #[cfg(target_os = "macos")]
             macos_notify::init(app.handle().clone());
-            // Wire the trusted-roots persistence into the registry, and rehydrate
-            // any roots from a previous session before any path-taking command
-            // can run. Failures here are non-fatal: a fresh registry just starts
-            // empty, which the (now-Rust-only) folder picker then refills.
+            // Trust roots are loaded from two sources at startup, both
+            // additive (a path listed in either becomes trusted):
+            //
+            //   1. `trusted-roots.json` — the canonical persistence file
+            //      `pick_workspace` writes to, so a freshly-picked workspace
+            //      survives even before the frontend's debounced session
+            //      save lands.
+            //   2. `session.json` — the persisted state-of-record. Every
+            //      workspace in it was opened by swarm itself in a prior run,
+            //      so it's a legitimate trust source. Reading from it here
+            //      means a session full of workspaces always restores cleanly
+            //      regardless of whether `trusted-roots.json` happens to have
+            //      drifted (e.g. a session that pre-dates the C-2 file).
+            //
+            // Failures are non-fatal: a fresh registry just starts empty, and
+            // the native folder picker refills it.
             if let Ok(dir) = swarm_dir() {
                 let store = dir.join("trusted-roots.json");
                 let reg = app.state::<WorkspaceRegistry>();
                 let _ = reg.load_trusted(&store);
+                load_workspace_roots_from_session(&reg, &dir);
             }
             // Watch ~/.swarm/events (one file per pane) event-driven: an agent
             // appending a line fires `pane:notify` with no interval polling.
@@ -1159,6 +1207,88 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_workspace_roots_from_session_registers_every_repo_path() {
+        // Both auther and valewnrt are in session.json. Without this loader
+        // a hydrate would call repoInfo on each and `ensure_within_root`
+        // would reject — empty state. The loader registers them so hydrate
+        // sees them as trusted.
+        let scratch =
+            std::env::temp_dir().join(format!("swarm-roots-from-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let repo_a = scratch.join("repo-a");
+        let repo_b = scratch.join("repo-b");
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        let session_json = serde_json::json!({
+            "v": 1,
+            "activeWorkspaceId": null,
+            "workspaces": [
+                { "id": "ws-1", "repoPath": repo_a.to_string_lossy(),
+                  "panes": [], "tabs": [], "panel": "scm", "activeTab": null },
+                { "id": "ws-2", "repoPath": repo_b.to_string_lossy(),
+                  "panes": [], "tabs": [], "panel": "scm", "activeTab": null },
+            ],
+        });
+        std::fs::write(scratch.join("session.json"), session_json.to_string()).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        load_workspace_roots_from_session(&reg, &scratch);
+        assert!(reg.ensure_within_root(repo_a.to_str().unwrap()).is_ok());
+        assert!(reg.ensure_within_root(repo_b.to_str().unwrap()).is_ok());
+        std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[test]
+    fn load_workspace_roots_from_session_is_additive_to_trusted_roots() {
+        // Regression: a `trusted-roots.json` listing `kept` plus a
+        // `session.json` listing `extra` must end up trusting BOTH — earlier
+        // code skipped the session.json read whenever the registry already
+        // had any entries, which left a non-empty trusted-roots silently
+        // shadowing the session.json restore (the exact reported bug).
+        let scratch =
+            std::env::temp_dir().join(format!("swarm-roots-add-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let kept = scratch.join("kept");
+        let extra = scratch.join("extra");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&extra).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        reg.with_persist_path(scratch.join("trusted-roots.json"));
+        reg.register(kept.to_str().unwrap()).unwrap();
+
+        let session_json = serde_json::json!({
+            "v": 1,
+            "activeWorkspaceId": null,
+            "workspaces": [
+                { "id": "ws-1", "repoPath": extra.to_string_lossy(),
+                  "panes": [], "tabs": [], "panel": "scm", "activeTab": null },
+            ],
+        });
+        std::fs::write(scratch.join("session.json"), session_json.to_string()).unwrap();
+
+        load_workspace_roots_from_session(&reg, &scratch);
+        // BOTH roots are now trusted — the pre-existing `kept` AND the
+        // session.json-only `extra`.
+        assert!(reg.ensure_within_root(kept.to_str().unwrap()).is_ok());
+        assert!(reg.ensure_within_root(extra.to_str().unwrap()).is_ok());
+        std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[test]
+    fn load_workspace_roots_from_session_is_a_noop_without_file() {
+        // No session.json on disk: must not panic, must not register
+        // anything.
+        let scratch =
+            std::env::temp_dir().join(format!("swarm-roots-noop-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let reg = WorkspaceRegistry::default();
+        load_workspace_roots_from_session(&reg, &scratch);
+        assert!(reg.roots().is_empty());
+        std::fs::remove_dir_all(&scratch).ok();
+    }
 
     #[cfg(unix)]
     #[test]
