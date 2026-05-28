@@ -749,6 +749,56 @@ mod tests {
     }
 
     #[test]
+    fn plan_replaces_stale_swarm_hook_with_current_bin() {
+        // Regression: when the swarm binary moves (user renamed the parent repo,
+        // moved swarm.app, ran `cargo clean`, etc.), the existing session-start
+        // hook in ~/.claude/settings.json still points at the old, gone path. On
+        // every Claude launch that hook fires `/bin/sh: …/swarm: No such file or
+        // directory` and the session is never captured → resume is lost.
+        //
+        // The fix: re-planning with the *current* bin must drop the stale entry
+        // and add the current one. The previous substring-only guard treated any
+        // `--notify-helper` / `session-start` string as "already installed" and
+        // left the stale entry in place.
+        let raw = r#"{
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "'/Users/u/dev/old-name/src-tauri/target/debug/swarm' --notify-helper session-start claude",
+                        "timeout": 10
+                    }]
+                }]
+            }
+        }"#;
+        let root: serde_json::Map<String, Value> = serde_json::from_str::<Value>(raw)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        let planned = plan_json(
+            "claude",
+            "/Applications/swarm.app/Contents/MacOS/swarm",
+            root,
+        );
+        let starts = planned["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(
+            starts.len(),
+            1,
+            "exactly one swarm session-start group must remain"
+        );
+        let cmd = starts[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(
+            cmd.contains("/Applications/swarm.app/Contents/MacOS/swarm"),
+            "stale entry must be replaced with the current bin, got: {cmd}"
+        );
+        assert!(
+            !cmd.contains("old-name"),
+            "stale bin path must be gone, got: {cmd}"
+        );
+    }
+
+    #[test]
     fn json_installed_detection_via_plan_equality() {
         // Not installed: planning changes the object.
         let empty = serde_json::Map::new();
