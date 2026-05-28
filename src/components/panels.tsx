@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   Bell,
   Check,
@@ -265,9 +265,18 @@ export function PullRequestsPanel() {
     })),
   );
   const { menu, open: openMenu, close: closeMenu } = useContextMenu();
+  // Memoize the split so .filter() doesn't allocate new arrays each render —
+  // downstream components key off referential identity.
+  const prs = ws?.prs;
+  const ghLogin = ws?.ghLogin;
+  const { mine, others } = useMemo(() => {
+    if (!prs) return { mine: [], others: [] };
+    return {
+      mine: prs.filter((p) => ghLogin && p.author === ghLogin),
+      others: prs.filter((p) => !ghLogin || p.author !== ghLogin),
+    };
+  }, [prs, ghLogin]);
   if (!ws) return null;
-  const mine = ws.prs.filter((p) => ws.ghLogin && p.author === ws.ghLogin);
-  const others = ws.prs.filter((p) => !ws.ghLogin || p.author !== ws.ghLogin);
 
   const prMenu = (p: (typeof ws.prs)[number]): MenuItem[] => [
     { kind: "header", label: `#${p.number}` },
