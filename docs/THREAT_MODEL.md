@@ -47,8 +47,19 @@ in production, `object-src`/`frame-src`/`frame-ancestors`/`form-action` `'none'`
 IPC command validates its path against a registry of roots the user explicitly
 opened (`src-tauri/guard.rs`, canonicalize + containment). So even a subverted
 page can only touch repositories already on screen — no sudden `/etc` read, no
-shell spawned in `/`. PTY spawns additionally reject an empty command and a
-`cwd` outside an opened root.
+shell spawned in `/`.
+
+The registry is now a real boundary: roots only enter it through the Rust-side
+`pick_workspace` IPC, which raises the native folder picker — the renderer
+never sees `register_root`. The set is persisted to `~/.swarm/trusted-roots.json`
+(mode 0600) and reloaded at startup; entries that no longer canonicalise are
+dropped on load. Downstream commands operate on the **canonical** path the
+guard returns (`ensured()` helper), so a symlink whose target moves between
+the registry check and the call can't land work outside the workspace.
+
+Per-list containment defends against a renderer mixing legitimate worktree
+paths with traversal entries: `discard_paths` and `stage_paths` validate each
+entry independently and silently skip anything that escapes the worktree root.
 
 ### T3 — Argument injection / hangs via `gh` (boundary 2)
 Every `gh` call goes through one hardened helper (`src-tauri/src/github.rs`):
@@ -84,8 +95,64 @@ PTY sessions are capped (64) and the reader→render queue is bounded (~2 MB), s
 flooding output applies OS backpressure instead of growing memory without bound.
 
 ### T7 — Local file disclosure
-`~/.swarm` is created `0700` and `session.json` / the Codex config copy are written
-`0600` on Unix, so other local accounts can't read swarm's state.
+`~/.swarm` is created `0700` **at process start** (the first `swarm_dir()` call
+sits in `setup()` before any session/event-file write, via `WorkspaceRegistry::load_trusted`).
+Every subdirectory it creates (`events/`, `clipboard/`, `codex-home/`,
+`agent-sessions/`) is locked to `0700` via the shared `fsperm` helper, and every
+file (`session.json`, the Codex config copy, `trusted-roots.json`, the codex
+`hooks.json`, `agent-sessions/<paneId>.json`) is `0600` — one audit point, one
+chmod call site. Credential-bearing values in persisted agent records (cursor
+`--api-key`, codex `--remote-auth-token-env`, …) are replaced with `[REDACTED]`
+before write, so a stolen record doesn't surrender keys. `save_session`
+validates the renderer's JSON against a typed envelope schema, refusing a
+malformed snapshot rather than overwriting a good one. `save_clipboard_image`
+is capped at 32 MiB.
+
+### T8 — Renderer-side PTY injection / cross-pane writes (boundary 2)
+A subverted renderer (or a script in the page) used to be able to call any
+mutating PTY IPC with any live `pty_id` — there was nothing stopping it from
+writing into another pane's agent. Every spawn now mints a UUID **sealed
+token**; the corresponding IPCs (`pty_write`, `pty_resize`, `pty_set_visible`,
+`pty_attach`, `pty_kill`, `pty_scroll`, `pty_selection_text`) require it,
+compared constant-time on the Rust side. `pty_live` lists pane/PTY ids but
+never the token — so even a script that gains read-only access to that list
+can't write. `pty_reattach` rotates the token after a webview reload, so the
+pre-reload page's token is invalidated at the rotation. `pty_spawn` also
+allowlists `command` (only the user's login shell or a registered agent CLI
+basename passes — `/usr/bin/curl` is refused).
+
+### T9 — Renderer-controlled environment / login-shell hijack (boundary 2)
+The frontend was free to push any `(key, value)` pair into the PTY env. The
+login-shell wrapper (`$SHELL -ilc 'exec "$0" "$@"' …`) means a malicious
+`LD_PRELOAD`, `ZDOTDIR`, `BASH_ENV`, or swapped `PATH` would land in the
+sourced shell profile and swap the binary the agent runs. `terminal::spawn`
+now applies a strict allowlist: only `SWARM_PANE_ID`, `SWARM_EVENT_FILE`,
+`SWARM_AGENT_ARGV_JSON`, `CODEX_HOME`, and `CLAUDE_CODE_NO_FLICKER` survive
+the renderer→PTY hop. The user's real `PATH`/`LANG`/etc reach the child
+through the legitimate path — the login shell sources their profile.
+`SWARM_EVENT_FILE` itself is containment-checked in `notify_helper`: the
+target must canonicalise directly under `~/.swarm/events/`, so a renderer
+can't redirect the per-pane event stream to `/etc/passwd` (or any
+owner-writable file).
+
+### T10 — Agent-resume re-arming attacker capabilities
+The `agent_session` resume machinery rebuilds the agent's launch command on
+restart. Without a guard, a launch captured with attacker-influenced flags
+(`claude --mcp-config <evil.json>`, `--allowed[d]Tools …`, `--system-prompt
+<override>`, `--add-dir`, `--plugin-dir`, …) would auto-re-arm the same
+configuration on every relaunch — a persistence vector against the agent
+itself. Per-agent `security_value_deny` sets mark these launches
+non-restorable: the captured record is preserved (for observability) but
+`resume_command` returns `None`, so the pane comes back as a clean shell
+instead of re-rolling a hostile MCP server. Swarm's own injected
+`--settings <json>` is filtered before the deny check, so a swarm-launched
+Claude still restores cleanly.
+
+External URL opens are gated through `open_external_url`, which rejects
+non-http(s) schemes (file:, javascript:, custom URI handlers) in Rust
+before the OS handler sees them. The renderer no longer holds the
+`opener:allow-open-url` capability — every external open goes through this
+checked path.
 
 ## Out of scope / accepted risks
 
