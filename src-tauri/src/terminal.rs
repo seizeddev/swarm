@@ -223,6 +223,14 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     size: Arc<Mutex<TermSize>>,
+    /// Per-PTY sealed token. Every mutating PTY IPC (`write`, `resize`, …) has
+    /// to present this token byte-for-byte (constant-time compared in
+    /// `check_token`) or the call is rejected. Rotated on `reattach`, so a
+    /// webview reload invalidates the old token in the pre-reload page. The
+    /// token NEVER leaks back into `live_panes` — only `spawn`/`reattach` hand
+    /// it out, so a script that gains read-only access to the live-list can
+    /// still not write into someone else's PTY.
+    token: String,
     /// When false, the render thread keeps parsing (state stays correct) but skips
     /// snapshotting and sending — a hidden pane costs no IPC or serialization.
     visible: Arc<AtomicBool>,
@@ -236,6 +244,35 @@ struct Session {
     /// lets the reloaded frontend **reattach** to the live PTY (via `live_panes`)
     /// instead of re-spawning and orphaning it, and enforces one live PTY per pane.
     pane_id: Option<String>,
+}
+
+/// The PTY id and its freshly minted sealed token. Returned from `spawn` and
+/// `reattach`; every mutating PTY op needs both halves to call back.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnResult {
+    pub id: String,
+    pub token: String,
+}
+
+/// Constant-time equality check on a sealed token. A `String` `==` would let a
+/// hostile webview learn the token byte-by-byte from timing differences. The
+/// length pre-check is what keeps that property — `ct_eq` requires equal-length
+/// slices, so without the gate the operator would short-circuit on a length
+/// mismatch and leak the length.
+pub(crate) fn token_matches(expected: &str, supplied: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    let a = expected.as_bytes();
+    let b = supplied.as_bytes();
+    a.len() == b.len() && a.ct_eq(b).unwrap_u8() == 1
+}
+
+fn check_token(s: &Session, supplied: &str) -> AppResult<()> {
+    if token_matches(&s.token, supplied) {
+        Ok(())
+    } else {
+        Err(AppError::Invalid("invalid pty token".into()))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -533,7 +570,7 @@ impl TerminalManager {
         id: String,
         opts: SpawnOpts,
         on_update: UpdateChannel,
-    ) -> AppResult<()> {
+    ) -> AppResult<SpawnResult> {
         // The frontend stamps every PTY with its stable pane id; reading it back
         // lets us tie this session to a pane (see `Session::pane_id`).
         let pane_id = opts
@@ -641,6 +678,9 @@ impl TerminalManager {
         )));
         let visible = Arc::new(AtomicBool::new(true));
         let chan = Arc::new(Mutex::new(on_update));
+        // Mint the sealed token here, while the session is still being assembled
+        // — every mutating IPC will compare against this token byte-for-byte.
+        let token = uuid::Uuid::new_v4().to_string();
 
         self.sessions.lock().insert(
             id.clone(),
@@ -650,6 +690,7 @@ impl TerminalManager {
                 master: pair.master,
                 child,
                 size: size.clone(),
+                token: token.clone(),
                 visible: visible.clone(),
                 chan: chan.clone(),
                 pane_id,
@@ -696,6 +737,7 @@ impl TerminalManager {
         // the first chunk, then drains everything already queued, advances the
         // parser over all of them, and snapshots *once* — so a token-by-token
         // stream collapses into a single repaint per frame.
+        let render_id = id.clone();
         std::thread::spawn(move || {
             let mut parser = Processor::<StdSyncHandler>::new();
             let mut notif = NotifState::default();
@@ -768,9 +810,9 @@ impl TerminalManager {
                     // so the UI labels it and never treats the body as actionable.
                     let _ = app.emit(
                         "term:notify",
-                        serde_json::json!({ "id": id, "title": title, "body": body, "source": "terminal" }),
+                        serde_json::json!({ "id": render_id, "title": title, "body": body, "source": "terminal" }),
                     );
-                    let _ = app.emit("term:attention", serde_json::json!({ "id": id }));
+                    let _ = app.emit("term:attention", serde_json::json!({ "id": render_id }));
                 }
 
                 if let Some(update) = update {
@@ -782,26 +824,28 @@ impl TerminalManager {
             }
         });
 
-        Ok(())
+        Ok(SpawnResult { id, token })
     }
 
-    pub fn write(&self, id: &str, data: &str) -> AppResult<()> {
+    pub fn write(&self, id: &str, token: &str, data: &str) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = guard
             .get(id)
             .ok_or_else(|| AppError::NotFound(format!("terminal '{id}' not found")))?;
+        check_token(session, token)?;
         session
             .input_tx
             .send(data.as_bytes().to_vec())
             .map_err(|e| AppError::Pty(e.to_string()))
     }
 
-    pub fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {
+    pub fn resize(&self, id: &str, token: &str, cols: u16, rows: u16) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = match guard.get(id) {
             Some(s) => s,
             None => return Ok(()),
         };
+        check_token(session, token)?;
         let new = TermSize {
             cols: cols.max(1) as usize,
             lines: rows.max(1) as usize,
@@ -871,12 +915,13 @@ impl TerminalManager {
     /// Scroll the viewport through the scrollback by `delta` lines (positive = back
     /// into history, negative = toward the live tail), then push a fresh full frame
     /// so the new viewport paints immediately. A no-op for an unknown id.
-    pub fn scroll(&self, id: &str, delta: i32) -> AppResult<()> {
+    pub fn scroll(&self, id: &str, token: &str, delta: i32) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = match guard.get(id) {
             Some(s) => s,
             None => return Ok(()),
         };
+        check_token(session, token)?;
         let update = {
             let mut t = session.term.lock();
             t.scroll_display(Scroll::Delta(delta));
@@ -898,6 +943,7 @@ impl TerminalManager {
     pub fn selection_text(
         &self,
         id: &str,
+        token: &str,
         start: (usize, usize),
         end: (usize, usize),
     ) -> AppResult<String> {
@@ -905,6 +951,7 @@ impl TerminalManager {
         let session = guard
             .get(id)
             .ok_or_else(|| AppError::NotFound(format!("terminal '{id}' not found")))?;
+        check_token(session, token)?;
         let t = session.term.lock();
         let off = t.grid().display_offset();
         let a = viewport_to_point(off, Point::new(start.0, Column(start.1)));
@@ -916,12 +963,13 @@ impl TerminalManager {
     /// Mark a pane visible or hidden. Going visible pushes one full frame (so the
     /// pane repaints immediately after a tab switch) and clears stale damage;
     /// going hidden just flips the flag — the render thread stops sending.
-    pub fn set_visible(&self, id: &str, visible: bool) -> AppResult<()> {
+    pub fn set_visible(&self, id: &str, token: &str, visible: bool) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = match guard.get(id) {
             Some(s) => s,
             None => return Ok(()),
         };
+        check_token(session, token)?;
         let was = session.visible.swap(visible, Ordering::AcqRel);
         if visible && !was {
             let update = {
@@ -936,13 +984,15 @@ impl TerminalManager {
     }
 
     /// Re-bind a live session to a fresh frontend channel — used when a pane's
-    /// component remounts (the PTY kept running while it was unmounted). Becomes
-    /// visible and pushes a full frame so the remounted view paints immediately.
-    pub fn attach(&self, id: &str, on_update: UpdateChannel) -> AppResult<()> {
+    /// component remounts in the same page (the PTY kept running while it was
+    /// unmounted). Cross-page (post-reload) reattach takes the separate
+    /// `reattach` path so the token can rotate.
+    pub fn attach(&self, id: &str, token: &str, on_update: UpdateChannel) -> AppResult<()> {
         let guard = self.sessions.lock();
         let session = guard
             .get(id)
             .ok_or_else(|| AppError::NotFound(format!("terminal '{id}' not found")))?;
+        check_token(session, token)?;
         *session.chan.lock() = on_update;
         session.visible.store(true, Ordering::Release);
         let update = {
@@ -955,8 +1005,59 @@ impl TerminalManager {
         Ok(())
     }
 
-    pub fn kill(&self, id: &str) -> AppResult<()> {
-        if let Some(mut session) = self.sessions.lock().remove(id) {
+    /// Cross-page reattach: a post-reload webview re-binds to the PTY whose
+    /// `pane_id` matches `pane_id`, **rotates** the sealed token (so the
+    /// pre-reload page's token can no longer write), and pushes a full frame.
+    /// Returns the fresh `(id, token)`; `NotFound` when no live PTY backs that
+    /// pane (the caller then spawns from scratch).
+    pub fn reattach(&self, pane_id: &str, on_update: UpdateChannel) -> AppResult<SpawnResult> {
+        let mut guard = self.sessions.lock();
+        // Find the live session for this pane (there can only be one — `spawn`
+        // reaps a stale pane match before inserting).
+        let id = match guard
+            .iter()
+            .find(|(_, s)| s.pane_id.as_deref() == Some(pane_id))
+            .map(|(k, _)| k.clone())
+        {
+            Some(id) => id,
+            None => {
+                return Err(AppError::NotFound(format!(
+                    "no live pty for pane '{pane_id}'"
+                )))
+            }
+        };
+        let new_token = uuid::Uuid::new_v4().to_string();
+        let Some(session) = guard.get_mut(&id) else {
+            // The HashMap entry was just found under this same lock; this branch
+            // is unreachable but encodes the invariant rather than panicking.
+            return Err(AppError::NotFound(format!(
+                "no live pty for pane '{pane_id}'"
+            )));
+        };
+        session.token = new_token.clone();
+        *session.chan.lock() = on_update;
+        session.visible.store(true, Ordering::Release);
+        let update = {
+            let mut t = session.term.lock();
+            let upd = snapshot_full(&t);
+            t.reset_damage();
+            upd
+        };
+        let _ = session.chan.lock().send(frame(&update));
+        Ok(SpawnResult {
+            id,
+            token: new_token,
+        })
+    }
+
+    pub fn kill(&self, id: &str, token: &str) -> AppResult<()> {
+        let mut guard = self.sessions.lock();
+        if let Some(s) = guard.get(id) {
+            check_token(s, token)?;
+        } else {
+            return Ok(());
+        }
+        if let Some(mut session) = guard.remove(id) {
             let _ = session.child.kill();
         }
         Ok(())
@@ -1488,6 +1589,33 @@ mod tests {
                 "--continue".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn h1_token_matches_accepts_only_the_exact_token() {
+        // Right token of the same length: accepted.
+        assert!(token_matches("the-real-token", "the-real-token"));
+        // Same length, one byte off: rejected. Constant-time compare doesn't
+        // lie — every byte position is examined regardless.
+        assert!(!token_matches("the-real-token", "the-real-toke!"));
+        // Different lengths: rejected (the length pre-check is what keeps
+        // constant-time from leaking the length itself).
+        assert!(!token_matches("the-real-token", ""));
+        assert!(!token_matches("the-real-token", "the-real-token-extra"));
+        // Prefix: rejected. Without the length check the operator would
+        // short-circuit and leak the length, so this case is the regression
+        // the constant-time compare must catch.
+        assert!(!token_matches("the-real-token", "the-real-toke"));
+    }
+
+    #[test]
+    fn h1_live_panes_signature_does_not_leak_token() {
+        // `live_panes` returns `(pane_id, pty_id)` — two strings — so by
+        // construction no token reaches the renderer through it. A shape
+        // assertion (the runtime invariant is checked by the type system).
+        let mgr = TerminalManager::default();
+        let v: Vec<(String, String)> = mgr.live_panes();
+        assert!(v.is_empty());
     }
 
     #[test]

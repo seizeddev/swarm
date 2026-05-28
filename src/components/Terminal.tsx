@@ -28,6 +28,7 @@ import { openExternal } from "../lib/external";
 import { confirmDialog } from "../lib/dialog";
 import { setTerminalSurface } from "../lib/theme";
 import { useStore, type Pane } from "../store";
+import type { PtyHandle } from "../lib/types";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { joinPaths, registerDrop } from "../lib/drop";
@@ -67,7 +68,7 @@ export function Terminal({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const scrollbarRef = useRef<HTMLDivElement>(null);
-  const ptyIdRef = useRef<string | null>(null);
+  const ptyHandleRef = useRef<PtyHandle | null>(null);
 
   // Backend-independent model + draw layer.
   const gridRef = useRef(new Grid());
@@ -219,7 +220,7 @@ export function Terminal({
   // is handled), then we restore the committed size and repaint. ptySetVisible(true)
   // makes Rust push a full frame, so there's no blank flash.
   const restoreRenderer = () => {
-    if (rendererRef.current != null || ptyIdRef.current == null) return;
+    if (rendererRef.current != null || ptyHandleRef.current == null) return;
     if (!measureMetrics()) return;
     const dims = lastSent.current;
     if (dims) applyCanvasSize(dims.cols, dims.rows);
@@ -308,7 +309,7 @@ export function Terminal({
     const last = lastSent.current;
     if (last && last.cols === dims.cols && last.rows === dims.rows) return;
     lastSent.current = dims;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (id) api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
   };
 
@@ -368,7 +369,7 @@ export function Terminal({
   useEffect(() => {
     focusedRef.current = focused;
     // Focus reporting (DEC 1004) when the program asked for it.
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     const seq = focusEvent(gridRef.current.mode, focused);
     if (id && seq) api.ptyWrite(id, seq);
     if (focused) gridRef.current.markAllDirty();
@@ -380,38 +381,44 @@ export function Terminal({
     let cancelled = false;
     measureMetrics();
     (async () => {
-      const existing = useStore.getState().panes.find((p) => p.paneId === pane.paneId)?.ptyId;
-      if (existing && (await api.ptyAlive(existing))) {
+      const existing = useStore.getState().panes.find((p) => p.paneId === pane.paneId)?.pty;
+      // Post-reload reattach: a surviving PTY's handle was provisionally
+      // stored without a token (token: ""). Going through `ptyReattach`
+      // rebinds the channel and ROTATES the sealed token — so the
+      // pre-reload page's token can no longer write into this pane.
+      if (existing && (await api.ptyAlive(existing.id))) {
         if (cancelled) return;
-        ptyIdRef.current = existing;
         try {
-          await api.ptyAttach(existing, apply);
+          const handle = await api.ptyReattach(pane.paneId, apply);
+          if (cancelled) return;
+          ptyHandleRef.current = handle;
           // An already-running PTY has content; the core pushes a full frame on
           // attach, but mark ready now so there's no spinner flash on re-attach.
           setReady(true);
-          api.ptySetVisible(existing, visibleRef.current).catch(() => {});
+          useStore.getState().bindPty(pane.paneId, handle);
+          api.ptySetVisible(handle, visibleRef.current).catch(() => {});
           requestFit();
           return;
         } catch {
-          /* session vanished between alive-check and attach → spawn below */
+          /* session vanished between alive-check and reattach → spawn below */
         }
       }
       const { cols, rows } = await measureReady(() => cancelled);
       if (cancelled) return;
       try {
-        const id = await api.ptySpawn(
+        const handle = await api.ptySpawn(
           { cwd: pane.cwd, command: pane.command, args: pane.args, env: pane.env, cols, rows },
           apply,
         );
         if (!useStore.getState().panes.some((p) => p.paneId === pane.paneId)) {
-          api.ptyKill(id);
+          api.ptyKill(handle);
           return;
         }
-        ptyIdRef.current = id;
+        ptyHandleRef.current = handle;
         lastSent.current = { cols, rows };
         applyCanvasSize(cols, rows);
-        useStore.getState().bindPty(pane.paneId, id);
-        api.ptySetVisible(id, cancelled ? false : visibleRef.current).catch(() => {});
+        useStore.getState().bindPty(pane.paneId, handle);
+        api.ptySetVisible(handle, cancelled ? false : visibleRef.current).catch(() => {});
         requestFit();
       } catch {
         if (!cancelled) setExited(true);
@@ -420,7 +427,7 @@ export function Terminal({
 
     return () => {
       cancelled = true;
-      if (ptyIdRef.current) api.ptySetVisible(ptyIdRef.current, false).catch(() => {});
+      if (ptyHandleRef.current) api.ptySetVisible(ptyHandleRef.current, false).catch(() => {});
       if (raf.current) {
         cancelAnimationFrame(raf.current);
         raf.current = undefined;
@@ -451,7 +458,7 @@ export function Terminal({
     let cancelled = false;
     let off: (() => void) | null = null;
     listen<{ id: string; text: string }>("term:clipboard", (e) => {
-      if (e.payload.id === ptyIdRef.current && e.payload.text) {
+      if (e.payload.id === ptyHandleRef.current?.id && e.payload.text) {
         navigator.clipboard?.writeText(e.payload.text).catch(() => {});
       }
     })
@@ -472,7 +479,7 @@ export function Terminal({
   // a TUI such as Claude Code attaches the file. Refocus so typing lands at once.
   useEffect(() => {
     return registerDrop(pane.paneId, (paths) => {
-      const id = ptyIdRef.current;
+      const id = ptyHandleRef.current;
       if (!id || !paths.length) return;
       api.ptyWrite(id, wrapPaste(joinPaths(paths), gridRef.current.mode));
       wrapRef.current?.focus();
@@ -486,7 +493,7 @@ export function Terminal({
     const el = wrapRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (!ptyIdRef.current) return;
+      if (!ptyHandleRef.current) return;
       if (el.clientWidth === 0 || el.clientHeight === 0) return;
       scheduleFit();
     });
@@ -500,7 +507,7 @@ export function Terminal({
 
   // Layout-change re-fit (a sibling split opened/closed, or a divider dragged).
   useLayoutEffect(() => {
-    if (!visible || ptyIdRef.current == null) return;
+    if (!visible || ptyHandleRef.current == null) return;
     fitStable.current = null;
     requestFit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -523,7 +530,7 @@ export function Terminal({
   }, []);
 
   useEffect(() => {
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (id) api.ptySetVisible(id, visible).catch(() => {});
     if (visible) {
       // Cancel any pending teardown first — a quick flip back mustn't release after
@@ -557,7 +564,7 @@ export function Terminal({
 
   const copySelection = async () => {
     const sel = selRef.current;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (!sel || !id) return;
     try {
       const text = await api.ptySelectionText(
@@ -582,7 +589,7 @@ export function Terminal({
     const seq = encodeKey(e.nativeEvent, gridRef.current.mode);
     if (seq != null) {
       e.preventDefault();
-      const id = ptyIdRef.current;
+      const id = ptyHandleRef.current;
       if (id) {
         // Typing snaps the viewport back to the live tail (matches every terminal).
         if (gridRef.current.displayOffset > 0) api.ptyScroll(id, -1_000_000).catch(() => {});
@@ -598,7 +605,7 @@ export function Terminal({
     // during the event, but the File it hands back can be read async afterwards.
     const image = text ? null : pickClipboardImage(e.clipboardData);
     e.preventDefault();
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (!id) return;
     if (!text) {
       // No text but an image (a screenshot, a copied picture): a PTY can't carry
@@ -616,7 +623,7 @@ export function Terminal({
   // otherwise guarded against accidentally auto-running multi-line content.
   // Shared by the paste event and the context-menu "Paste" item.
   const pasteText = async (text: string) => {
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (!id || !text) return;
     const mode = gridRef.current.mode;
     const wrapped = wrapPaste(text, mode);
@@ -659,13 +666,15 @@ export function Terminal({
   // a bracketed paste (when the program asked for it) so a TUI sees one paste
   // event — matching how a drag-and-dropped file arrives, which is what makes
   // Claude Code attach the image.
-  const pasteImage = async (id: string, file: File, ext: string) => {
+  const pasteImage = async (handle: PtyHandle, file: File, ext: string) => {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (bytes.length === 0) return;
       const path = await api.saveClipboardImage(bytesToBase64(bytes), ext);
-      if (ptyIdRef.current !== id) return; // pane changed while we were saving
-      api.ptyWrite(id, wrapPaste(path, gridRef.current.mode));
+      // Pane changed (and so the PTY's token rotated, or the pane is gone)
+      // while we were saving: drop the paste, it would be rejected anyway.
+      if (ptyHandleRef.current?.id !== handle.id) return;
+      api.ptyWrite(handle, wrapPaste(path, gridRef.current.mode));
     } catch {
       /* couldn't read or save the image — nothing to paste */
     }
@@ -696,7 +705,7 @@ export function Terminal({
     const cell = eventCell(e);
     if (!cell) return;
     const g = gridRef.current;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
 
     // ⌘/Ctrl-click an OSC 8 hyperlink opens it (http(s) only, via the guarded opener).
     const link = linkAt(cell);
@@ -763,7 +772,7 @@ export function Terminal({
     const cell = eventCell(e);
     if (!cell) return;
     const g = gridRef.current;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
 
     // Hover-underline an OSC 8 hyperlink.
     const run = g.runAt(cell.col, cell.row);
@@ -802,7 +811,7 @@ export function Terminal({
 
   const onMouseUp = (e: React.MouseEvent) => {
     const g = gridRef.current;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     const cell = eventCell(e);
     if (id && reportsMouse(g.mode) && cell) {
       const seq = encodeMouse(
@@ -828,7 +837,7 @@ export function Terminal({
 
   const onWheel = (e: React.WheelEvent) => {
     const g = gridRef.current;
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     if (!id) return;
     const up = e.deltaY < 0;
     const lines = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / cssCell.current.h) || 1));
@@ -863,7 +872,7 @@ export function Terminal({
   // button to such programs, so the menu wins; Copy/Paste is more useful there
   // than a forwarded right-click the agent ignores anyway.
   const onContextMenu = (e: React.MouseEvent) => {
-    const id = ptyIdRef.current;
+    const id = ptyHandleRef.current;
     const store = useStore.getState();
     const items: MenuItem[] = [
       {

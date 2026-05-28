@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+/// Handle to a live PTY: the stable `id` (used by `pty:exit`/`term:title` event
+/// matching) plus the sealed `token` every mutating PTY IPC must present.
+/// Minted by `ptySpawn`; rotated by `ptyReattach` after a webview reload.
+export interface PtyHandle {
+  id: string;
+  token: string;
+}
+
 export interface RepoInfo {
   path: string;
   name: string;

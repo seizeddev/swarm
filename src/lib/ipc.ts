@@ -11,6 +11,7 @@ import type {
   IntegrationPreview,
   IntegrationStatus,
   PrSummary,
+  PtyHandle,
   RepoInfo,
   ResumeCommand,
   StatusAndStats,
@@ -93,20 +94,36 @@ export const api = {
       rows: number;
     },
     onUpdate: (u: WireUpdate) => void,
-  ) => {
+  ): Promise<PtyHandle> => {
     // Frames arrive as raw bytes (ArrayBuffer); decode straight into a WireUpdate.
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (raw) => onUpdate(decodeUpdate(raw));
-    return invoke<string>("pty_spawn", { opts, onUpdate: channel });
+    return invoke<PtyHandle>("pty_spawn", { opts, onUpdate: channel });
   },
   // Re-bind a still-running PTY to a fresh channel after the pane's component
-  // remounts (e.g. switching back to a workspace). The core pushes a full frame.
-  ptyAttach: (id: string, onUpdate: (u: WireUpdate) => void) => {
+  // remounts in the SAME page. The caller proves it's still the legitimate
+  // owner by presenting the sealed token from `ptySpawn` / `ptyReattach`.
+  ptyAttach: (handle: PtyHandle, onUpdate: (u: WireUpdate) => void) => {
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (raw) => onUpdate(decodeUpdate(raw));
-    return invoke<void>("pty_attach", { id, onUpdate: channel });
+    return invoke<void>("pty_attach", {
+      id: handle.id,
+      token: handle.token,
+      onUpdate: channel,
+    });
   },
-  ptyWrite: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
+  // Cross-page reattach for a webview that just reloaded: bind to the PTY
+  // backing `paneId` and ROTATE its sealed token. The pre-reload page's token
+  // is invalidated by the rotation, so even if some script in the dead page
+  // is still parked, it can no longer write into our pane. Throws when no PTY
+  // survives for that pane (the caller then spawns fresh).
+  ptyReattach: (paneId: string, onUpdate: (u: WireUpdate) => void): Promise<PtyHandle> => {
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (raw) => onUpdate(decodeUpdate(raw));
+    return invoke<PtyHandle>("pty_reattach", { paneId, onUpdate: channel });
+  },
+  ptyWrite: (handle: PtyHandle, data: string) =>
+    invoke<void>("pty_write", { id: handle.id, token: handle.token, data }),
   // Persist a clipboard image (base64-encoded bytes from the WebKit paste event)
   // to a temp file in the core and return its absolute path, which the caller
   // then pastes into the PTY so a CLI agent can read the image off disk.
@@ -115,25 +132,34 @@ export const api = {
   // Native clipboard read — used by the menu "Paste" to dodge WKWebView's
   // DOM-paste permission prompt that `navigator.clipboard.readText()` raises.
   readClipboardText: () => invoke<string>("read_clipboard_text"),
-  ptyResize: (id: string, cols: number, rows: number) =>
-    invoke<void>("pty_resize", { id, cols, rows }),
+  ptyResize: (handle: PtyHandle, cols: number, rows: number) =>
+    invoke<void>("pty_resize", { id: handle.id, token: handle.token, cols, rows }),
   // Scroll the viewport through scrollback by `delta` lines (>0 = back into
   // history). The core replies with a fresh full frame at the new offset.
-  ptyScroll: (id: string, delta: number) => invoke<void>("pty_scroll", { id, delta }),
+  ptyScroll: (handle: PtyHandle, delta: number) =>
+    invoke<void>("pty_scroll", { id: handle.id, token: handle.token, delta }),
   // Extract the text between two 0-based viewport cells (resolved through the
   // current scroll offset by the core). Endpoints may be in any drag order.
-  ptySelectionText: (id: string, start: [number, number], end: [number, number]) =>
-    invoke<string>("pty_selection_text", { id, start, end }),
+  ptySelectionText: (handle: PtyHandle, start: [number, number], end: [number, number]) =>
+    invoke<string>("pty_selection_text", {
+      id: handle.id,
+      token: handle.token,
+      start,
+      end,
+    }),
   agentSessionResume: (paneId: string) =>
     invoke<ResumeCommand | null>("agent_session_resume", { paneId }),
   agentSessionForget: (paneId: string) =>
     invoke<void>("agent_session_forget", { paneId }).catch(() => {}),
-  ptySetVisible: (id: string, visible: boolean) => invoke<void>("pty_set_visible", { id, visible }),
-  ptyKill: (id: string) => invoke<void>("pty_kill", { id }),
+  ptySetVisible: (handle: PtyHandle, visible: boolean) =>
+    invoke<void>("pty_set_visible", { id: handle.id, token: handle.token, visible }),
+  ptyKill: (handle: PtyHandle) => invoke<void>("pty_kill", { id: handle.id, token: handle.token }),
   ptyAlive: (id: string) => invoke<boolean>("pty_alive", { id }),
   // [paneId, ptyId] for every PTY that outlived a webview reload (the Rust process
   // survives a WebContent reload). Hydrate uses it to reattach to live agents
   // rather than re-spawning them (which would orphan the old PTY — see store.ts).
+  // Tokens are NOT in this list — the renderer can read live ids but must call
+  // `ptyReattach` per-pane to obtain (and rotate) the sealed token.
   ptyLive: () => invoke<[string, string][]>("pty_live"),
   // Kill any live PTY not in `keep` — the post-hydrate sweep of reload orphans.
   ptyReap: (keep: string[]) => invoke<void>("pty_reap", { keep }),

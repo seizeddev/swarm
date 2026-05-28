@@ -15,13 +15,23 @@ import { loadSnap, saveSnap } from "./lib/persist";
 import { confirmDialog } from "./lib/dialog";
 import { notifyOS } from "./lib/notify";
 import { updater } from "./lib/updater";
-import type { AgentDef, DiffStatsInfo, FileChange, PrSummary, RepoInfo } from "./lib/types";
+import type {
+  AgentDef,
+  DiffStatsInfo,
+  FileChange,
+  PrSummary,
+  PtyHandle,
+  RepoInfo,
+} from "./lib/types";
 
 export interface Pane {
   paneId: string;
   workspaceId: string;
   tabId: string;
-  ptyId: string | null;
+  // Sealed handle to the live PTY: { id, token }. `null` when no PTY backs the
+  // pane yet (initial spawn pending, or a hydrate that couldn't reattach).
+  // Every mutating PTY call goes through this; the token rotates on `ptyReattach`.
+  pty: PtyHandle | null;
   title: string;
   agentId: string;
   command: string;
@@ -227,7 +237,7 @@ interface State {
   selectPane(paneId: string): void;
   selectTab(tabId: string): void;
   setRatio(splitNodeId: string, ratio: number): void;
-  bindPty(paneId: string, ptyId: string): void;
+  bindPty(paneId: string, pty: PtyHandle): void;
 
   openDiff(file: string, staged: boolean): void;
   openPr(pr: PrSummary): void;
@@ -371,7 +381,7 @@ export const useStore = create<State>((set, get) => {
       paneId,
       workspaceId: ws.id,
       tabId,
-      ptyId: null,
+      pty: null,
       title: a?.name ?? "Shell",
       agentId,
       command: a?.command ?? "bash",
@@ -547,18 +557,24 @@ export const useStore = create<State>((set, get) => {
             });
             for (const sp of sw.panes) {
               // A live PTY for this pane means we're recovering from a webview
-              // reload (not a fresh launch): reattach to the still-running agent
-              // rather than re-resuming it. Re-resuming would spawn a second agent
-              // and orphan the live PTY — the leak that OOMs WebContent and causes
-              // the reload. Terminal.tsx attaches once it sees this `ptyId`. The
-              // persisted launch info is kept so a later in-app respawn still works.
-              const livePtyId = livePty.get(sp.paneId);
-              if (livePtyId) {
+              // reload (not a fresh launch): bind the surviving PTY's handle to
+              // the pane so Terminal.tsx reattaches to it (rotating the sealed
+              // token in the process — the pre-reload page's token is dead).
+              // Re-resuming would spawn a second agent and orphan the live PTY —
+              // the leak that OOMs WebContent and causes the reload. The
+              // persisted launch info is kept so a later in-app respawn works.
+              // The fast `ptyLive` shape (pane_id, pty_id) is the optimisation
+              // hint; we only round-trip to `ptyReattach` for panes that
+              // actually have a surviving PTY.
+              if (livePty.has(sp.paneId)) {
                 panes.push({
                   paneId: sp.paneId,
                   workspaceId: sw.id,
                   tabId: sp.tabId,
-                  ptyId: livePtyId,
+                  // Reattach happens in Terminal.tsx once the pane mounts —
+                  // store the live pty_id provisionally so the reaper sees it
+                  // as kept, and Terminal.tsx swaps in the rotated handle.
+                  pty: { id: livePty.get(sp.paneId)!, token: "" },
                   title: sp.title,
                   agentId: sp.agentId,
                   command: sp.command,
@@ -587,7 +603,7 @@ export const useStore = create<State>((set, get) => {
                   paneId: sp.paneId,
                   workspaceId: sw.id,
                   tabId: sp.tabId,
-                  ptyId: null,
+                  pty: null,
                   title: a?.name ?? sp.title,
                   agentId: captured.agent,
                   command: captured.command,
@@ -616,7 +632,7 @@ export const useStore = create<State>((set, get) => {
                 paneId: sp.paneId,
                 workspaceId: sw.id,
                 tabId: sp.tabId,
-                ptyId: null,
+                pty: null,
                 title: sp.title,
                 agentId: sp.agentId,
                 command: sp.command,
@@ -636,7 +652,7 @@ export const useStore = create<State>((set, get) => {
           // (a closed pane, a workspace dropped above, or a duplicate for one pane).
           // Must run BEFORE `set` mounts the panes: panes about to re-spawn have no
           // PTY yet, so keeping only the reattached ids can't reap a fresh spawn.
-          const keepPtyIds = panes.map((p) => p.ptyId).filter((id): id is string => id != null);
+          const keepPtyIds = panes.map((p) => p.pty?.id).filter((id): id is string => id != null);
           await api.ptyReap(keepPtyIds).catch(() => {});
           set({ workspaces, panes, activeWorkspaceId });
           for (const w of workspaces) {
@@ -702,7 +718,7 @@ export const useStore = create<State>((set, get) => {
       // killing, so closing the workspace is where they're reaped.
       for (const p of get().panes) {
         if (p.workspaceId === id) {
-          if (p.ptyId) api.ptyKill(p.ptyId).catch(() => {});
+          if (p.pty) api.ptyKill(p.pty).catch(() => {});
           api.agentSessionForget(p.paneId);
         }
       }
@@ -732,7 +748,7 @@ export const useStore = create<State>((set, get) => {
       const ws = get().workspaces.find((w) => w.id === id);
       if (!ws) return;
       const running = get().panes.filter(
-        (p) => p.workspaceId === id && p.agentId !== "shell" && p.ptyId,
+        (p) => p.workspaceId === id && p.agentId !== "shell" && p.pty,
       );
       if (running.length) {
         const kinds = [...new Set(running.map((p) => p.agentId))].join(", ");
@@ -827,7 +843,7 @@ export const useStore = create<State>((set, get) => {
       const pane = get().panes.find((p) => p.paneId === paneId);
       // The Terminal no longer kills on unmount (PTYs survive workspace switches),
       // so removal is the explicit kill point.
-      if (pane?.ptyId) api.ptyKill(pane.ptyId).catch(() => {});
+      if (pane?.pty) api.ptyKill(pane.pty).catch(() => {});
       // Drop any captured agent-session record so a closed pane doesn't resurrect
       // an agent on next launch.
       api.agentSessionForget(paneId);
@@ -901,8 +917,8 @@ export const useStore = create<State>((set, get) => {
       patchTab(ws.id, tab.id, (t) => ({ ...t, layout: setRatioIn(t.layout, splitNodeId, ratio) }));
     },
 
-    bindPty(paneId, ptyId) {
-      set((s) => ({ panes: s.panes.map((p) => (p.paneId === paneId ? { ...p, ptyId } : p)) }));
+    bindPty(paneId, pty) {
+      set((s) => ({ panes: s.panes.map((p) => (p.paneId === paneId ? { ...p, pty } : p)) }));
     },
 
     openDiff(file, staged) {
@@ -1015,7 +1031,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     onAttention(ptyId) {
-      const pane = get().panes.find((p) => p.ptyId === ptyId);
+      const pane = get().panes.find((p) => p.pty?.id === ptyId);
       if (!pane || lookingAtPane(pane)) return;
       set((s) => ({
         panes: s.panes.map((p) => (p.paneId === pane.paneId ? { ...p, attention: true } : p)),
@@ -1023,7 +1039,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     onNotify(ptyId, title, body) {
-      const pane = get().panes.find((p) => p.ptyId === ptyId);
+      const pane = get().panes.find((p) => p.pty?.id === ptyId);
       // Suppress entirely only when you're already looking at the pane (window
       // in front AND this is the visible pane). Otherwise record it in-app, and
       // if the window is backgrounded, escalate to an OS banner with sound.
@@ -1073,7 +1089,9 @@ export const useStore = create<State>((set, get) => {
     onTitle(ptyId, title) {
       const t = title.trim();
       if (!t) return;
-      set((s) => ({ panes: s.panes.map((p) => (p.ptyId === ptyId ? { ...p, title: t } : p)) }));
+      set((s) => ({
+        panes: s.panes.map((p) => (p.pty?.id === ptyId ? { ...p, title: t } : p)),
+      }));
     },
 
     dismissNotification(id) {

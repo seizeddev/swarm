@@ -19,7 +19,7 @@ use guard::WorkspaceRegistry;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
-use terminal::{SpawnOpts, TerminalManager, UpdateChannel};
+use terminal::{SpawnOpts, SpawnResult, TerminalManager, UpdateChannel};
 use watcher::WatcherManager;
 
 /// Run a blocking git/github call on Tauri's blocking pool. Sync `#[tauri::command]`s
@@ -665,7 +665,7 @@ fn pty_spawn(
     reg: State<WorkspaceRegistry>,
     opts: SpawnOpts,
     on_update: UpdateChannel,
-) -> AppResult<String> {
+) -> AppResult<SpawnResult> {
     // A PTY is the most direct path to code execution, so harden the inputs:
     // non-empty command, allowlisted against the registry + the user's login
     // shell (a renderer must not be able to spawn `/usr/bin/curl …`), and a cwd
@@ -681,47 +681,89 @@ fn pty_spawn(
     }
     reg.ensure_within_root(&opts.cwd)?;
     let id = uuid::Uuid::new_v4().to_string();
-    state.spawn(app, id.clone(), opts, on_update)?;
-    Ok(id)
+    state.spawn(app, id, opts, on_update)
 }
 
+/// Re-bind a still-running PTY in the SAME page (a pane component remounted).
+/// The caller proves it's still the legitimate owner by presenting the sealed
+/// token it received from `pty_spawn` (or the latest `pty_reattach`). The
+/// post-reload "I'm a fresh page" path uses `pty_reattach` instead, which
+/// rotates the token.
 #[tauri::command]
 fn pty_attach(
     state: State<TerminalManager>,
     id: String,
+    token: String,
     on_update: UpdateChannel,
 ) -> AppResult<()> {
-    state.attach(&id, on_update)
+    state.attach(&id, &token, on_update)
+}
+
+/// Cross-page reattach for a webview that just reloaded: bind to the PTY
+/// backing `paneId` and **rotate** its sealed token. The pre-reload page's
+/// token is invalidated by the rotation, so even if some script in the dead
+/// page is still parked, it can no longer write into our pane. Returns the
+/// fresh `(id, token)`; the frontend stores both and uses them for every later
+/// mutating call. `NotFound` when no PTY survives for that pane.
+#[tauri::command]
+fn pty_reattach(
+    state: State<TerminalManager>,
+    pane_id: String,
+    on_update: UpdateChannel,
+) -> AppResult<SpawnResult> {
+    state.reattach(&pane_id, on_update)
 }
 
 #[tauri::command]
-fn pty_write(state: State<TerminalManager>, id: String, data: String) -> AppResult<()> {
-    state.write(&id, &data)
+fn pty_write(
+    state: State<TerminalManager>,
+    id: String,
+    token: String,
+    data: String,
+) -> AppResult<()> {
+    state.write(&id, &token, &data)
 }
 
 #[tauri::command]
-fn pty_resize(state: State<TerminalManager>, id: String, cols: u16, rows: u16) -> AppResult<()> {
-    state.resize(&id, cols, rows)
+fn pty_resize(
+    state: State<TerminalManager>,
+    id: String,
+    token: String,
+    cols: u16,
+    rows: u16,
+) -> AppResult<()> {
+    state.resize(&id, &token, cols, rows)
 }
 
 #[tauri::command]
-fn pty_set_visible(state: State<TerminalManager>, id: String, visible: bool) -> AppResult<()> {
-    state.set_visible(&id, visible)
+fn pty_set_visible(
+    state: State<TerminalManager>,
+    id: String,
+    token: String,
+    visible: bool,
+) -> AppResult<()> {
+    state.set_visible(&id, &token, visible)
 }
 
 #[tauri::command]
-fn pty_scroll(state: State<TerminalManager>, id: String, delta: i32) -> AppResult<()> {
-    state.scroll(&id, delta)
+fn pty_scroll(
+    state: State<TerminalManager>,
+    id: String,
+    token: String,
+    delta: i32,
+) -> AppResult<()> {
+    state.scroll(&id, &token, delta)
 }
 
 #[tauri::command]
 fn pty_selection_text(
     state: State<TerminalManager>,
     id: String,
+    token: String,
     start: (usize, usize),
     end: (usize, usize),
 ) -> AppResult<String> {
-    state.selection_text(&id, start, end)
+    state.selection_text(&id, &token, start, end)
 }
 
 #[tauri::command]
@@ -742,8 +784,8 @@ fn unwatch_worktree(state: State<WatcherManager>, workspace_id: String) {
 }
 
 #[tauri::command]
-fn pty_kill(state: State<TerminalManager>, id: String) -> AppResult<()> {
-    state.kill(&id)
+fn pty_kill(state: State<TerminalManager>, id: String, token: String) -> AppResult<()> {
+    state.kill(&id, &token)
 }
 
 #[tauri::command]
@@ -1002,6 +1044,7 @@ pub fn run() {
             commit_diff,
             pty_spawn,
             pty_attach,
+            pty_reattach,
             pty_write,
             pty_resize,
             pty_scroll,

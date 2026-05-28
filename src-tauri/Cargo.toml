@@ -36,6 +36,9 @@ portable-pty = "0.9"
 parking_lot = "0.12"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
+# Constant-time byte comparison for PTY sealed-token equality. A `==` on a
+# String would let a hostile webview learn the token by timing prefix matches.
+subtle = "2"
 base64 = "0.22"
 dirs = "6"
 # Codex hook-trust: SHA-256 of the hook identity (matches Codex's trust scheme) and

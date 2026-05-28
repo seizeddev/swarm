@@ -469,7 +469,8 @@ describe("notifications + attention", () => {
     await addWorkspace("/repo");
     paneId = s().panes[0].paneId;
     ptyId = "pty-1";
-    s().bindPty(paneId, ptyId);
+    // bindPty takes a PtyHandle: an id and the sealed token Rust mints on spawn.
+    s().bindPty(paneId, { id: ptyId, token: "tok-1" });
   });
 
   it("suppresses notifications while the pane is visible", () => {
@@ -546,7 +547,7 @@ describe("notifications + attention", () => {
   it("drops Claude's own terminal notifications, keeping only the sentinel-tagged one", () => {
     s().addPane(CLAUDE);
     const claudePane = s().panes.find((p) => p.agentId === "claude")!;
-    s().bindPty(claudePane.paneId, "pty-claude");
+    s().bindPty(claudePane.paneId, { id: "pty-claude", token: "tok-claude" });
     s().openDiff("a.txt", false); // panes not visible
     s().onNotify("pty-claude", "No response requested.", "noise"); // Claude's own → dropped
     s().onNotify("pty-claude", CLAUDE_NOTIF_SENTINEL, "Hi 👋"); // ours → kept
@@ -677,9 +678,10 @@ describe("workspace navigation", () => {
     const ids = s().workspaces.map((w) => w.id);
     m.ptyKill.mockResolvedValue(undefined);
     // Promote ids[1]'s pane to a live Claude agent (non-shell + a PTY).
+    const handle = { id: "pty-1", token: "tok-1" };
     useStore.setState((st) => ({
       panes: st.panes.map((p) =>
-        p.workspaceId === ids[1] ? { ...p, agentId: "claude", ptyId: "pty-1" } : p,
+        p.workspaceId === ids[1] ? { ...p, agentId: "claude", pty: handle } : p,
       ),
     }));
     confirmDialogMock.mockResolvedValue(false);
@@ -692,7 +694,7 @@ describe("workspace navigation", () => {
     await s().closeWorkspaceWithConfirm(ids[1]);
     // Accepted → closed, and its live PTY reaped.
     expect(s().workspaces.map((w) => w.id)).toEqual([ids[0], ids[2]]);
-    expect(m.ptyKill).toHaveBeenCalledWith("pty-1");
+    expect(m.ptyKill).toHaveBeenCalledWith(handle);
     confirmDialogMock.mockReset();
   });
 
@@ -1083,7 +1085,7 @@ describe("misc workspace actions", () => {
   it("clears pane attention when switching to a workspace's active tab", () => {
     const ws = s().workspaces[0];
     const pane = s().panes[0];
-    s().bindPty(pane.paneId, "p1");
+    s().bindPty(pane.paneId, { id: "p1", token: "tok-p1" });
     s().openDiff("x", false);
     s().onAttention("p1");
     expect(s().panes[0].attention).toBe(true);
@@ -1207,7 +1209,9 @@ describe("persist + hydrate", () => {
     const pane = s().panes[0];
     // The pane carries the live PTY id, so Terminal.tsx attaches to the running
     // agent rather than spawning a new one…
-    expect(pane.ptyId).toBe("pty-live-1");
+    // Hydrate stores the surviving PTY id with an empty token; Terminal.tsx
+    // calls ptyReattach on mount to bind the live PTY and rotate the token.
+    expect(pane.pty?.id).toBe("pty-live-1");
     // …and the resume machinery is never consulted (no `claude --resume` rebuilt).
     expect(m.agentSessionResume).not.toHaveBeenCalled();
     expect(pane.args).not.toContain("--resume");
@@ -1621,9 +1625,10 @@ describe("action edge cases with an active workspace", () => {
   it("removePane kills the bound PTY and collapses the empty tab", () => {
     m.ptyKill.mockResolvedValue(undefined);
     const pane = s().panes[0];
-    s().bindPty(pane.paneId, "pty-0");
+    const handle = { id: "pty-0", token: "tok-0" };
+    s().bindPty(pane.paneId, handle);
     s().removePane(pane.paneId);
-    expect(m.ptyKill).toHaveBeenCalledWith("pty-0");
+    expect(m.ptyKill).toHaveBeenCalledWith(handle);
     expect(s().panes).toHaveLength(0);
   });
 
@@ -1657,7 +1662,7 @@ describe("action edge cases with an active workspace", () => {
 
   it("attention + notifications only fire for non-visible panes", () => {
     const first = s().panes[0];
-    s().bindPty(first.paneId, "pty-0");
+    s().bindPty(first.paneId, { id: "pty-0", token: "tok-0" });
     // addPane opens a new active tab, leaving the first pane non-visible.
     s().addPane(SHELL);
     expect(s().panes).toHaveLength(2);
