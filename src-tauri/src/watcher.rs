@@ -43,6 +43,26 @@ fn last_line(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Hard cap on the per-pane dedup map so it can't grow forever across a long
+/// session that visits many pane ids. At the cap we just clear it: dedup state
+/// is best-effort (the worst case is a single duplicate notification right
+/// after the wipe), and a bounded eviction policy would buy nothing here.
+const PANE_DEDUP_CAP: usize = 1024;
+
+/// True when `(name, body)` differs from the last seen entry for `name` (so the
+/// caller should emit). Updates `last` to remember the new body. Guarded by
+/// [`PANE_DEDUP_CAP`] so the map can't grow without bound.
+fn bump_dedup(last: &mut HashMap<String, String>, name: &str, body: &str) -> bool {
+    if last.get(name).is_some_and(|b| b == body) {
+        return false;
+    }
+    if last.len() >= PANE_DEDUP_CAP {
+        last.clear();
+    }
+    last.insert(name.to_string(), body.to_string());
+    true
+}
+
 impl WatcherManager {
     /// Start the global agent-events watcher. Pre-existing files don't fire events
     /// (no change), so there's no startup spam and no need for a "first run" guard.
@@ -71,10 +91,9 @@ impl WatcherManager {
                         continue;
                     };
                     let body = last_line(&path);
-                    if last.get(&name).is_some_and(|b| b == &body) {
+                    if !bump_dedup(&mut last, &name, &body) {
                         continue;
                     }
-                    last.insert(name.clone(), body.clone());
                     let _ = app.emit(
                         "pane:notify",
                         serde_json::json!({ "paneId": name, "body": body }),
@@ -156,5 +175,28 @@ mod tests {
     fn unwatch_unknown_workspace_is_a_noop() {
         let m = WatcherManager::default();
         m.unwatch_worktree("nope"); // must not panic
+    }
+
+    #[test]
+    fn bump_dedup_dedupes_and_caps_the_map() {
+        let mut last: HashMap<String, String> = HashMap::new();
+
+        // First sighting → emit; second identical sighting → skip.
+        assert!(bump_dedup(&mut last, "p1", "hello"));
+        assert!(!bump_dedup(&mut last, "p1", "hello"));
+        // Body change for the same pane → emit again.
+        assert!(bump_dedup(&mut last, "p1", "world"));
+        assert_eq!(last.get("p1").map(String::as_str), Some("world"));
+
+        // Push past the cap with distinct pane ids: the map must never grow
+        // past PANE_DEDUP_CAP entries. At cap we clear and re-seed, so the size
+        // oscillates but stays bounded — the only observable effect is a single
+        // duplicate notification right after the wipe.
+        last.clear();
+        for i in 0..(PANE_DEDUP_CAP * 3) {
+            assert!(bump_dedup(&mut last, &format!("pane-{i}"), "x"));
+            assert!(last.len() <= PANE_DEDUP_CAP, "grew to {}", last.len());
+        }
+        assert!(last.contains_key(&format!("pane-{}", PANE_DEDUP_CAP * 3 - 1)));
     }
 }
