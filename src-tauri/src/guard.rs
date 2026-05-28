@@ -262,6 +262,62 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn h4_ensure_within_root_resolves_symlinks_to_canonical_under_root() {
+        // A registered root reached via a symlink whose *target* is under the
+        // root must still come back as the canonical (symlink-free) path so
+        // downstream commands operate on the resolved location, not on the
+        // symlink. Defence-in-depth: a separate process could swing the
+        // symlink target out from under us between the registry check and the
+        // real call; the canonical path freezes that out.
+        use std::os::unix::fs as unix_fs;
+        let base = scratch();
+        let real_root = base.join("real");
+        let link_root = base.join("link");
+        fs::create_dir_all(&real_root).unwrap();
+        unix_fs::symlink(&real_root, &link_root).unwrap();
+        let real_root = std::fs::canonicalize(&real_root).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        reg.register(real_root.to_str().unwrap()).unwrap();
+
+        // Asking with the *symlinked* path returns the canonical (real) form.
+        let resolved = reg.ensure_within_root(link_root.to_str().unwrap()).unwrap();
+        assert_eq!(resolved, real_root);
+
+        // A nested path through the symlink resolves to its canonical location too.
+        let nested = real_root.join("src");
+        fs::create_dir_all(&nested).unwrap();
+        let via_link = link_root.join("src");
+        let resolved = reg.ensure_within_root(via_link.to_str().unwrap()).unwrap();
+        assert_eq!(resolved, nested);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn h4_ensure_within_root_rejects_symlink_pointing_outside_root() {
+        // A path that canonicalises *outside* every registered root must be
+        // rejected, even if the surface path looks like it's inside. (`tmp/
+        // root/safe-looking` → `/etc/passwd`).
+        use std::os::unix::fs as unix_fs;
+        let base = scratch();
+        let root = base.join("root");
+        let outside = base.join("outside.txt");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&outside, "do not reach").unwrap();
+        let symlink = root.join("escape");
+        unix_fs::symlink(&outside, &symlink).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        reg.register(root.to_str().unwrap()).unwrap();
+
+        let err = reg
+            .ensure_within_root(symlink.to_str().unwrap())
+            .unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)), "got {err:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn c2_persist_file_is_0600_on_unix() {
         use std::os::unix::fs::PermissionsExt;
         let store_dir = scratch();

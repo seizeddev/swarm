@@ -35,6 +35,17 @@ where
         .map_err(|e| error::AppError::Other(e.to_string()))?
 }
 
+/// Validate `path` against the registered workspace roots and return the
+/// **canonical** form as an owned `String`. Every git/github/PTY command that
+/// takes a path uses this so the downstream call operates on the canonicalised
+/// (symlink-resolved) path — defence-in-depth against a registered root being
+/// reached by a symlink whose target moves out from under us between
+/// `ensure_within_root` and the actual call. Cheap shorthand for
+/// `reg.ensure_within_root(path)?.to_string_lossy().into_owned()`.
+fn ensured(reg: &WorkspaceRegistry, path: &str) -> AppResult<String> {
+    Ok(reg.ensure_within_root(path)?.to_string_lossy().into_owned())
+}
+
 /// Raise the OS folder picker, register whatever the user clicks on as a trusted
 /// root, and return that root's repo info. Replaces the renderer-side dialog +
 /// `register_root` IPC pair, so the registry is now a real security boundary:
@@ -78,13 +89,13 @@ async fn pick_workspace(
 
 #[tauri::command]
 async fn repo_info(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<git::RepoInfo> {
-    reg.ensure_within_root(&path)?;
+    let path = ensured(&reg, &path)?;
     off_thread(move || git::repo_info(&path)).await
 }
 
 #[tauri::command]
 async fn init_repo(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<git::RepoInfo> {
-    reg.ensure_within_root(&path)?;
+    let path = ensured(&reg, &path)?;
     off_thread(move || git::init_repo(&path)).await
 }
 
@@ -95,7 +106,7 @@ async fn file_diff_hunks(
     file: String,
     staged: bool,
 ) -> AppResult<git::HunkBundle> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::file_diff_hunks(&worktree_path, &file, staged)).await
 }
 
@@ -104,7 +115,7 @@ async fn status_and_stats(
     reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
 ) -> AppResult<git::StatusAndStats> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::status_and_stats(&worktree_path)).await
 }
 
@@ -114,7 +125,7 @@ async fn git_log(
     repo_path: String,
     limit: usize,
 ) -> AppResult<Vec<git::CommitInfo>> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::git_log(&repo_path, limit)).await
 }
 
@@ -124,7 +135,7 @@ async fn commit_detail(
     repo_path: String,
     oid: String,
 ) -> AppResult<git::CommitDetail> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::commit_detail(&repo_path, &oid)).await
 }
 
@@ -134,7 +145,7 @@ async fn commit_diff(
     repo_path: String,
     oid: String,
 ) -> AppResult<git::CommitDiff> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::commit_diff(&repo_path, &oid)).await
 }
 
@@ -144,7 +155,7 @@ async fn stage(
     worktree_path: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::stage_paths(&worktree_path, paths)).await
 }
 
@@ -154,19 +165,19 @@ async fn unstage(
     worktree_path: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::unstage_paths(&worktree_path, paths)).await
 }
 
 #[tauri::command]
 async fn stage_all(reg: State<'_, WorkspaceRegistry>, worktree_path: String) -> AppResult<()> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::stage_all(&worktree_path)).await
 }
 
 #[tauri::command]
 async fn unstage_all(reg: State<'_, WorkspaceRegistry>, worktree_path: String) -> AppResult<()> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::unstage_all(&worktree_path)).await
 }
 
@@ -176,7 +187,7 @@ async fn commit(
     worktree_path: String,
     message: String,
 ) -> AppResult<String> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::commit(&worktree_path, &message)).await
 }
 
@@ -186,7 +197,7 @@ async fn discard(
     worktree_path: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&worktree_path)?;
+    let worktree_path = ensured(&reg, &worktree_path)?;
     off_thread(move || git::discard_paths(&worktree_path, paths)).await
 }
 
@@ -196,7 +207,7 @@ async fn checkout_ref(
     repo_path: String,
     name: String,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::checkout_ref(&repo_path, &name)).await
 }
 
@@ -207,7 +218,7 @@ async fn create_branch(
     name: String,
     start: String,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::create_branch(&repo_path, &name, &start)).await
 }
 
@@ -218,7 +229,7 @@ async fn reset_to(
     oid: String,
     mode: String,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::reset_to(&repo_path, &oid, &mode)).await
 }
 
@@ -228,7 +239,7 @@ async fn revert_commit(
     repo_path: String,
     oid: String,
 ) -> AppResult<String> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || git::revert_commit(&repo_path, &oid)).await
 }
 
@@ -273,7 +284,7 @@ async fn pr_checkout(
     repo_path: String,
     number: u64,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || github::pr_checkout(&repo_path, number)).await
 }
 
@@ -289,7 +300,7 @@ async fn pr_list(
     reg: State<'_, WorkspaceRegistry>,
     repo_path: String,
 ) -> AppResult<Vec<github::PrSummary>> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || github::pr_list(&repo_path)).await
 }
 
@@ -299,7 +310,7 @@ async fn pr_detail(
     repo_path: String,
     number: u64,
 ) -> AppResult<Option<github::PrDetail>> {
-    reg.ensure_within_root(&repo_path)?;
+    let repo_path = ensured(&reg, &repo_path)?;
     off_thread(move || github::pr_detail(&repo_path, number)).await
 }
 
@@ -803,7 +814,7 @@ fn watch_worktree(
     workspace_id: String,
     path: String,
 ) -> AppResult<()> {
-    reg.ensure_within_root(&path)?;
+    let path = ensured(&reg, &path)?;
     state.watch_worktree(app, workspace_id, path)
 }
 
