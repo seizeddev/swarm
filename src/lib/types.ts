@@ -14,6 +14,10 @@ export interface RepoInfo {
   headBranch: string | null;
   // false when the opened path is a plain folder with no git repo yet.
   isRepo: boolean;
+  // URL of the `origin` remote when one is configured. Drives the PR panel's
+  // "no GitHub remote" empty state (distinct from "no open PRs") and the live
+  // re-fetch after `gh repo create` adds the remote.
+  originUrl: string | null;
 }
 
 export type ChangeStatus =
@@ -71,6 +75,22 @@ export interface CommitDiff {
   truncated: boolean;
 }
 
+export type RefKind = "branch" | "remote" | "tag" | "head";
+
+export interface RefBadge {
+  name: string;
+  kind: RefKind;
+  /** True for the local branch HEAD currently points at — drives the "you are
+   * here" emphasis in the History pills. */
+  current: boolean;
+}
+
+export interface Upstream {
+  name: string;
+  ahead: number;
+  behind: number;
+}
+
 export interface CommitInfo {
   oid: string;
   short: string;
@@ -78,8 +98,12 @@ export interface CommitInfo {
   author: string;
   time: number;
   parents: string[];
-  refs: string[];
+  /** Typed refs (local branch, remote-tracking branch, tag) anchored at this
+   * commit, ordered: current head → local branches → remote-tracking → tags. */
+  refs: RefBadge[];
   isHead: boolean;
+  /** Set on the HEAD commit only — `↑a ↓b` next to the HEAD pill. */
+  upstream?: Upstream | null;
 }
 
 interface CommitFile {

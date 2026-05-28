@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, GitBranch, GitCommitHorizontal, History, RefreshCw, Undo2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Cloud,
+  Copy,
+  GitBranch,
+  GitCommitHorizontal,
+  History,
+  RefreshCw,
+  Tag as TagIcon,
+  Undo2,
+} from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../lib/ipc";
@@ -10,7 +21,7 @@ import { confirmDialog, promptDialog } from "../lib/dialog";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import { PanelHeader } from "./panels";
 import type { MenuItem } from "../lib/menu";
-import type { CommitInfo } from "../lib/types";
+import type { CommitInfo, RefBadge } from "../lib/types";
 
 /** Best-effort clipboard write — denial is a no-op. */
 function copyText(text: string) {
@@ -24,6 +35,39 @@ function relTime(sec: number): string {
   if (d < 86400) return `${Math.floor(d / 3600)}h`;
   if (d < 2592000) return `${Math.floor(d / 86400)}d`;
   return `${Math.floor(d / 2592000)}mo`;
+}
+
+/** Render one ref badge (local branch, remote-tracking, tag). The current
+ * branch is brightest; remote refs strip the `origin/` prefix into the icon
+ * (it would otherwise visually duplicate); tags use an outline pill. */
+function RefPill({ badge }: { badge: RefBadge }) {
+  if (badge.kind === "tag") {
+    return (
+      <span className="ref-pill ref-tag" title={`tag: ${badge.name}`}>
+        <TagIcon size={11} aria-hidden="true" />
+        {badge.name}
+      </span>
+    );
+  }
+  if (badge.kind === "remote") {
+    // "origin/main" → display "main" with a cloud icon — kind already conveys
+    // remoteness, the prefix would be visual noise. Tooltip keeps the full name.
+    const [, ...rest] = badge.name.split("/");
+    const short = rest.length ? rest.join("/") : badge.name;
+    return (
+      <span className="ref-pill ref-remote" title={`remote: ${badge.name}`}>
+        <Cloud size={11} aria-hidden="true" />
+        {short}
+      </span>
+    );
+  }
+  const cls = badge.current ? "ref-pill ref-current" : "ref-pill ref-branch";
+  return (
+    <span className={cls} title={`branch: ${badge.name}`}>
+      <GitBranch size={11} aria-hidden="true" />
+      {badge.name}
+    </span>
+  );
 }
 
 const ROW = 38;
@@ -219,18 +263,28 @@ export function GraphPanel() {
                 style={{ top: vi.start + 3, left: gw - COLW + NODE_R, right: 8, height: ROW - 6 }}
               >
                 {r.commit.refs.map((ref) => (
-                  <span
-                    key={ref}
-                    className="pill h-[18px] flex-none px-1.5 text-2xs"
-                    style={
-                      r.commit.isHead
-                        ? { background: "rgba(255,255,255,0.18)", color: "#fff" }
-                        : undefined
-                    }
-                  >
-                    {ref}
-                  </span>
+                  <RefPill key={`${ref.kind}:${ref.name}`} badge={ref} />
                 ))}
+                {r.commit.upstream &&
+                  (r.commit.upstream.ahead > 0 || r.commit.upstream.behind > 0) && (
+                    <span
+                      className="ref-track"
+                      title={`vs ${r.commit.upstream.name}: ahead ${r.commit.upstream.ahead}, behind ${r.commit.upstream.behind}`}
+                    >
+                      {r.commit.upstream.ahead > 0 && (
+                        <>
+                          <ArrowUp size={11} aria-hidden="true" />
+                          {r.commit.upstream.ahead}
+                        </>
+                      )}
+                      {r.commit.upstream.behind > 0 && (
+                        <>
+                          <ArrowDown size={11} aria-hidden="true" />
+                          {r.commit.upstream.behind}
+                        </>
+                      )}
+                    </span>
+                  )}
                 <span className="min-w-0 flex-1 truncate text-base">{r.commit.summary}</span>
                 <span className="flex-none font-mono text-2xs text-[var(--color-faint)]">
                   {relTime(r.commit.time)}

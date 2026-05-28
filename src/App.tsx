@@ -223,7 +223,9 @@ export default function App() {
 
     // Live git status: the backend's per-worktree notify watcher fires
     // `fs:changed`; coalesce bursts per workspace before refreshing.
-    const fsTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // `gitMeta` rides alongside the debounce timer so a `.git/`-only event
+    // arriving during the 200ms window still triggers the meta refresh after.
+    const fsTimers = new Map<string, { t: ReturnType<typeof setTimeout>; gitMeta: boolean }>();
     const events = Promise.all([
       listen<{ id: string }>("term:attention", (e) =>
         useStore.getState().onAttention(e.payload.id),
@@ -245,16 +247,24 @@ export default function App() {
         s.setActiveWorkspace(e.payload.workspaceId);
         s.selectPane(e.payload.paneId);
       }),
-      listen<{ workspaceId: string }>("fs:changed", (e) => {
+      listen<{ workspaceId: string; gitMeta?: boolean }>("fs:changed", (e) => {
         const id = e.payload.workspaceId;
-        clearTimeout(fsTimers.get(id));
-        fsTimers.set(
-          id,
-          setTimeout(() => {
+        const gitMeta = !!e.payload.gitMeta;
+        const prev = fsTimers.get(id);
+        // OR-merge gitMeta across coalesced bursts so a refs-only event that
+        // arrives during the 200ms debounce still triggers a meta refresh.
+        const mergedMeta = (prev?.gitMeta ?? false) || gitMeta;
+        if (prev) clearTimeout(prev.t);
+        fsTimers.set(id, {
+          gitMeta: mergedMeta,
+          t: setTimeout(() => {
+            const entry = fsTimers.get(id);
             fsTimers.delete(id);
-            useStore.getState().refreshStatus(id);
+            const s = useStore.getState();
+            s.refreshStatus(id);
+            if (entry?.gitMeta) s.refreshRepoMeta(id);
           }, 200),
-        );
+        });
       }),
     ]);
 
@@ -268,7 +278,7 @@ export default function App() {
       unlistenFocus.then((f) => f()).catch(() => {});
       unlistenResize.then((f) => f()).catch(() => {});
       dnd.then((f) => f()).catch(() => {});
-      fsTimers.forEach((t) => clearTimeout(t));
+      fsTimers.forEach((entry) => clearTimeout(entry.t));
       events.then((fns) => fns.forEach((f) => f()));
     };
   }, []);

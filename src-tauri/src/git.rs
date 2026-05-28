@@ -19,6 +19,12 @@ pub struct RepoInfo {
     /// `false` when `path` is a plain folder with no git repo yet. The workspace
     /// still opens (terminals/agents work); the SCM panel offers to `git init`.
     pub is_repo: bool,
+    /// URL of the `origin` remote when one is configured. Drives the PR panel's
+    /// "no GitHub remote" empty state (distinct from "no open PRs") and the
+    /// post-`gh repo create` live re-fetch — the worktree watcher flips
+    /// `gitMeta` when `.git/config` changes, the renderer re-reads repo info,
+    /// and a freshly-added remote shows up without a manual refresh.
+    pub origin_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +75,12 @@ pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
         Ok(repo) => {
             let wd = workdir(&repo)?;
             let head = repo.head().ok();
+            // `Remote::url()` is a `Result<&str, Error>` here (UTF-8 check);
+            // a non-UTF-8 URL or missing remote both surface as `None`.
+            let origin_url = repo
+                .find_remote("origin")
+                .ok()
+                .and_then(|r| r.url().ok().map(str::to_owned));
             Ok(RepoInfo {
                 path: wd.to_string_lossy().into_owned(),
                 name: repo_basename(&repo),
@@ -76,6 +88,7 @@ pub fn repo_info(path: &str) -> AppResult<RepoInfo> {
                     .as_ref()
                     .and_then(|h| h.shorthand().ok().map(str::to_owned)),
                 is_repo: true,
+                origin_url,
             })
         }
         // Not a git repo (and none in any parent): open it as a plain folder so the
@@ -96,6 +109,7 @@ fn folder_info(path: &str) -> RepoInfo {
         name,
         head_branch: None,
         is_repo: false,
+        origin_url: None,
     }
 }
 
@@ -339,6 +353,32 @@ pub fn status_and_stats(worktree_path: &str) -> AppResult<StatusAndStats> {
     })
 }
 
+/// One ref pointing at a commit. The flat `Vec<String>` of names was unclear in
+/// the UI — local branch, tag and `origin/main` all rendered identically. The
+/// frontend now styles each kind distinctly (icon, brightness), and the
+/// `current` flag lights up the checked-out local branch.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefBadge {
+    pub name: String,
+    /// "head" (detached HEAD only) | "branch" (refs/heads/) | "remote"
+    /// (refs/remotes/, except `*/HEAD` symbolic refs) | "tag" (refs/tags/).
+    pub kind: &'static str,
+    /// True for the local branch HEAD currently points at — drives the
+    /// "you are here" emphasis in the History pills.
+    pub current: bool,
+}
+
+/// Ahead/behind counts of the local HEAD branch vs its configured upstream
+/// (e.g. `main` ↔ `origin/main`). Surfaced as `↑3 ↓1` next to the HEAD pill.
+#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Upstream {
+    pub name: String,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
@@ -348,33 +388,97 @@ pub struct CommitInfo {
     pub author: String,
     pub time: i64,
     pub parents: Vec<String>,
-    pub refs: Vec<String>,
+    pub refs: Vec<RefBadge>,
     pub is_head: bool,
+    /// Set on the HEAD commit only; carries the upstream ahead/behind so the UI
+    /// can render `↑a ↓b` next to the HEAD pill without a second IPC.
+    pub upstream: Option<Upstream>,
+}
+
+/// Ahead/behind of `local_oid` vs its configured upstream branch. `None` when
+/// no upstream is set or the merge-base lookup fails (a brand-new local branch).
+fn head_upstream(repo: &Repository) -> Option<Upstream> {
+    let head_ref = repo.head().ok()?;
+    if !head_ref.is_branch() {
+        return None; // detached HEAD has no upstream
+    }
+    let local_branch_name = head_ref.shorthand().ok()?.to_owned();
+    let branch = repo
+        .find_branch(&local_branch_name, git2::BranchType::Local)
+        .ok()?;
+    let upstream = branch.upstream().ok()?;
+    let upstream_name = upstream.name().ok().flatten()?.to_owned();
+    let local_oid = head_ref.target()?;
+    let upstream_oid = upstream.get().target()?;
+    let (ahead, behind) = repo.graph_ahead_behind(local_oid, upstream_oid).ok()?;
+    Some(Upstream {
+        name: upstream_name,
+        ahead,
+        behind,
+    })
 }
 
 /// Commit history across all local branches, topologically ordered — for the graph.
 pub fn git_log(repo_path: &str, limit: usize) -> AppResult<Vec<CommitInfo>> {
     let repo = open_main(repo_path)?;
     let head_oid = repo.head().ok().and_then(|h| h.target());
+    let head_ref = repo.head().ok();
+    let head_branch_name: Option<String> = head_ref
+        .as_ref()
+        .filter(|r| r.is_branch())
+        .and_then(|r| r.shorthand().ok().map(str::to_owned));
 
-    let mut refmap: HashMap<String, Vec<String>> = HashMap::new();
+    let mut refmap: HashMap<String, Vec<RefBadge>> = HashMap::new();
     if let Ok(refs) = repo.references() {
         for r in refs.flatten() {
-            if !(r.is_branch() || r.is_tag()) {
+            let Some(oid) = r.target() else { continue };
+            let Ok(shorthand) = r.shorthand() else {
                 continue;
-            }
-            if let (Some(oid), Ok(name)) = (r.target(), r.shorthand()) {
-                refmap
-                    .entry(oid.to_string())
-                    .or_default()
-                    .push(name.to_string());
-            }
+            };
+            let full = r.name().unwrap_or("");
+            let kind: &'static str = if r.is_branch() {
+                "branch"
+            } else if r.is_tag() {
+                "tag"
+            } else if r.is_remote() {
+                // Skip the `refs/remotes/<name>/HEAD` symbolic ref — it duplicates
+                // whatever branch the remote points at (usually `main`) and adds
+                // visual noise.
+                if full.ends_with("/HEAD") {
+                    continue;
+                }
+                "remote"
+            } else {
+                continue;
+            };
+            let current = kind == "branch" && head_branch_name.as_deref() == Some(shorthand);
+            refmap.entry(oid.to_string()).or_default().push(RefBadge {
+                name: shorthand.to_string(),
+                kind,
+                current,
+            });
         }
     }
+    // Stable order within each commit: current head → other local branches →
+    // remote-tracking branches → tags. Within a kind, alphabetical.
+    let kind_rank = |k: &str| match k {
+        "branch" => 1,
+        "remote" => 2,
+        "tag" => 3,
+        _ => 4,
+    };
+    for badges in refmap.values_mut() {
+        badges.sort_by(|a, b| {
+            (!a.current, kind_rank(a.kind), &a.name).cmp(&(!b.current, kind_rank(b.kind), &b.name))
+        });
+    }
+
+    let upstream = head_upstream(&repo);
 
     let mut walk = repo.revwalk()?;
     walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
     let _ = walk.push_glob("refs/heads/*");
+    let _ = walk.push_glob("refs/remotes/*");
     let _ = walk.push_head();
 
     let mut out = Vec::new();
@@ -386,6 +490,7 @@ pub fn git_log(repo_path: &str, limit: usize) -> AppResult<Vec<CommitInfo>> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        let is_head = Some(oid) == head_oid;
         out.push(CommitInfo {
             short: short_oid(&oid),
             summary: c.summary().ok().flatten().unwrap_or("").to_string(),
@@ -393,7 +498,8 @@ pub fn git_log(repo_path: &str, limit: usize) -> AppResult<Vec<CommitInfo>> {
             time: c.time().seconds(),
             parents: c.parent_ids().map(|p| p.to_string()).collect(),
             refs: refmap.remove(&oid.to_string()).unwrap_or_default(),
-            is_head: Some(oid) == head_oid,
+            is_head,
+            upstream: if is_head { upstream.clone() } else { None },
             oid: oid.to_string(),
         });
     }
@@ -828,6 +934,25 @@ mod tests {
         assert_eq!(info.name, dir.file_name().unwrap().to_string_lossy());
         assert!(info.head_branch.is_some());
         assert!(info.is_repo);
+        assert!(info.origin_url.is_none(), "fresh repo has no origin");
+    }
+
+    #[test]
+    fn repo_info_reports_origin_url_when_remote_is_added() {
+        // Mirrors `gh repo create` on an existing repo: a remote called `origin`
+        // appears in `.git/config`, and `repo_info` must surface its URL so the
+        // PR panel switches out of the "no GitHub remote" empty state.
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        repo.remote("origin", "https://github.com/me/repo.git")
+            .unwrap();
+
+        let info = repo_info(path).unwrap();
+        assert_eq!(
+            info.origin_url.as_deref(),
+            Some("https://github.com/me/repo.git")
+        );
     }
 
     #[test]
@@ -972,6 +1097,97 @@ mod tests {
 
         // Limit is honoured.
         assert_eq!(git_log(path, 2).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn git_log_typed_refs_distinguish_branch_tag_remote_and_current() {
+        // Build a repo with: HEAD on the default branch, a second local branch
+        // `feature` also pointing at HEAD, a `v1` tag on the previous commit,
+        // and a simulated remote-tracking branch at HEAD. Verify each ref ends
+        // up with the right kind/current flag and ordering.
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        // Whichever default branch git2 picked (`main` / `master` / …).
+        let default_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+        let remote_ref = format!("refs/remotes/origin/{default_branch}");
+        let remote_short = format!("origin/{default_branch}");
+
+        let second = commit_file(&repo, "a.txt", "v2\n", "second");
+        let head_commit = repo.find_commit(second).unwrap();
+        // Sibling local branch at HEAD.
+        repo.branch("feature", &head_commit, false).unwrap();
+        // Tag the previous commit.
+        let prev = head_commit.parent(0).unwrap();
+        repo.tag_lightweight("v1", prev.as_object(), false).unwrap();
+        // Remote-tracking branch (no actual remote needed — just the ref).
+        repo.reference(&remote_ref, second, true, "test remote")
+            .unwrap();
+        // And a noise symbolic ref that the log must drop.
+        repo.reference_symbolic("refs/remotes/origin/HEAD", &remote_ref, true, "remote HEAD")
+            .unwrap();
+
+        let log = git_log(path, 100).unwrap();
+        let head_row = log.iter().find(|c| c.is_head).unwrap();
+        let kinds: Vec<&str> = head_row.refs.iter().map(|r| r.kind).collect();
+        // Expected order: current branch, other branch (feature), remote.
+        assert_eq!(kinds, vec!["branch", "branch", "remote"]);
+        assert_eq!(head_row.refs[0].name, default_branch);
+        assert!(head_row.refs[0].current, "current branch must be flagged");
+        assert_eq!(head_row.refs[1].name, "feature");
+        assert!(!head_row.refs[1].current);
+        assert_eq!(head_row.refs[2].name, remote_short);
+
+        // The previous commit carries the tag, no current/branch flags.
+        let prev_row = log.iter().find(|c| c.oid == prev.id().to_string()).unwrap();
+        let tag = prev_row.refs.iter().find(|r| r.kind == "tag").unwrap();
+        assert_eq!(tag.name, "v1");
+        assert!(!tag.current);
+
+        // The `origin/HEAD` symbolic ref is filtered out everywhere.
+        for row in &log {
+            assert!(row.refs.iter().all(|r| r.name != "origin/HEAD"));
+        }
+    }
+
+    #[test]
+    fn git_log_reports_upstream_ahead_behind_on_head_only() {
+        // Place the upstream tracking ref at the first commit, then a second
+        // commit puts HEAD one ahead of it. graph_ahead_behind must report
+        // ahead=1, behind=0, and only the HEAD row carries the upstream.
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let default_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+        let first = repo.head().unwrap().peel_to_commit().unwrap().id();
+        commit_file(&repo, "a.txt", "v2\n", "second");
+        let remote_ref = format!("refs/remotes/origin/{default_branch}");
+        let remote_short = format!("origin/{default_branch}");
+        // `set_upstream` requires a configured remote (not just a tracking
+        // ref) — the URL is never contacted in this test.
+        repo.remote("origin", "https://example.invalid/repo.git")
+            .unwrap();
+        // origin lags at the first commit.
+        repo.reference(&remote_ref, first, true, "lag").unwrap();
+        // Wire the local default branch → its remote-tracking ref.
+        {
+            let mut branch = repo
+                .find_branch(&default_branch, git2::BranchType::Local)
+                .unwrap();
+            branch.set_upstream(Some(&remote_short)).unwrap();
+        }
+
+        let log = git_log(path, 100).unwrap();
+        let head_row = log.iter().find(|c| c.is_head).unwrap();
+        let up = head_row
+            .upstream
+            .as_ref()
+            .expect("HEAD should have upstream");
+        assert_eq!(up.name, remote_short);
+        assert_eq!(up.ahead, 1);
+        assert_eq!(up.behind, 0);
+        // Only the HEAD row carries the upstream payload.
+        assert_eq!(log.iter().filter(|c| c.upstream.is_some()).count(), 1);
     }
 
     #[test]

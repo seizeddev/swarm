@@ -469,6 +469,72 @@ svg.lucide {
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
   }
 
+  /* ── History ref pills ────────────────────────────────────────────────
+     Four kinds rendered with brightness only (no hue — design tokens are
+     strictly monochrome). Radius stays at the design-token pill value
+     (999px) so the chips don't bite the row's 12px / panel's 16px squircle.
+     `current` is the local branch HEAD points at; `branch` is another local
+     branch; `remote` is a remote-tracking ref (origin/…); `tag` is an
+     annotated/lightweight tag. */
+  .ref-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 8px 0 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    flex: none;
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+  }
+  .ref-pill svg {
+    flex: none;
+    opacity: 0.8;
+  }
+  .ref-current {
+    /* HEAD's local branch: brightest pill, full-strength text. */
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+  }
+  .ref-current svg {
+    opacity: 1;
+  }
+  .ref-branch {
+    /* Another local branch — mid-brightness. */
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--color-text);
+  }
+  .ref-remote {
+    /* Remote-tracking — dimmer fill, muted text. */
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--color-muted);
+  }
+  .ref-tag {
+    /* Tag — outline pill, no fill, muted. */
+    background: transparent;
+    color: var(--color-muted);
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+  }
+  .ref-track {
+    /* Ahead/behind chip next to the HEAD pill — same brightness as the
+       current branch so they read as one unit. */
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--color-text);
+  }
+
   /* ── Inputs (the #222 amount field) ──────────────────────────────── */
   .field {
     width: 100%;

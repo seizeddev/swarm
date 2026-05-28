@@ -23,6 +23,7 @@ const repo = (name: string): RepoInfo => ({
   name,
   headBranch: "main",
   isRepo: true,
+  originUrl: null,
 });
 
 const handlers = (): CommandHandlers => ({

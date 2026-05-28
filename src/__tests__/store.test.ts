@@ -120,6 +120,7 @@ const repo = (path = "/repo"): RepoInfo => ({
   name: path.split("/").pop()!,
   headBranch: "main",
   isRepo: true,
+  originUrl: null,
 });
 
 const INITIAL = {
@@ -210,6 +211,7 @@ async function addWorkspace(
     name: opts.name ?? path.split("/").filter(Boolean).pop() ?? path,
     headBranch: opts.isRepo === false ? null : "main",
     isRepo: opts.isRepo ?? true,
+    originUrl: null,
   });
   await s().addWorkspace();
 }
@@ -284,6 +286,7 @@ describe("addWorkspace", () => {
       name: "new-project",
       headBranch: "main",
       isRepo: true,
+      originUrl: null,
     });
     await s().initRepo();
     const ws = s().workspaces[0];
@@ -1804,6 +1807,7 @@ describe("git write-ops (context-menu actions)", () => {
       name: "repo",
       headBranch: "feature",
       isRepo: true,
+      originUrl: null,
     });
     await s().checkoutRef("feature");
     expect(m.checkoutRef).toHaveBeenCalledWith("/repo", "feature");
@@ -1873,6 +1877,104 @@ describe("git write-ops (context-menu actions)", () => {
     m.revealPath.mockRejectedValueOnce(new Error("no such file"));
     await s().revealPath("/repo/missing");
     expect(s().error).toBe("no such file");
+  });
+});
+
+describe("refreshRepoMeta (fs:changed → .git/ events)", () => {
+  it("re-reads repo info and bumps gitNonce when a .git/ event fires", async () => {
+    // Bug B: History was stuck until the next HEAD-mutating op or a manual
+    // refresh — a commit landed externally never reached the graph. Now any
+    // path inside `.git/` (HEAD, refs/, config) flips `gitMeta` on the watcher
+    // payload, which routes here.
+    await addWorkspace("/repo");
+    const before = s().gitNonce;
+    m.repoInfo.mockResolvedValue({
+      path: "/repo",
+      name: "repo",
+      headBranch: "feature",
+      isRepo: true,
+      originUrl: null,
+    });
+    await s().refreshRepoMeta(s().workspaces[0].id);
+    expect(m.repoInfo).toHaveBeenCalledWith("/repo");
+    expect(s().workspaces[0].repo.headBranch).toBe("feature");
+    expect(s().gitNonce).toBe(before + 1);
+  });
+
+  it("flips the PR panel out of 'no remote' instantly when origin appears", async () => {
+    // Bug A: opening a project with no GH repo, then `gh repo create` adding
+    // `origin` while the project is open, didn't update the PR panel. Now the
+    // watcher's `.git/config` event triggers refreshRepoMeta, originUrl flips
+    // from null → URL, and PRs are force-fetched without a manual refresh.
+    m.ghAvailable.mockResolvedValue(true);
+    m.ghLogin.mockResolvedValue("me");
+    m.prList.mockResolvedValue([]);
+    await addWorkspace("/repo");
+    expect(s().workspaces[0].repo.originUrl).toBeNull();
+    m.prList.mockClear();
+
+    // gh repo create added origin externally; the next refreshRepoMeta sees it.
+    m.repoInfo.mockResolvedValue({
+      path: "/repo",
+      name: "repo",
+      headBranch: "main",
+      isRepo: true,
+      originUrl: "https://github.com/me/repo.git",
+    });
+    await s().refreshRepoMeta(s().workspaces[0].id);
+    expect(s().workspaces[0].repo.originUrl).toBe("https://github.com/me/repo.git");
+    // PRs force-refreshed; cache TTL is bypassed because force=true is wired.
+    expect(m.prList).toHaveBeenCalledWith("/repo");
+  });
+
+  it("does not fetch PRs when gh is unavailable, even after origin appears", async () => {
+    // Defensive: the gh-missing case must stay an empty-state, not a thrown
+    // promise. refreshRepoMeta updates repo info regardless and bumps the nonce,
+    // but skips loadPrs so the panel keeps showing the "gh not found" hint.
+    m.ghAvailable.mockResolvedValue(false);
+    await addWorkspace("/repo");
+    m.prList.mockClear();
+    m.repoInfo.mockResolvedValue({
+      path: "/repo",
+      name: "repo",
+      headBranch: "main",
+      isRepo: true,
+      originUrl: "https://github.com/me/repo.git",
+    });
+    await s().refreshRepoMeta(s().workspaces[0].id);
+    expect(m.prList).not.toHaveBeenCalled();
+    expect(s().workspaces[0].repo.originUrl).toBe("https://github.com/me/repo.git");
+  });
+
+  it("survives a plain-folder → git-init transition (isRepo flips false→true)", async () => {
+    // The `git init` path in a previously-plain folder lands as a .git/ event
+    // from the watcher (new `.git` directory). refreshRepoMeta picks up the
+    // new repo info and the History panel can finally render.
+    await addWorkspace("/new-project", { isRepo: false });
+    expect(s().workspaces[0].repo.isRepo).toBe(false);
+
+    m.repoInfo.mockResolvedValue({
+      path: "/new-project",
+      name: "new-project",
+      headBranch: "main",
+      isRepo: true,
+      originUrl: null,
+    });
+    await s().refreshRepoMeta(s().workspaces[0].id);
+    expect(s().workspaces[0].repo.isRepo).toBe(true);
+    expect(s().workspaces[0].repo.headBranch).toBe("main");
+  });
+
+  it("is a no-op when repoInfo rejects (path moved, fs glitch)", async () => {
+    await addWorkspace("/repo");
+    const beforeNonce = s().gitNonce;
+    const beforeRepo = s().workspaces[0].repo;
+    m.repoInfo.mockRejectedValueOnce(new Error("ENOENT"));
+    await s().refreshRepoMeta(s().workspaces[0].id);
+    // No error surfaced, repo info unchanged, nonce unchanged.
+    expect(s().error).toBeNull();
+    expect(s().gitNonce).toBe(beforeNonce);
+    expect(s().workspaces[0].repo).toEqual(beforeRepo);
   });
 });
 

@@ -11,16 +11,32 @@
 //! adding/removing a workspace adds/drops its watcher.
 
 use crate::error::{AppError, AppResult};
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 const GIT_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// True when `p` lies under `<root>/.git/` — used by the worktree watcher to
+/// tell apart user-file changes (status/diff) from repo-state changes (HEAD,
+/// refs, config). A path *inside* the `.git/` directory ⇒ HEAD moved, a branch
+/// landed, a remote was added, etc. — the frontend bumps gitNonce and re-reads
+/// repo info / PRs on top of the usual status refresh.
+fn is_git_meta_path(root: &Path, p: &Path) -> bool {
+    let Ok(rel) = p.strip_prefix(root) else {
+        return false;
+    };
+    let mut comps = rel.components();
+    matches!(
+        comps.next(),
+        Some(std::path::Component::Normal(seg)) if seg == ".git"
+    )
+}
 
 #[derive(Default)]
 struct WatcherState {
@@ -106,14 +122,19 @@ impl WatcherManager {
         Ok(())
     }
 
-    /// Watch a worktree for changes; emits a debounced `fs:changed { workspaceId }`.
+    /// Watch a worktree for changes; emits a debounced
+    /// `fs:changed { workspaceId, gitMeta }`. `gitMeta` is true when any path in
+    /// the coalesced burst lived under `<worktree>/.git/` (HEAD, refs/, config,
+    /// packed-refs): a commit landed, the branch was switched, a remote was
+    /// added, etc. The frontend uses it to re-read repo info / PRs / history in
+    /// addition to the always-emitted status refresh.
     pub fn watch_worktree(
         &self,
         app: AppHandle,
         workspace_id: String,
         path: String,
     ) -> AppResult<()> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = tx.send(res);
         })
@@ -123,20 +144,33 @@ impl WatcherManager {
             .map_err(|e| AppError::Other(e.to_string()))?;
 
         let emit_id = workspace_id.clone();
+        let root: PathBuf = PathBuf::from(&path);
         std::thread::spawn(move || loop {
             // Block for the first event, then coalesce the burst: keep draining
             // until the tree has been quiet for the debounce window, then emit once.
-            if rx.recv().is_err() {
-                break; // watcher dropped → workspace closed
+            let mut git_meta = false;
+            let first = match rx.recv() {
+                Ok(r) => r,
+                Err(_) => break, // watcher dropped → workspace closed
+            };
+            if let Ok(ev) = first {
+                git_meta |= ev.paths.iter().any(|p| is_git_meta_path(&root, p));
             }
             loop {
                 match rx.recv_timeout(GIT_DEBOUNCE) {
-                    Ok(_) => continue,
+                    Ok(res) => {
+                        if let Ok(ev) = res {
+                            git_meta |= ev.paths.iter().any(|p| is_git_meta_path(&root, p));
+                        }
+                    }
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            let _ = app.emit("fs:changed", serde_json::json!({ "workspaceId": emit_id }));
+            let _ = app.emit(
+                "fs:changed",
+                serde_json::json!({ "workspaceId": emit_id, "gitMeta": git_meta }),
+            );
         });
 
         // Replacing an existing entry drops the old watcher (and ends its thread).
@@ -175,6 +209,24 @@ mod tests {
     fn unwatch_unknown_workspace_is_a_noop() {
         let m = WatcherManager::default();
         m.unwatch_worktree("nope"); // must not panic
+    }
+
+    #[test]
+    fn is_git_meta_path_recognises_dot_git_descendants() {
+        let root = Path::new("/tmp/repo");
+        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git/HEAD")));
+        assert!(is_git_meta_path(
+            root,
+            Path::new("/tmp/repo/.git/refs/heads/main")
+        ));
+        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git/config")));
+        // Plain worktree changes are *not* git meta.
+        assert!(!is_git_meta_path(root, Path::new("/tmp/repo/src/main.rs")));
+        assert!(!is_git_meta_path(root, Path::new("/tmp/repo/.gitignore")));
+        // A file outside the root cannot be a meta path.
+        assert!(!is_git_meta_path(root, Path::new("/tmp/other/.git/HEAD")));
+        // The bare `.git` directory itself counts as meta (covers `git init`).
+        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git")));
     }
 
     #[test]

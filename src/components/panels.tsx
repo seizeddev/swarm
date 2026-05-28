@@ -335,6 +335,15 @@ export function PullRequestsPanel() {
           <p className="px-1 py-4 text-base text-[var(--color-muted)]">
             GitHub CLI (<code>gh</code>) not found. Install it and run <code>gh auth login</code>.
           </p>
+        ) : !ws.repo.isRepo ? (
+          <p className="px-1 py-4 text-base text-[var(--color-muted)]">
+            Not a git repository yet. Initialize it from the Changes panel, then push to GitHub.
+          </p>
+        ) : !ws.repo.originUrl ? (
+          <p className="px-1 py-4 text-base text-[var(--color-muted)]">
+            No GitHub remote yet. Run <code>gh repo create</code> in a terminal to publish — the
+            panel updates automatically when an <code>origin</code> appears.
+          </p>
         ) : ws.prs.length === 0 ? (
           <p className="px-1 py-4 text-base text-[var(--color-muted)]">No open pull requests.</p>
         ) : (

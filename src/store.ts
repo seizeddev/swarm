@@ -283,6 +283,13 @@ interface State {
   renameWorkspace(id: string, name: string): void;
 
   refreshStatus(wsId?: string): Promise<void>;
+  /// Re-read repo info (branch name, originUrl, isRepo) and bump the gitNonce
+  /// so views that cache git state (history graph) reload. Force-reloads the
+  /// PR list when the repo now has an origin remote AND gh is available — this
+  /// is the path that catches `gh repo create` (or any externally added remote)
+  /// while the project is open in swarm. Called from the fs:changed handler
+  /// whenever the watcher reports a change inside `.git/` (HEAD, refs, config).
+  refreshRepoMeta(wsId: string): Promise<void>;
   setPanel(p: Panel): void;
   toggleSidebar(): void;
   setCompact(v: boolean): void;
@@ -834,6 +841,32 @@ export const useStore = create<State>((set, get) => {
       if (!ws || !ws.repo.isRepo) return; // a plain folder has no git status to read
       const { changes, stats } = await api.statusAndStats(ws.repo.path);
       patch(ws.id, { changes, diffStats: stats });
+    },
+
+    async refreshRepoMeta(wsId) {
+      const ws = get().workspaces.find((w) => w.id === wsId);
+      if (!ws) return;
+      // Re-read RepoInfo: a `.git/` event can mean the user `git init`'d a
+      // previously-plain folder, switched branch (`HEAD`), added a remote
+      // (`config`), or landed a commit (`refs/heads/*`). Each of those is
+      // observable in the panel header, History, and PR panel.
+      const info = await api.repoInfo(ws.repo.path).catch(() => null);
+      if (!info) return;
+      const prev = ws.repo;
+      patch(ws.id, { repo: info });
+      // Always bump on a `.git/` event — refs may have moved even when the
+      // symbolic HEAD branch name didn't change (commit, push, pull), and the
+      // history graph keys its reload off this nonce.
+      set((s) => ({ gitNonce: s.gitNonce + 1 }));
+      // Origin appeared (or swapped) AND gh is wired → fetch PRs so the panel
+      // flips out of the "no GitHub remote" state without a manual refresh.
+      const originAppeared = !prev.originUrl && !!info.originUrl;
+      if (info.isRepo && get().ghAvailable && info.originUrl) {
+        if (originAppeared && !ws.ghLogin) {
+          ghLoginOnce().then((l) => patch(ws.id, { ghLogin: l }));
+        }
+        get().loadPrs(ws.id, true);
+      }
     },
 
     // Turn an opened plain folder into a git repo (the SCM panel's Initialize
