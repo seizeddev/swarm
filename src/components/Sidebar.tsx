@@ -6,6 +6,7 @@ import {
   Download,
   FlaskConical,
   FolderOpen,
+  FolderSearch,
   GitBranch,
   GitPullRequest,
   History,
@@ -63,10 +64,12 @@ function pickRepo(addWorkspace: () => void) {
 function WorkspaceSquare({
   id,
   name,
+  missing,
   onMenu,
 }: {
   id: string;
   name: string;
+  missing: boolean;
   onMenu: (e: React.MouseEvent, id: string) => void;
 }) {
   const { activeWorkspaceId, setActiveWorkspace } = useStore(
@@ -85,13 +88,18 @@ function WorkspaceSquare({
       type="button"
       onClick={() => setActiveWorkspace(id)}
       onContextMenu={(e) => onMenu(e, id)}
-      title={name}
+      title={missing ? `${name} — folder not found (right-click to locate)` : name}
       className="relative grid h-8 w-8 place-items-center rounded-[8px] text-xs font-bold transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]"
       style={{
         background: active ? "var(--color-surface-2)" : "transparent",
         color: active ? "var(--color-text)" : "var(--color-muted)",
         boxShadow: active ? "inset 0 0.5px 0 rgba(255,255,255,0.14)" : "none",
-        border: active ? "0.5px solid rgba(255,255,255,0.12)" : "0.5px solid transparent",
+        border: missing
+          ? "0.5px dashed rgba(255,255,255,0.18)"
+          : active
+            ? "0.5px solid rgba(255,255,255,0.12)"
+            : "0.5px solid transparent",
+        opacity: missing ? 0.55 : 1,
       }}
     >
       {initials}
@@ -100,6 +108,17 @@ function WorkspaceSquare({
           className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--color-panel)]"
           style={{ background: ATTN }}
         />
+      )}
+      {/* Missing-folder indicator: a small dashed-circle glyph in the corner so
+          the dimmed square reads as "deliberately disabled" rather than "muted". */}
+      {missing && (
+        <span
+          aria-hidden
+          className="absolute -bottom-0.5 -right-0.5 grid h-3 w-3 place-items-center rounded-full ring-2 ring-[var(--color-panel)]"
+          style={{ background: "var(--color-recessed)" }}
+        >
+          <FolderSearch size={8} />
+        </span>
       )}
     </button>
   );
@@ -323,6 +342,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
     workspaces,
     addWorkspace,
     closeWorkspaceWithConfirm,
+    locateMissingWorkspace,
     setActiveWorkspace,
     addPane,
     refreshStatus,
@@ -338,6 +358,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
       workspaces: s.workspaces,
       addWorkspace: s.addWorkspace,
       closeWorkspaceWithConfirm: s.closeWorkspaceWithConfirm,
+      locateMissingWorkspace: s.locateMissingWorkspace,
       setActiveWorkspace: s.setActiveWorkspace,
       addPane: s.addPane,
       refreshStatus: s.refreshStatus,
@@ -363,6 +384,26 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
   const workspaceMenu = (id: string): MenuItem[] => {
     const w = workspaces.find((x) => x.id === id);
     if (!w) return [];
+    // A missing-folder workspace can't refresh, reveal, or open a terminal —
+    // the path is gone. Offer the two actions that *do* apply: relocate it
+    // (pick the moved/renamed folder) or forget it (drop from the sidebar).
+    if (w.repo.missing) {
+      return [
+        { kind: "header", label: `${w.name ?? w.repo.name} — folder not found` },
+        {
+          label: "Locate Folder…",
+          icon: <FolderSearch size={14} />,
+          onClick: () => locateMissingWorkspace(id),
+        },
+        { kind: "separator" },
+        {
+          label: "Forget Project",
+          icon: <X size={14} />,
+          destructive: true,
+          onClick: () => closeWorkspaceWithConfirm(id),
+        },
+      ];
+    }
     return [
       { kind: "header", label: w.name ?? w.repo.name },
       {
@@ -446,6 +487,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
             key={w.id}
             id={w.id}
             name={w.name ?? w.repo.name}
+            missing={!!w.repo.missing}
             onMenu={(e, id) => openMenu(e, workspaceMenu(id))}
           />
         ))}
@@ -458,9 +500,12 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           <Plus size={16} />
         </button>
 
-        {ws && (
+        {ws && !ws.repo.missing && (
           // Inspector group — set apart from the workspaces by space, not a
           // hairline (the rail reads as two intents: switch project / inspect).
+          // Hidden for a missing workspace: every inspector view drives a git
+          // op against `repo.path`, which would just error until the user runs
+          // Locate.
           <div className="mt-3 flex flex-col items-center gap-1.5">
             <RailButton panel="scm" title="Source Control" badge={ws.changes.length}>
               <GitBranch size={16} />
@@ -523,7 +568,15 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           background: compact ? "var(--color-panel)" : undefined,
         }}
       >
-        {ws ? (
+        {ws && ws.repo.missing ? (
+          <MissingWorkspacePanel
+            id={ws.id}
+            name={ws.name ?? ws.repo.name}
+            path={ws.repo.path}
+            onLocate={() => locateMissingWorkspace(ws.id)}
+            onForget={() => closeWorkspaceWithConfirm(ws.id)}
+          />
+        ) : ws ? (
           <div key={ws.panel} className="min-h-0 flex-1 animate-fade-in">
             {ws.panel === "scm" && <SourceControlPanel />}
             {ws.panel === "prs" && <PullRequestsPanel />}
@@ -602,6 +655,52 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           );
         })()}
     </>
+  );
+}
+
+// Empty-state panel for an active workspace whose folder is gone. Surfaces the
+// dead path so the user knows *which* project (often clarifies "ah right, I
+// renamed that to X") and offers the two real next steps. No git panels, no
+// rail buttons — every other workspace control would just error.
+function MissingWorkspacePanel({
+  id,
+  name,
+  path,
+  onLocate,
+  onForget,
+}: {
+  id: string;
+  name: string;
+  path: string;
+  onLocate: () => void;
+  onForget: () => void;
+}) {
+  return (
+    <div key={`missing-${id}`} className="grid flex-1 place-items-center px-6 text-center">
+      <div className="animate-fade-rise">
+        <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-[16px] text-[var(--color-muted)] opacity-90">
+          <FolderSearch size={36} />
+        </div>
+        <p className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]">{name}</p>
+        <p className="mx-auto mt-1.5 max-w-[240px] text-sm leading-relaxed text-[var(--color-muted)]">
+          The folder no longer exists at this path:
+        </p>
+        <p
+          className="mx-auto mb-5 mt-1.5 max-w-[260px] break-all rounded-[8px] px-2 py-1 font-mono text-2xs text-[var(--color-muted)]"
+          style={{ background: "var(--color-recessed)" }}
+        >
+          {path}
+        </p>
+        <div className="flex flex-col items-stretch gap-2">
+          <button type="button" className="btn btn-accent" onClick={onLocate}>
+            <FolderSearch size={14} /> Locate folder…
+          </button>
+          <button type="button" className="btn" onClick={onForget}>
+            <X size={14} /> Forget project
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

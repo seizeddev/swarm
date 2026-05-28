@@ -26,6 +26,10 @@ export const api = {
   // `null` when the user cancels the dialog.
   pickWorkspace: () => invoke<RepoInfo | null>("pick_workspace"),
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
+  // Session-restore variant: returns null for a path that no longer resolves
+  // (renamed / moved / deleted while swarm was off), so the renderer can keep a
+  // "missing" workspace stub in the sidebar instead of silently dropping it.
+  repoInfoForRestore: (path: string) => invoke<RepoInfo | null>("repo_info_for_restore", { path }),
   initRepo: (path: string) => invoke<RepoInfo>("init_repo", { path }),
   fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>
     invoke<HunkBundle>("file_diff_hunks", { worktreePath, file, staged }),

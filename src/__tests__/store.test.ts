@@ -8,6 +8,7 @@ vi.mock("../lib/ipc", () => ({
   api: {
     pickWorkspace: vi.fn(),
     repoInfo: vi.fn(),
+    repoInfoForRestore: vi.fn(),
     initRepo: vi.fn(),
     statusAndStats: vi.fn(),
     gitLog: vi.fn(),
@@ -148,6 +149,10 @@ beforeEach(() => {
   useStore.setState({ ...INITIAL });
   // Sensible resolved defaults; tests override as needed.
   m.repoInfo.mockResolvedValue(repo());
+  // Restore uses repoInfoForRestore now (null-on-missing). Default to returning
+  // the same RepoInfo as repoInfo so existing tests keep working without per-test
+  // wiring; tests that want to exercise the missing-stub path override to null.
+  m.repoInfoForRestore.mockResolvedValue(repo());
   m.ghAvailable.mockResolvedValue(false);
   m.listAgents.mockResolvedValue([SHELL, CLAUDE]);
   m.claudeSessionExists.mockResolvedValue(true);
@@ -1531,7 +1536,12 @@ describe("persist + hydrate", () => {
     expect(s().workspaces[0].ghLogin).toBe("octocat");
   });
 
-  it("drops a workspace whose repo no longer opens", async () => {
+  it("keeps a workspace whose path is gone as a missing stub (Locate / Forget)", async () => {
+    // Pre-fix: a renamed/moved/deleted repo path made hydrate throw from
+    // ensure_within_root and the workspace silently vanished from the sidebar.
+    // The user saw a tab disappear with no hint and no recovery. Now Rust
+    // returns null for that case and the renderer keeps a "missing" stub so
+    // the user can Locate (repoint) or Forget (drop).
     m.loadSession.mockResolvedValue(
       JSON.stringify({
         v: 1,
@@ -1539,8 +1549,57 @@ describe("persist + hydrate", () => {
         workspaces: [
           {
             id: "ws-gone",
-            repoPath: "/deleted",
-            panel: "terminals",
+            repoPath: "/Users/me/dev/auther",
+            name: "auther",
+            panel: "scm",
+            activeTab: null,
+            tabs: [],
+            panes: [
+              {
+                paneId: "pane-x",
+                tabId: "t",
+                agentId: "claude",
+                command: "claude",
+                args: [],
+                cwd: "/Users/me/dev/auther",
+                title: "Claude",
+                sessionId: "uuid-x",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    m.repoInfoForRestore.mockResolvedValue(null); // backend signals "path is gone"
+    await s().hydrate();
+    expect(s().workspaces).toHaveLength(1);
+    const w = s().workspaces[0];
+    expect(w.repo.missing).toBe(true);
+    expect(w.repo.path).toBe("/Users/me/dev/auther");
+    expect(w.repo.name).toBe("auther"); // preserved from session.json
+    // No pane restore on a missing workspace — pane cwds point at the dead
+    // root and would just fail to spawn. Panes come back when the user runs
+    // Locate, fresh, in the new folder.
+    expect(s().panes).toHaveLength(0);
+    // No watchWorktree / refreshStatus / loadPrs against a dead path either.
+    expect(m.watchWorktree).not.toHaveBeenCalledWith("ws-gone", expect.any(String));
+    expect(s().hydrated).toBe(true);
+  });
+
+  it("locateMissingWorkspace swaps the repo in place and keeps id/tabs", async () => {
+    // The Locate flow lets the user repoint a missing workspace after a folder
+    // rename/move without losing the sidebar entry. id and name survive; only
+    // `repo` swaps. trustedness comes from pickWorkspace's Rust-side register.
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/old/path",
+            name: "my-project",
+            panel: "scm",
             activeTab: null,
             tabs: [],
             panes: [],
@@ -1548,10 +1607,45 @@ describe("persist + hydrate", () => {
         ],
       }),
     );
-    m.repoInfo.mockRejectedValue(new Error("gone"));
+    m.repoInfoForRestore.mockResolvedValue(null);
     await s().hydrate();
-    expect(s().workspaces).toHaveLength(0);
-    expect(s().hydrated).toBe(true);
+    expect(s().workspaces[0].repo.missing).toBe(true);
+
+    // User clicks Locate → picker returns a new path.
+    m.pickWorkspace.mockResolvedValueOnce(repo("/new/path"));
+    await s().locateMissingWorkspace("ws-1");
+
+    const w = s().workspaces[0];
+    expect(w.id).toBe("ws-1");
+    expect(w.name).toBe("my-project"); // preserved
+    expect(w.repo.path).toBe("/new/path");
+    expect(w.repo.missing).toBeUndefined();
+    expect(m.watchWorktree).toHaveBeenCalledWith("ws-1", "/new/path");
+  });
+
+  it("locateMissingWorkspace is a no-op when the user cancels the picker", async () => {
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "/old",
+            panel: "scm",
+            activeTab: null,
+            tabs: [],
+            panes: [],
+          },
+        ],
+      }),
+    );
+    m.repoInfoForRestore.mockResolvedValue(null);
+    await s().hydrate();
+    m.pickWorkspace.mockResolvedValueOnce(null); // user cancels
+    await s().locateMissingWorkspace("ws-1");
+    expect(s().workspaces[0].repo.missing).toBe(true);
+    expect(s().workspaces[0].repo.path).toBe("/old");
   });
 });
 

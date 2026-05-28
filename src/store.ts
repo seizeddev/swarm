@@ -275,6 +275,12 @@ interface State {
   /// security boundary) and adopt whatever the user picks as a new workspace.
   /// No-op when the user cancels the dialog.
   addWorkspace(): Promise<void>;
+  /// Raise the native folder picker for a *missing* workspace (one whose
+  /// `repo.path` no longer exists on disk) and adopt the result in-place: the
+  /// workspace keeps its id, name, tabs, and panes; only `repo` swaps. Lets
+  /// the user repoint after a rename/move without losing the tab. No-op when
+  /// the workspace isn't missing or the user cancels the picker.
+  locateMissingWorkspace(id: string): Promise<void>;
   closeWorkspace(id: string): void;
   closeWorkspaceWithConfirm(id: string): Promise<void>;
   setActiveWorkspace(id: string): void;
@@ -592,13 +598,22 @@ export const useStore = create<State>((set, get) => {
             let repo: RepoInfo;
             try {
               // Trusted roots are now loaded Rust-side from `trusted-roots.json`
-              // before this command runs (see `setup` + `WorkspaceRegistry::load_trusted`),
-              // so we can call repoInfo directly. A path that no longer
-              // canonicalises (repo moved/deleted) was already dropped on load
-              // and `ensure_within_root` raises Invalid here — we skip it.
-              repo = await api.repoInfo(sw.repoPath);
+              // before this command runs (see `setup` + `WorkspaceRegistry::load_trusted`).
+              // `repoInfoForRestore` returns null when the path no longer resolves
+              // (renamed / moved / deleted) — we keep the workspace as a missing
+              // stub so the sidebar can show Locate / Forget instead of silently
+              // vanishing.
+              const fetched = await api.repoInfoForRestore(sw.repoPath);
+              repo = fetched ?? {
+                path: sw.repoPath,
+                name: sw.name ?? sw.repoPath.split("/").pop() ?? sw.repoPath,
+                headBranch: null,
+                isRepo: false,
+                originUrl: null,
+                missing: true,
+              };
             } catch {
-              continue; // repo moved/deleted/outside-root — drop this workspace
+              continue; // outside-root or other unrecoverable — drop this workspace
             }
             workspaces.push({
               id: sw.id,
@@ -621,6 +636,11 @@ export const useStore = create<State>((set, get) => {
               prs: [],
               ghLogin: null,
             });
+            // Missing workspace: skip pane restore entirely. Pane cwds point at
+            // the dead root, agent-sessions resume commands would `cd` into a
+            // nonexistent dir, and the Workspace placeholder doesn't render the
+            // tiling area anyway. Panes come back when the user runs Locate.
+            if (repo.missing) continue;
             for (const sp of sw.panes) {
               // A live PTY for this pane means we're recovering from a webview
               // reload (not a fresh launch): bind the surviving PTY's handle to
@@ -722,6 +742,7 @@ export const useStore = create<State>((set, get) => {
           await api.ptyReap(keepPtyIds).catch(() => {});
           set({ workspaces, panes, activeWorkspaceId });
           for (const w of workspaces) {
+            if (w.repo.missing) continue; // nothing to watch/refresh on a dead path
             api.watchWorktree(w.id, w.repo.path).catch(() => {});
             get().refreshStatus(w.id);
             if (gh && w.repo.isRepo) {
@@ -771,6 +792,36 @@ export const useStore = create<State>((set, get) => {
           ghLoginOnce().then((l) => patch(id, { ghLogin: l }));
           get().loadPrs(id);
         }
+      } catch (e: any) {
+        set({ error: e?.message ?? String(e) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    async locateMissingWorkspace(id) {
+      const ws = get().workspaces.find((w) => w.id === id);
+      if (!ws || !ws.repo.missing) return;
+      set({ busy: true, error: null });
+      try {
+        // pickWorkspace raises the OS picker in Rust and registers the chosen
+        // path as a trusted root — exactly the same path as Add Project, just
+        // we keep this workspace's id/name/tabs and only swap the repo.
+        const picked = await api.pickWorkspace();
+        if (!picked) return;
+        set((s) => ({
+          workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, repo: picked } : w)),
+        }));
+        api.watchWorktree(id, picked.path).catch(() => {});
+        await get().refreshStatus(id);
+        const gh = get().ghAvailable;
+        if (gh && picked.isRepo) {
+          ghLoginOnce().then((l) => patch(id, { ghLogin: l }));
+          get().loadPrs(id);
+        }
+        // No pane restore — the panes that were tied to the old path were
+        // dropped at hydrate time. The user spawns a fresh terminal/agent here.
+        get().persist();
       } catch (e: any) {
         set({ error: e?.message ?? String(e) });
       } finally {

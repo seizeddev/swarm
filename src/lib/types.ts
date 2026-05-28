@@ -18,6 +18,12 @@ export interface RepoInfo {
   // "no GitHub remote" empty state (distinct from "no open PRs") and the live
   // re-fetch after `gh repo create` adds the remote.
   originUrl: string | null;
+  // Set ONLY by the frontend on a restored workspace whose `path` no longer
+  // resolves (user renamed, moved, or deleted the folder while swarm was off).
+  // Backend `RepoInfo` never carries this — see `repoInfoForRestore`.
+  // Drives the sidebar's dimmed "missing" state and the Workspace placeholder
+  // (Locate folder… / Forget).
+  missing?: boolean;
 }
 
 export type ChangeStatus =

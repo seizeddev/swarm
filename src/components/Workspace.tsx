@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Plus, X } from "lucide-react";
+import { FolderSearch, Plus, X } from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
 import { SwarmMark } from "./Sidebar";
 import { computeLayout, type DivRect, type LeafRect } from "../lib/layout";
@@ -16,16 +16,55 @@ export function Workspace() {
   // unmount, but their PTYs keep running in Rust and reattach on return.
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectPane, removePane, setRatio, showTerminal, addPane } = useStore(
-    useShallow((s) => ({
-      selectPane: s.selectPane,
-      removePane: s.removePane,
-      setRatio: s.setRatio,
-      showTerminal: s.showTerminal,
-      addPane: s.addPane,
-    })),
-  );
+  const { selectPane, removePane, setRatio, showTerminal, addPane, locateMissingWorkspace } =
+    useStore(
+      useShallow((s) => ({
+        selectPane: s.selectPane,
+        removePane: s.removePane,
+        setRatio: s.setRatio,
+        showTerminal: s.showTerminal,
+        addPane: s.addPane,
+        locateMissingWorkspace: s.locateMissingWorkspace,
+      })),
+    );
   const areaRef = useRef<HTMLDivElement>(null);
+
+  // Missing workspace: no panes, no editors, no git ops. Show the same Locate /
+  // Forget surface here so the user can act on the empty editor area too, not
+  // only via the sidebar's right-click. The Sidebar panel mirrors this.
+  if (ws?.repo.missing) {
+    return (
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="grid h-full place-items-center px-6 text-center">
+          <div className="animate-fade-rise">
+            <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-90">
+              <FolderSearch size={56} />
+            </div>
+            <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+              {ws.name ?? ws.repo.name}
+            </p>
+            <p className="mx-auto mt-1.5 max-w-[320px] text-base leading-relaxed text-[var(--color-muted)]">
+              This project's folder is gone — it was renamed, moved, or deleted while swarm was
+              closed.
+            </p>
+            <p
+              className="mx-auto mb-5 mt-2 max-w-[420px] break-all rounded-[8px] px-3 py-1.5 font-mono text-sm text-[var(--color-muted)]"
+              style={{ background: "var(--color-recessed)" }}
+            >
+              {ws.repo.path}
+            </p>
+            <button
+              type="button"
+              className="btn btn-accent mx-auto"
+              onClick={() => locateMissingWorkspace(ws.id)}
+            >
+              <FolderSearch size={15} /> Locate folder…
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const tab = ws?.tabs.find((t) => t.id === ws.activeTab) ?? null;
 
