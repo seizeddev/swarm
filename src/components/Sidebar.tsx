@@ -74,7 +74,9 @@ function WorkspaceSquare({
       setActiveWorkspace: s.setActiveWorkspace,
     })),
   );
-  const attention = useStore((s) => s.panes.some((p) => p.workspaceId === id && p.attention));
+  const attention = useStore(
+    useShallow((s) => s.panes.some((p) => p.workspaceId === id && p.attention)),
+  );
   const active = activeWorkspaceId === id;
   const initials = name.slice(0, 2).toUpperCase();
   return (
