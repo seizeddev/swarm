@@ -78,6 +78,40 @@ pub struct SpawnOpts {
     pub rows: u16,
 }
 
+/// Environment variables the renderer is allowed to pass through to a PTY
+/// spawn. Everything else — `PATH`, `LD_PRELOAD`, `ZDOTDIR`, `BASH_ENV`,
+/// locale — is silently dropped. The login-shell wrapper (`$SHELL -ilc`) we
+/// route every agent through sources the user's shell profile anyway, so the
+/// user's *real* PATH/LANG enter the child via the legitimate path. Letting
+/// the renderer override them would let a subverted webview swap a binary out
+/// from under us before the shell even starts.
+pub(crate) const ENV_ALLOW: &[&str] = &[
+    // The pane id stamped on every PTY, used by agent hooks to key session captures.
+    "SWARM_PANE_ID",
+    // Per-pane event file the cross-platform notify helper appends to.
+    "SWARM_EVENT_FILE",
+    // JSON-encoded argv we hand the agent, so a value with spaces survives intact.
+    "SWARM_AGENT_ARGV_JSON",
+    // Codex's isolated config home (set by `prepare_codex_home`).
+    "CODEX_HOME",
+    // Claude Code reads this from the env to enable the full-height alt screen.
+    // The user already sets it in `~/.zshrc`; we re-assert from the frontend so
+    // packaged `.app` launches (minimal launchd env, before the shell sources
+    // anything) still get the right rendering.
+    "CLAUDE_CODE_NO_FLICKER",
+];
+
+/// Filter `opts.env` to keys in [`ENV_ALLOW`]. Extracted so the gate is unit-
+/// testable without spawning a real PTY: a regression here is invisible at the
+/// process level (the unfiltered values just override good defaults).
+pub(crate) fn filter_env(opts: &SpawnOpts) -> Vec<(String, String)> {
+    opts.env
+        .iter()
+        .filter(|(k, _)| ENV_ALLOW.contains(&k.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// Wire flag bit set on a run that carries an OSC 8 hyperlink target (its `link`
 /// is `Some`). Bits 0..=6 mirror the cell attributes packed by `wflags`; bit 7 is
 /// ours, signalling the decoder to read a trailing length-prefixed URI.
@@ -552,7 +586,12 @@ impl TerminalManager {
 
         let mut cmd = build_command(&opts);
         cmd.cwd(&opts.cwd);
-        for (k, v) in &opts.env {
+        // Strict env allowlist: anything the renderer hands us that isn't in
+        // ENV_ALLOW is dropped. The login-shell wrapper sources the user's
+        // shell profile, so PATH/LANG/etc still reach the child through the
+        // legitimate path — but `LD_PRELOAD`/`ZDOTDIR`/`BASH_ENV` from the
+        // renderer can't reach the wrapper at all.
+        for (k, v) in &filter_env(&opts) {
             cmd.env(k, v);
         }
         cmd.env("TERM", "xterm-256color");
@@ -1449,6 +1488,50 @@ mod tests {
                 "--continue".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn c4_env_allowlist_drops_unknown_keys() {
+        // The renderer sends a mix of swarm-internal keys and shell-state keys
+        // a subverted webview could try to use to swap a binary
+        // (`PATH`/`LD_PRELOAD`/`ZDOTDIR`/`BASH_ENV`). Only the allowlisted
+        // swarm keys survive — values are preserved verbatim, order preserved.
+        let opts = SpawnOpts {
+            cwd: "/tmp".into(),
+            command: "claude".into(),
+            args: vec![],
+            env: vec![
+                ("PATH".into(), "/evil/bin".into()),
+                ("LD_PRELOAD".into(), "/evil/libc.so".into()),
+                ("SWARM_PANE_ID".into(), "pane-x".into()),
+                ("ZDOTDIR".into(), "/evil".into()),
+                ("BASH_ENV".into(), "/evil/rc".into()),
+                ("CODEX_HOME".into(), "/swarm/codex".into()),
+                ("CLAUDE_CODE_NO_FLICKER".into(), "1".into()),
+                ("SWARM_EVENT_FILE".into(), "/events/pane-x".into()),
+                ("SWARM_AGENT_ARGV_JSON".into(), r#"["a"]"#.into()),
+                ("NODE_OPTIONS".into(), "--inspect".into()),
+            ],
+            cols: 80,
+            rows: 24,
+        };
+        let filtered = filter_env(&opts);
+        let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        // Allowlisted keys survive…
+        assert!(keys.contains(&"SWARM_PANE_ID"));
+        assert!(keys.contains(&"SWARM_EVENT_FILE"));
+        assert!(keys.contains(&"SWARM_AGENT_ARGV_JSON"));
+        assert!(keys.contains(&"CODEX_HOME"));
+        assert!(keys.contains(&"CLAUDE_CODE_NO_FLICKER"));
+        // …with their values intact.
+        let pane_id = filtered.iter().find(|(k, _)| k == "SWARM_PANE_ID").unwrap();
+        assert_eq!(pane_id.1, "pane-x");
+        // Hostile / not-our-business keys are dropped.
+        for evil in ["PATH", "LD_PRELOAD", "ZDOTDIR", "BASH_ENV", "NODE_OPTIONS"] {
+            assert!(!keys.contains(&evil), "{evil} leaked through");
+        }
+        // No extra keys beyond the allowlisted ones we passed in.
+        assert_eq!(filtered.len(), 5);
     }
 
     #[test]
