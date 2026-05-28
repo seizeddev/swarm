@@ -995,7 +995,7 @@ mod tests {
             // Same for the `--flag=value` form (handled by the head-split
             // branch in `sanitize`).
             let eq = format!("{flag}=x");
-            let out = sanitize("claude", &[eq.clone()]);
+            let out = sanitize("claude", std::slice::from_ref(&eq));
             assert!(
                 out.is_none(),
                 "claude {eq} should also be denied (got {out:?})"
