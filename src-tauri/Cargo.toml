@@ -39,6 +39,11 @@ uuid = { version = "1", features = ["v4"] }
 # Constant-time byte comparison for PTY sealed-token equality. A `==` on a
 # String would let a hostile webview learn the token by timing prefix matches.
 subtle = "2"
+# URL parsing for the external-URL scheme guard. The renderer can't reach
+# `tauri-plugin-opener::open_url` directly anymore (we dropped that capability);
+# every external open goes through `open_external_url`, which rejects anything
+# other than http(s) before the OS handler sees it.
+url = "2"
 base64 = "0.22"
 dirs = "6"
 # Codex hook-trust: SHA-256 of the hook identity (matches Codex's trust scheme) and

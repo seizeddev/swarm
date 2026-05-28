@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
 
-// Mock the OS opener so the allowlist is tested without a real Tauri backend.
-const { openUrlMock } = vi.hoisted(() => ({ openUrlMock: vi.fn() }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: openUrlMock }));
+// Mock the Tauri invoke boundary: `openExternal` now goes through the
+// `open_external_url` Rust command instead of the opener plugin directly, so
+// the test asserts that the allowlist is enforced *before* the IPC trip.
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { isOpenableUrl, openExternal } from "../external";
 
@@ -23,15 +25,24 @@ describe("isOpenableUrl", () => {
 });
 
 describe("openExternal", () => {
-  it("hands an https URL to the system opener", async () => {
-    openUrlMock.mockClear();
+  it("hands an https URL to the Rust open_external_url command", async () => {
+    invokeMock.mockClear();
+    invokeMock.mockResolvedValue(undefined);
     await openExternal("https://github.com/o/r/pull/1");
-    expect(openUrlMock).toHaveBeenCalledWith("https://github.com/o/r/pull/1");
+    expect(invokeMock).toHaveBeenCalledWith("open_external_url", {
+      url: "https://github.com/o/r/pull/1",
+    });
   });
 
-  it("rejects and never calls the opener for a disallowed scheme", async () => {
-    openUrlMock.mockClear();
+  it("rejects and never invokes the Rust command for a disallowed scheme", async () => {
+    invokeMock.mockClear();
     await expect(openExternal("file:///etc/passwd")).rejects.toThrow();
-    expect(openUrlMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects javascript: before the IPC trip", async () => {
+    invokeMock.mockClear();
+    await expect(openExternal("javascript:alert(1)")).rejects.toThrow();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

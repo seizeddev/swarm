@@ -633,6 +633,35 @@ fn prepare_codex_home() -> AppResult<String> {
     Ok(dst.to_string_lossy().into_owned())
 }
 
+/// Parse `s` and confirm it carries an http(s) scheme. Extracted so the gate is
+/// unit-testable without invoking the OS opener. Any other scheme — `file:`,
+/// `javascript:`, custom URI handlers — is refused at the Rust boundary, so the
+/// renderer can no longer talk to `tauri-plugin-opener::open_url` directly
+/// (the corresponding `opener:allow-open-url` capability was removed).
+fn validate_external_url(s: &str) -> AppResult<url::Url> {
+    let parsed =
+        url::Url::parse(s).map_err(|e| error::AppError::Invalid(format!("bad url: {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(error::AppError::Invalid(format!(
+            "refusing scheme: {}",
+            parsed.scheme()
+        )));
+    }
+    Ok(parsed)
+}
+
+/// Open an external URL through the OS handler. Scheme-gated to http(s) so a
+/// subverted webview can't push a `file:` / `javascript:` / custom-scheme URL
+/// into `xdg-open`/`open`/`ShellExecute`.
+#[tauri::command]
+async fn open_external_url(app: AppHandle, url: String) -> AppResult<()> {
+    let parsed = validate_external_url(&url)?;
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url(parsed.to_string(), None::<&str>)
+        .map_err(|e| error::AppError::Other(e.to_string()))
+}
+
 #[tauri::command]
 fn list_agents() -> Vec<agents::AgentDef> {
     agents::list_agents()
@@ -1024,6 +1053,7 @@ pub fn run() {
             gh_login,
             gh_available,
             list_agents,
+            open_external_url,
             claude_session_exists,
             save_session,
             load_session,
@@ -1059,4 +1089,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn h2_validate_external_url_accepts_http_and_https() {
+        let u = validate_external_url("https://github.com/x/y").unwrap();
+        assert_eq!(u.scheme(), "https");
+        assert!(validate_external_url("http://example.com/").is_ok());
+    }
+
+    #[test]
+    fn h2_validate_external_url_rejects_file_scheme() {
+        // A subverted webview must not be able to push `file:///etc/passwd`
+        // into the OS opener (which would happily resolve it to a viewer).
+        let err = validate_external_url("file:///etc/passwd").unwrap_err();
+        assert!(matches!(err, error::AppError::Invalid(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn h2_validate_external_url_rejects_javascript_scheme() {
+        // `javascript:` is a no-op in a sandboxed external opener on most OSes,
+        // but treat it as outright invalid so we don't even hand it to the OS.
+        let err = validate_external_url("javascript:alert(1)").unwrap_err();
+        assert!(matches!(err, error::AppError::Invalid(_)));
+    }
+
+    #[test]
+    fn h2_validate_external_url_rejects_unparseable_input() {
+        // No scheme, no host, no nothing: must fail parse cleanly.
+        let err = validate_external_url("not a url at all").unwrap_err();
+        assert!(matches!(err, error::AppError::Invalid(_)));
+    }
+
+    #[test]
+    fn h2_validate_external_url_rejects_custom_scheme() {
+        // A registered URI handler (e.g. `slack://`, `cursor://`) could open a
+        // privileged native app — refuse before the OS dispatches it.
+        assert!(validate_external_url("slack://channel/x").is_err());
+        assert!(validate_external_url("itms-apps://x").is_err());
+    }
 }
