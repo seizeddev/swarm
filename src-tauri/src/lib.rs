@@ -93,6 +93,29 @@ async fn repo_info(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult
     off_thread(move || git::repo_info(&path)).await
 }
 
+/// Session-restore variant of `repo_info`. A persisted workspace whose path no
+/// longer canonicalises (the user renamed/moved/deleted the folder while swarm
+/// was off) used to throw `AppError::Invalid` from `ensured`, and the frontend
+/// silently dropped that workspace from the sidebar. The user saw a tab just
+/// vanish with no hint where the work went and no way to repoint it.
+///
+/// This IPC returns `None` for that case instead of erroring, so the renderer
+/// can keep a "missing" stub in the sidebar (greyed-out, with Locate + Forget
+/// actions). When the path *does* still resolve, we go through the normal trust
+/// check (the session.json roots are loaded in `setup()` before any IPC
+/// dispatch, so existence implies a trusted root).
+#[tauri::command]
+async fn repo_info_for_restore(
+    reg: State<'_, WorkspaceRegistry>,
+    path: String,
+) -> AppResult<Option<git::RepoInfo>> {
+    if std::fs::metadata(&path).is_err() {
+        return Ok(None);
+    }
+    let path = ensured(&reg, &path)?;
+    off_thread(move || git::repo_info(&path)).await.map(Some)
+}
+
 #[tauri::command]
 async fn init_repo(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResult<git::RepoInfo> {
     let path = ensured(&reg, &path)?;
@@ -1155,6 +1178,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pick_workspace,
             repo_info,
+            repo_info_for_restore,
             init_repo,
             file_diff_hunks,
             status_and_stats,
