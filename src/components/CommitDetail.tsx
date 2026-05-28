@@ -83,15 +83,37 @@ export function CommitDetail({
   const [patch, setPatch] = useState("");
   const [truncated, setTruncated] = useState(false);
 
+  // Arrow-keying through the commit list hits this effect every keystroke.
+  // Without a debounce we'd spawn an off-thread libgit2 walk per commit and
+  // then race-overwrite each setPatch with stale results. Both calls are
+  // gated on `cancelled` so the late return for a no-longer-visible commit
+  // is a no-op. The 120 ms debounce is well under interactive perception but
+  // long enough that holding ↓ doesn't fan out one walk per row.
   useEffect(() => {
     setPatch("");
     setDetail(null);
     setTruncated(false);
-    api.commitDetail(repoPath, oid).then(setDetail);
-    api.commitDiff(repoPath, oid).then((d) => {
-      setPatch(d.patch);
-      setTruncated(d.truncated);
-    });
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api
+        .commitDetail(repoPath, oid)
+        .then((d) => {
+          if (!cancelled) setDetail(d);
+        })
+        .catch(() => {});
+      api
+        .commitDiff(repoPath, oid)
+        .then((d) => {
+          if (cancelled) return;
+          setPatch(d.patch);
+          setTruncated(d.truncated);
+        })
+        .catch(() => {});
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [repoPath, oid]);
 
   const files = useMemo(() => parseCommitPatch(patch), [patch]);
