@@ -100,8 +100,10 @@ impl WorkspaceRegistry {
 
     /// Load roots from a previously persisted snapshot. Entries that no longer
     /// canonicalise (e.g. the user moved/deleted the repo while swarm was off)
-    /// are silently dropped. The persist path is set as a side effect, so any
-    /// later `register` will rewrite this file.
+    /// are dropped from the in-memory set, and — when any were dropped — the
+    /// pruned snapshot is written back so the file doesn't grow unboundedly
+    /// with dead paths across launches. The persist path is set as a side
+    /// effect, so any later `register` will rewrite this file too.
     pub fn load_trusted(&self, store_path: &Path) -> AppResult<()> {
         self.with_persist_path(store_path.to_path_buf());
         let s = match std::fs::read_to_string(store_path) {
@@ -117,13 +119,18 @@ impl WorkspaceRegistry {
         if envelope.v != SCHEMA_V {
             return Ok(()); // unknown schema — drop the file silently
         }
+        let original_count = envelope.roots.len();
         let mut loaded = HashSet::new();
         for p in envelope.roots {
             if let Ok(canon) = std::fs::canonicalize(&p) {
                 loaded.insert(canon);
             }
         }
+        let pruned = loaded.len() != original_count;
         *self.roots.lock() = loaded;
+        if pruned {
+            self.persist();
+        }
         Ok(())
     }
 
@@ -258,6 +265,65 @@ mod tests {
         let reg = WorkspaceRegistry::default();
         reg.load_trusted(&store_file).unwrap();
         assert!(reg.roots().is_empty(), "stale root must not load");
+    }
+
+    #[test]
+    fn load_persists_pruned_snapshot_when_a_stale_root_is_dropped() {
+        // When `load_trusted` drops an entry that no longer canonicalises, it
+        // must rewrite the on-disk snapshot so the file doesn't keep the dead
+        // path forever (which would re-prune every launch instead of fixing
+        // the file itself). Live entries survive the rewrite.
+        let store_dir = scratch();
+        let store_file = store_dir.join("trusted-roots.json");
+        let live = scratch();
+        let gone = store_dir.join("vanished");
+        let envelope = TrustedRoots {
+            v: SCHEMA_V,
+            roots: vec![
+                live.to_string_lossy().into_owned(),
+                gone.to_string_lossy().into_owned(),
+            ],
+        };
+        fs::write(&store_file, serde_json::to_string(&envelope).unwrap()).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        reg.load_trusted(&store_file).unwrap();
+
+        let raw = fs::read_to_string(&store_file).unwrap();
+        let after: TrustedRoots = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            after.roots.len(),
+            1,
+            "pruned snapshot must drop the dead root from disk too"
+        );
+        assert!(after.roots[0].contains(live.file_name().unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn load_does_not_rewrite_when_every_root_still_resolves() {
+        // Symmetric guarantee: a clean load doesn't churn the file (`load_trusted`
+        // would otherwise re-touch the mtime on every launch even when nothing
+        // changed, which complicates audit/`stat` reasoning).
+        let store_dir = scratch();
+        let store_file = store_dir.join("trusted-roots.json");
+        let live = scratch();
+        let envelope = TrustedRoots {
+            v: SCHEMA_V,
+            roots: vec![live.to_string_lossy().into_owned()],
+        };
+        fs::write(&store_file, serde_json::to_string(&envelope).unwrap()).unwrap();
+        let mtime_before = fs::metadata(&store_file).unwrap().modified().unwrap();
+        // Coarse FS mtime resolution: sleep just past 10ms so any rewrite is detectable.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let reg = WorkspaceRegistry::default();
+        reg.load_trusted(&store_file).unwrap();
+
+        let mtime_after = fs::metadata(&store_file).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "load must not rewrite the snapshot when nothing was pruned"
+        );
     }
 
     #[cfg(unix)]

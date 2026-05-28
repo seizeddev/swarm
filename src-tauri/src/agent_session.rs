@@ -281,6 +281,39 @@ pub fn forget(pane_id: &str) {
     }
 }
 
+/// Prune session records whose paneId is not in `live` — orphans left behind
+/// by panes that were closed (or workspaces that were dropped) in prior runs.
+/// Called from `setup()` once per launch; `live` is the set of paneIds the
+/// renderer is about to restore (read from session.json by the caller). Files
+/// whose name doesn't match `<safe-token>.json` are left alone (someone else
+/// might own them). Best-effort: a single unreadable entry doesn't abort the
+/// sweep — the next launch will retry.
+pub fn prune_orphans(live: &std::collections::HashSet<String>) {
+    if let Some(dir) = sessions_dir() {
+        prune_orphans_in(&dir, live);
+    }
+}
+
+fn prune_orphans_in(dir: &std::path::Path, live: &std::collections::HashSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(pane_id) = name.strip_suffix(".json") else {
+            continue;
+        };
+        if !safe_token(pane_id) {
+            continue; // not one of ours — keep
+        }
+        if !live.contains(pane_id) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Build the native resume command for a captured session, or None when the agent
 /// isn't restorable (unknown agent, no longer-valid session, or a non-restorable
 /// launch — e.g. it was `claude mcp …`).
@@ -837,6 +870,72 @@ pub(crate) fn redact_credentials(agent: &str, args: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_orphans_removes_only_dead_panes_and_keeps_alien_files() {
+        // Setup: a scratch directory with a mix of (a) live-pane records,
+        // (b) orphaned-pane records, and (c) files NOT shaped like a session
+        // record (someone else might own them). After prune: only (b) goes.
+        let dir = std::env::temp_dir().join(format!("swarm-prune-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live_id = "pane-live-1";
+        let orphan_id = "pane-orphan-2";
+        std::fs::write(dir.join(format!("{live_id}.json")), b"{}").unwrap();
+        std::fs::write(dir.join(format!("{orphan_id}.json")), b"{}").unwrap();
+        // Unrelated file: a .json with a name that fails safe_token (contains
+        // a forbidden character) — someone else's file, must not be touched.
+        std::fs::write(dir.join("hello world.json"), b"hi").unwrap();
+        // Non-JSON file — keep it.
+        std::fs::write(dir.join("note.txt"), b"hi").unwrap();
+        // A safe-tokened name with .json that matches no live pane and no
+        // safe rule violation — this one should be pruned (it's a real orphan).
+        let other_orphan = "pane-orphan-3";
+        std::fs::write(dir.join(format!("{other_orphan}.json")), b"{}").unwrap();
+
+        let mut live = std::collections::HashSet::new();
+        live.insert(live_id.to_string());
+        prune_orphans_in(&dir, &live);
+
+        assert!(
+            dir.join(format!("{live_id}.json")).exists(),
+            "live record kept"
+        );
+        assert!(
+            !dir.join(format!("{orphan_id}.json")).exists(),
+            "orphan record gone"
+        );
+        assert!(
+            !dir.join(format!("{other_orphan}.json")).exists(),
+            "second orphan gone"
+        );
+        assert!(
+            dir.join("hello world.json").exists(),
+            "non-safe-token .json must not be touched"
+        );
+        assert!(
+            dir.join("note.txt").exists(),
+            "non-json must not be touched"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn prune_orphans_on_empty_live_set_with_only_records_clears_all_records() {
+        // Edge case: every record is orphaned (no live panes). All session
+        // files go; nothing else does. This is what happens on a launch where
+        // every workspace was closed in the prior session.
+        let dir = std::env::temp_dir().join(format!("swarm-prune-empty-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pane-a.json"), b"{}").unwrap();
+        std::fs::write(dir.join("pane-b.json"), b"{}").unwrap();
+        std::fs::write(dir.join("keep.me"), b"x").unwrap();
+
+        prune_orphans_in(&dir, &std::collections::HashSet::new());
+        assert!(!dir.join("pane-a.json").exists());
+        assert!(!dir.join("pane-b.json").exists());
+        assert!(dir.join("keep.me").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn safe_token_rejects_path_pieces() {

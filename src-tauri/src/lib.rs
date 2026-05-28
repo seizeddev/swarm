@@ -380,8 +380,15 @@ struct SessionEnvelope {
 /// folders" — so we treat it as the authority on trusted roots.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SessionRootsPane {
+    pane_id: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionRootsWorkspace {
     repo_path: String,
+    #[serde(default)]
+    panes: Vec<SessionRootsPane>,
 }
 #[derive(serde::Deserialize)]
 struct SessionRoots {
@@ -407,6 +414,26 @@ fn load_workspace_roots_from_session(reg: &WorkspaceRegistry, swarm_dir: &std::p
     for ws in sess.workspaces {
         let _ = reg.register(&ws.repo_path);
     }
+}
+
+/// Set of paneIds the renderer is about to restore — used to GC orphaned
+/// `~/.swarm/agent-sessions/<paneId>.json` records left behind by panes that
+/// were closed (or workspaces dropped) in prior runs. Returns an empty set
+/// when session.json is missing/unparseable; in that case the prune is a
+/// no-op (we never delete records when we can't confirm what's live).
+fn live_pane_ids_from_session(swarm_dir: &std::path::Path) -> std::collections::HashSet<String> {
+    let session_path = swarm_dir.join("session.json");
+    let Ok(raw) = std::fs::read_to_string(&session_path) else {
+        return std::collections::HashSet::new();
+    };
+    let Ok(sess) = serde_json::from_str::<SessionRoots>(&raw) else {
+        return std::collections::HashSet::new();
+    };
+    sess.workspaces
+        .into_iter()
+        .flat_map(|w| w.panes)
+        .map(|p| p.pane_id)
+        .collect()
 }
 
 #[tauri::command]
@@ -1155,6 +1182,14 @@ pub fn run() {
                 let reg = app.state::<WorkspaceRegistry>();
                 let _ = reg.load_trusted(&store);
                 load_workspace_roots_from_session(&reg, &dir);
+                // GC orphaned agent-session records (panes/workspaces closed
+                // in prior runs). Gated on session.json *existing* so a first
+                // launch — where the file is absent — doesn't nuke every
+                // record. The renderer's hydrate then reads the survivors via
+                // `agent_session_resume(paneId)`.
+                if dir.join("session.json").exists() {
+                    agent_session::prune_orphans(&live_pane_ids_from_session(&dir));
+                }
             }
             // Watch ~/.swarm/events (one file per pane) event-driven: an agent
             // appending a line fires `pane:notify` with no interval polling.
