@@ -1142,6 +1142,21 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn m4_swarm_dir_creates_with_0700_on_unix() {
+        // `swarm_dir` is called at process start (via `load_trusted` in
+        // `setup`), so ~/.swarm exists with mode 0700 BEFORE the first
+        // session.json or event-file write — no race window where the dir
+        // sits permissively while we populate it. We exercise the helper
+        // directly and confirm the bits.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = swarm_dir().expect("swarm_dir must succeed when $HOME is set");
+        assert!(dir.is_dir(), "swarm_dir created the directory");
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "expected 0700, got {mode:o}");
+    }
+
     #[test]
     fn m2_save_session_rejects_invalid_schema() {
         // Garbage in: must not overwrite the prior session. We exercise the
