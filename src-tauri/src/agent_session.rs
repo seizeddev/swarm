@@ -83,7 +83,10 @@ pub fn record_session_start(agent: &str, payload: &str) {
         .map(str::to_owned)
         .or_else(|| std::env::var("PWD").ok())
         .unwrap_or_default();
-    let args = captured_args(agent);
+    // Redact credential-bearing values (cursor `--api-key`, codex
+    // `--remote-auth-token-env`, …) before they hit disk, so a stolen
+    // `~/.swarm/agent-sessions/<paneId>.json` doesn't surrender keys.
+    let args = redact_credentials(agent, &captured_args(agent));
     let rec = AgentSession {
         agent: agent.to_string(),
         session_id,
@@ -109,7 +112,13 @@ fn write_record_atomic(path: &std::path::Path, rec: &AgentSession) -> std::io::R
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, s.as_bytes())?;
     match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            // Tighten to owner-only — the record may carry redacted-but-
+            // still-recognisable launch args (paths, model names) we don't
+            // want other local users to be able to read.
+            crate::fsperm::restrict_file(path);
+            Ok(())
+        }
         Err(e) => {
             // Best-effort cleanup so a rename failure doesn't leave the .tmp around.
             let _ = std::fs::remove_file(&tmp);
@@ -361,7 +370,17 @@ fn sanitize(agent: &str, args: &[String]) -> Option<Vec<String>> {
         }
         // `--opt=val` form: classify by the `--opt=` prefix.
         let head = arg.split('=').next().unwrap_or(arg);
-        if p.reject.contains(&head) {
+        // swarm always injects `--settings <inline json>` for Claude. Filter it
+        // BEFORE the security_value_deny check below so a swarm-launched Claude
+        // (which captures the injected `--settings`) is still restorable. The
+        // user's own `--settings` is also filtered here, but `store.ts` re-
+        // injects swarm's settings on every restore, which is the desired
+        // behaviour for both cases.
+        if agent == "claude" && head == "--settings" {
+            i += if arg.contains('=') { 1 } else { 2 };
+            continue;
+        }
+        if p.reject.contains(&head) || p.security_value_deny.contains(&head) {
             return None;
         }
         if p.dropped.contains(&head) || p.dropped_prefixes.iter().any(|pre| arg.starts_with(pre)) {
@@ -371,11 +390,6 @@ fn sanitize(agent: &str, args: &[String]) -> Option<Vec<String>> {
             } else {
                 i += 1;
             }
-            continue;
-        }
-        // swarm always injects `--settings <inline json>` for Claude; never restore it.
-        if agent == "claude" && head == "--settings" {
-            i += if arg.contains('=') { 1 } else { 2 };
             continue;
         }
         // Preserve this option (and its value(s)).
@@ -423,6 +437,19 @@ struct Policy {
     dropped: std::collections::HashSet<&'static str>,
     dropped_prefixes: Vec<&'static str>,
     reject: std::collections::HashSet<&'static str>,
+    /// Flags whose presence makes a launch fundamentally non-restorable for
+    /// security reasons (e.g. claude `--mcp-config <evil.json>` would re-arm an
+    /// attacker-supplied MCP server on every restart). `sanitize` returns
+    /// `None` when any of these appear — same effect as a `reject` hit, but
+    /// kept distinct so reviewers can tell the *why* apart.
+    security_value_deny: std::collections::HashSet<&'static str>,
+    /// Flags whose VALUE carries a credential (API key, header, token, remote
+    /// URL). `redact_credentials` replaces the value with `[REDACTED]` at the
+    /// persist boundary so a stolen `~/.swarm/agent-sessions/<paneId>.json`
+    /// doesn't hand over the user's keys. Resume-time sanitize still drops
+    /// the whole flag (these belong to `dropped`); this is just the
+    /// on-disk leak guard.
+    credential_value_opts: std::collections::HashSet<&'static str>,
 }
 
 fn set(items: &[&'static str]) -> std::collections::HashSet<&'static str> {
@@ -525,6 +552,28 @@ fn policy(agent: &str) -> Option<Policy> {
                 "--worktree=",
             ],
             reject: set(&["--print", "-p", "--no-session-persistence"]),
+            // M-1: a launch that touched any of these tool/permission/MCP
+            // surfaces is fundamentally non-restorable — auto-rearming an
+            // attacker-supplied MCP server / tool-allowlist / system-prompt on
+            // restart would be a persistence vector. swarm's own injected
+            // `--settings` is filtered above this check so swarm-launched
+            // panes still resume cleanly.
+            security_value_deny: set(&[
+                "--mcp-config",
+                "--add-dir",
+                "--plugin-dir",
+                "--allowedTools",
+                "--allowed-tools",
+                "--disallowedTools",
+                "--disallowed-tools",
+                "--permission-mode",
+                "--system-prompt",
+                "--append-system-prompt",
+                "--settings",
+                "--agents",
+                "--setting-sources",
+            ]),
+            credential_value_opts: set(&[]),
         }),
         "codex" => Some(Policy {
             value_opts: set(&["--image", "-i", "--remote", "--remote-auth-token-env"]),
@@ -561,6 +610,12 @@ fn policy(agent: &str) -> Option<Policy> {
             ]),
             dropped_prefixes: vec!["--remote=", "--remote-auth-token-env="],
             reject: set(&[]),
+            // M-1: a launch into a remote codex backend is non-restorable —
+            // the remote env may have changed, and the auth token env-var
+            // pointer is meaningless out of context. `--remote-auth-token-env`
+            // is also `credential_value_opts` for the persist-time redact.
+            security_value_deny: set(&["--remote"]),
+            credential_value_opts: set(&["--remote-auth-token-env"]),
         }),
         "gemini" => Some(Policy {
             value_opts: set(&["--resume", "-r", "--session-id", "--worktree", "-w"]),
@@ -584,6 +639,10 @@ fn policy(agent: &str) -> Option<Policy> {
                 "--experimental-acp",
                 "--list-extensions",
             ]),
+            // Gemini's `reject` already covers prompt/output/extensions
+            // surfaces — nothing extra to add for the security gate.
+            security_value_deny: set(&[]),
+            credential_value_opts: set(&[]),
         }),
         "cursor" => Some(Policy {
             value_opts: set(&[
@@ -635,6 +694,12 @@ fn policy(agent: &str) -> Option<Policy> {
                 "-p",
                 "--stream-partial-output",
             ]),
+            // M-1: a cursor launch that pinned a worktree/workspace must NOT
+            // auto-restore there — the target might have been moved, deleted,
+            // or be a stale checkout. `--api-key`/`-H`/`--header` are also
+            // `credential_value_opts` so the on-disk record redacts the value.
+            security_value_deny: set(&["--workspace", "--worktree", "--worktree-base"]),
+            credential_value_opts: set(&["--api-key", "-H", "--header"]),
         }),
         "opencode" => Some(Policy {
             value_opts: set(&["--file", "-f", "--session", "-s", "--prompt"]),
@@ -677,6 +742,11 @@ fn policy(agent: &str) -> Option<Policy> {
             ]),
             dropped_prefixes: vec![],
             reject: set(&[]),
+            // M-1: opencode `--prompt`/`--file`/`-f` are one-shot inputs; a
+            // launch carrying them was a one-off command, not an interactive
+            // session worth resurrecting.
+            security_value_deny: set(&["--prompt", "--file", "-f"]),
+            credential_value_opts: set(&[]),
         }),
         "amp" => Some(Policy {
             value_opts: set(&["--label", "-l"]),
@@ -708,9 +778,52 @@ fn policy(agent: &str) -> Option<Policy> {
             ]),
             dropped_prefixes: vec![],
             reject: set(&["--execute", "--print", "-V", "-x"]),
+            // M-1: amp `--label`/`-l` names a specific thread/run; resuming
+            // into a stale label would reuse the wrong thread context.
+            security_value_deny: set(&["--label", "-l"]),
+            credential_value_opts: set(&[]),
         }),
         _ => None,
     }
+}
+
+/// Redact credential-bearing values for the on-disk record. Walks `args`,
+/// replacing the value of every flag in the agent's `credential_value_opts`
+/// with `[REDACTED]`. Handles both `--api-key sk-…` and `--api-key=sk-…`
+/// forms. Anything else passes through verbatim — this only protects the
+/// *value*, not whether the flag was present (resume-time sanitize already
+/// drops the whole flag for these via `dropped`).
+pub(crate) fn redact_credentials(agent: &str, args: &[String]) -> Vec<String> {
+    let Some(p) = policy(agent) else {
+        return args.to_vec();
+    };
+    let mut out: Vec<String> = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        // `--flag=value` form: replace just the value portion.
+        if let Some((head, _)) = arg.split_once('=') {
+            if p.credential_value_opts.contains(&head) {
+                out.push(format!("{head}=[REDACTED]"));
+                i += 1;
+                continue;
+            }
+        }
+        if p.credential_value_opts.contains(&arg.as_str()) {
+            // `--flag value` form: keep the flag, redact the next argv slot.
+            out.push(arg.clone());
+            if i + 1 < args.len() {
+                out.push("[REDACTED]".into());
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        out.push(arg.clone());
+        i += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -822,10 +935,14 @@ mod tests {
             .unwrap(),
             vec!["--verbose"]
         );
-        // amp: drop --label <v>; keep a user flag.
+        // amp: a launch carrying --label/-l is now `security_value_deny`
+        // (resuming into a stale thread label is the wrong context — see M-1),
+        // so the whole launch is non-restorable. A launch with only user
+        // flags still preserves them.
+        assert!(sanitize("amp", &["--label".into(), "l".into(), "--keep".into()]).is_none());
         assert_eq!(
-            sanitize("amp", &["--label".into(), "l".into(), "--keep".into()]).unwrap(),
-            vec!["--keep"]
+            sanitize("amp", &["--keep".into(), "--verbose".into()]).unwrap(),
+            vec!["--keep", "--verbose"]
         );
     }
 
@@ -840,6 +957,77 @@ mod tests {
     fn unknown_agent_has_no_resume() {
         assert!(build_resume("aider", "x", vec![]).is_none());
         assert!(policy("aider").is_none());
+    }
+
+    #[test]
+    fn h3_redact_credentials_cursor_api_key_value_form() {
+        // `--api-key sk-x --keep` → the *value* of --api-key is redacted, the
+        // surrounding flags pass through verbatim.
+        let out = redact_credentials(
+            "cursor",
+            &["--api-key".into(), "sk-x".into(), "--keep".into()],
+        );
+        assert_eq!(out, vec!["--api-key", "[REDACTED]", "--keep"]);
+    }
+
+    #[test]
+    fn h3_redact_credentials_cursor_api_key_equals_form() {
+        // `--api-key=sk-x` → same field is redacted with the equals form too.
+        let out = redact_credentials("cursor", &["--api-key=sk-x".into()]);
+        assert_eq!(out, vec!["--api-key=[REDACTED]"]);
+    }
+
+    #[test]
+    fn h3_redact_credentials_cursor_header_short_and_long() {
+        // Both `-H` and `--header` are credential-bearing for cursor.
+        let out = redact_credentials(
+            "cursor",
+            &["-H".into(), "X-Token: secret".into(), "--keep".into()],
+        );
+        assert_eq!(out, vec!["-H", "[REDACTED]", "--keep"]);
+        let out = redact_credentials("cursor", &["--header".into(), "X-Auth: t".into()]);
+        assert_eq!(out, vec!["--header", "[REDACTED]"]);
+    }
+
+    #[test]
+    fn h3_redact_credentials_codex_auth_token_env() {
+        // codex `--remote-auth-token-env <NAME>` — the env-var *name* is what's
+        // redacted (it points the agent at a key in the env, so it's still
+        // sensitive enough that an off-disk reader shouldn't see which one).
+        let out = redact_credentials(
+            "codex",
+            &["--remote-auth-token-env".into(), "OPENAI_KEY".into()],
+        );
+        assert_eq!(out, vec!["--remote-auth-token-env", "[REDACTED]"]);
+    }
+
+    #[test]
+    fn h3_redact_credentials_passes_unrelated_flags_through() {
+        // No credential flag in the list → identity.
+        let out = redact_credentials(
+            "claude",
+            &["--dangerously-skip-permissions".into(), "--verbose".into()],
+        );
+        assert_eq!(out, vec!["--dangerously-skip-permissions", "--verbose"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn h3_record_file_mode_is_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("swarm-h3-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pane-x.json");
+        let rec = AgentSession {
+            agent: "claude".into(),
+            session_id: "s1".into(),
+            args: vec![],
+            cwd: "/cwd".into(),
+        };
+        write_record_atomic(&path, &rec).unwrap();
+        let m = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(m, 0o600, "expected 0600, got {m:o}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
