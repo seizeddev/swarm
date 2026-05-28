@@ -1227,6 +1227,45 @@ mod tests {
     }
 
     #[test]
+    fn osc_8_hyperlinks_surface_only_on_their_own_cells() {
+        // A plain row carries no `link` (cell.hyperlink() short-circuits via
+        // its Option<Arc<CellExtra>> field probe). An OSC 8 sequence stamps
+        // the hyperlink onto the cells between its open/close markers; only
+        // those cells should round-trip with `link` + the WF_HYPERLINK flag.
+        let size = TermSize { cols: 20, lines: 2 };
+        let mut term = Term::new(
+            Config::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser = Processor::<StdSyncHandler>::new();
+        // Plain row.
+        parser.advance(&mut term, b"plain text");
+        // OSC 8 hyperlink: ESC ] 8 ; ; uri ESC \ then text then close.
+        parser.advance(
+            &mut term,
+            b"\r\n\x1b]8;;https://e.x\x1b\\link\x1b]8;;\x1b\\",
+        );
+
+        let snap = snapshot_full(&term);
+        assert!(
+            snap.lines[0].runs.iter().all(|r| r.link.is_none()),
+            "plain row leaked a hyperlink: {:?}",
+            snap.lines[0].runs
+        );
+        let row1_has_link = snap.lines[1].runs.iter().any(|r| {
+            r.link.as_deref() == Some("https://e.x")
+                && r.text.contains('l')
+                && r.flags & WF_HYPERLINK != 0
+        });
+        assert!(
+            row1_has_link,
+            "OSC 8 row missing link: {:?}",
+            snap.lines[1].runs
+        );
+    }
+
+    #[test]
     fn encode_pre_sizes_the_buffer_exactly() {
         // Mix plain runs, ASCII, multi-byte UTF-8 and a hyperlink run across two
         // lines: the buffer capacity must match the final length, proving the
