@@ -337,8 +337,29 @@ fn swarm_dir() -> AppResult<std::path::PathBuf> {
     Ok(dir)
 }
 
+/// On-disk schema mirror of `src/lib/persist.ts::Snap`. We only need the
+/// envelope shape to **validate** the JSON the frontend sends — the actual
+/// pane/layout state is opaque to Rust and gets written through verbatim. The
+/// schema check rejects a malformed snapshot before it lands on disk, so a
+/// later hydrate can't crash the app on a corrupted/partial save.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // every field is read by serde's deserialize, not by us
+struct SessionEnvelope {
+    v: u32,
+    active_workspace_id: Option<String>,
+    workspaces: Vec<serde_json::Value>,
+}
+
 #[tauri::command]
 fn save_session(data: String) -> AppResult<()> {
+    // Schema-validate before write: a malformed snapshot (renderer bug,
+    // truncated paste-into-config attack, …) must not overwrite a good one.
+    // `serde_json::from_str::<SessionEnvelope>` accepts both `camelCase` and
+    // `snake_case` thanks to the frontend's serializer; if the shape doesn't
+    // match, the write is refused and the prior session.json is preserved.
+    let _: SessionEnvelope = serde_json::from_str(&data)
+        .map_err(|e| error::AppError::Invalid(format!("session schema: {e}")))?;
     let path = swarm_dir()?.join("session.json");
     std::fs::write(&path, data)?;
     fsperm::restrict_file(&path);
@@ -386,12 +407,27 @@ fn prune_clipboard_dir(dir: &std::path::Path) {
 /// which avoids the macOS pasteboard-type mismatch that makes Claude's own
 /// `«class PNGf»` read miss WebKit's `public.png` images. `ext` is allowlisted
 /// before it reaches the filename.
+/// Per-paste size cap for clipboard images. WKWebView's paste event will
+/// happily hand us a multi-hundred-megabyte buffer if a user pastes a photo
+/// from a different app, and the agent can't usefully consume an image that
+/// large anyway. 32 MiB is well above any reasonable screenshot and well
+/// below the point where the encoded base64 round-trip starts to cost a
+/// noticeable fraction of a second.
+const MAX_CLIPBOARD_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+
 #[tauri::command]
 fn save_clipboard_image(data: String, ext: String) -> AppResult<String> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map_err(|e| error::AppError::Other(format!("invalid image data: {e}")))?;
+    if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err(error::AppError::Invalid(format!(
+            "image too large: {} bytes (max {} bytes)",
+            bytes.len(),
+            MAX_CLIPBOARD_IMAGE_BYTES
+        )));
+    }
     let dir = swarm_dir()?.join("clipboard");
     std::fs::create_dir_all(&dir)?;
     prune_clipboard_dir(&dir);
@@ -1105,6 +1141,38 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn m2_save_session_rejects_invalid_schema() {
+        // Garbage in: must not overwrite the prior session. We exercise the
+        // schema check via the SessionEnvelope deserialise, which is what
+        // `save_session` does before any write.
+        let r: Result<SessionEnvelope, _> = serde_json::from_str("{not json");
+        assert!(r.is_err());
+        let r: Result<SessionEnvelope, _> = serde_json::from_str(r#"{"v":1,"workspaces":"oops"}"#);
+        assert!(r.is_err(), "workspaces must be an array");
+        let r: Result<SessionEnvelope, _> = serde_json::from_str(r#"{"v":"x"}"#);
+        assert!(r.is_err(), "v must be a number");
+    }
+
+    #[test]
+    fn m2_save_session_accepts_a_well_formed_envelope() {
+        // The minimum valid shape (mirrors `persist.ts::Snap`): the actual
+        // pane/layout state stays opaque (a `serde_json::Value` array).
+        let env: SessionEnvelope =
+            serde_json::from_str(r#"{"v":1,"activeWorkspaceId":"ws-1","workspaces":[]}"#)
+                .expect("well-formed envelope must parse");
+        assert_eq!(env.v, 1);
+        assert_eq!(env.active_workspace_id.as_deref(), Some("ws-1"));
+        assert!(env.workspaces.is_empty());
+    }
+
+    #[test]
+    fn m2_clipboard_image_size_cap_constant_is_32_mib() {
+        // Asserting the constant value (not just that the cap exists) so a
+        // future "let's bump this up" change at least surfaces in code review.
+        assert_eq!(MAX_CLIPBOARD_IMAGE_BYTES, 32 * 1024 * 1024);
+    }
 
     #[test]
     fn h2_validate_external_url_accepts_http_and_https() {
