@@ -1140,6 +1140,16 @@ pub fn run() {
                 let dir = home.join(".swarm").join("events");
                 let _ = watchers.start_events(app.handle().clone(), dir);
             }
+            // Refresh every installed agent integration hook to point at the
+            // *current* swarm binary, synchronously, before the webview can
+            // spawn any agent pane. This is what keeps SessionStart from
+            // firing `/bin/sh: …/swarm: No such file` after the user renames
+            // the parent repo, moves swarm.app, or runs `cargo clean` — the
+            // strip-then-add in `plan_json` replaces a stale entry with the
+            // current one. The frontend's startup install call still runs
+            // (belt-and-suspenders, e.g. PATH change between launches), but
+            // we no longer race it against pane restore.
+            agent_hooks::install_all(&swarm_bin_path());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
