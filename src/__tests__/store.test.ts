@@ -352,6 +352,26 @@ describe("pane creation", () => {
     });
   });
 
+  it("wires PermissionRequest so tool-permission prompts notify instantly (not only after idle)", () => {
+    // For normal permission-needing tools (Bash/Edit/Write/...), Claude's own
+    // `executeNotificationHooks` path (J8H in 2.1.153) is NOT called when the
+    // main agent asks the user — the in-terminal UI is the prompt. The
+    // Notification hook only catches these via the ~60s idle reminder.
+    // PermissionRequest is a separate hook event (matchQuery = tool name,
+    // "Run before permission prompt") that fires the moment Claude is about
+    // to show the prompt — perfect for an instant OS banner.
+    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
+    return addWorkspace("/repo").then(() => {
+      s().addPane(CLAUDE);
+      const pane = s().panes.find((p) => p.agentId === "claude")!;
+      const idx = pane.args.indexOf("--settings");
+      const settings = JSON.parse(pane.args[idx + 1]);
+      expect(settings.hooks.PermissionRequest).toBeTruthy();
+      const serialized = JSON.stringify(settings.hooks.PermissionRequest);
+      expect(serialized).toContain("--notify-helper claude-permission");
+    });
+  });
+
   it("wires PreToolUse for AskUserQuestion + ExitPlanMode so interactive prompts notify instantly", () => {
     // AskUserQuestion (multiple-choice prompt) and ExitPlanMode (plan-approval
     // prompt) are `requiresUserInteraction` tools with their own UI flow — the
