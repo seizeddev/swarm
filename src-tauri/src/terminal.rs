@@ -463,6 +463,35 @@ fn build_command(opts: &SpawnOpts) -> CommandBuilder {
     cmd
 }
 
+/// True if `command` is a launch swarm is willing to spawn through a PTY: the
+/// basename matches either the user's interactive login shell (`$SHELL`) or one
+/// of the CLI agents in the registry. Anything else (`/usr/bin/curl`, a path
+/// dropped on the renderer) is rejected before we hand it to `CommandBuilder`.
+///
+/// We compare on the basename so both `claude` and `/usr/local/bin/claude` pass,
+/// and an empty string never does. Combined with the strict env allowlist in
+/// `spawn`, this closes the renderer → arbitrary local process gap.
+pub(crate) fn is_allowed_command(cmd: &str) -> bool {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(cmd);
+    if base.is_empty() {
+        return false;
+    }
+    let shell = crate::agents::default_shell();
+    let shell_base = std::path::Path::new(&shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&shell);
+    if base == shell_base {
+        return true;
+    }
+    crate::agents::REGISTRY
+        .iter()
+        .any(|r| !r.command.is_empty() && r.command == base)
+}
+
 impl TerminalManager {
     pub fn spawn(
         &self,
@@ -1420,6 +1449,40 @@ mod tests {
                 "--continue".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn c1_is_allowed_command_only_accepts_shell_and_registered_agents() {
+        // The login shell is allowed (both bare name and absolute path).
+        let shell = crate::agents::default_shell();
+        let shell_base = std::path::Path::new(&shell)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&shell);
+        assert!(is_allowed_command(shell_base));
+        assert!(is_allowed_command(&shell));
+
+        // Every registry agent is allowed by its registry command (basename).
+        for r in crate::agents::REGISTRY {
+            if r.command.is_empty() {
+                continue; // the "shell" pane has no static command (resolved at runtime)
+            }
+            assert!(
+                is_allowed_command(r.command),
+                "registry agent {} rejected",
+                r.id
+            );
+            // An absolute path with the same basename is also allowed.
+            let abs = format!("/usr/local/bin/{}", r.command);
+            assert!(is_allowed_command(&abs), "absolute {abs} rejected");
+        }
+
+        // Anything else is rejected — empty, arbitrary binaries, traversal.
+        assert!(!is_allowed_command(""));
+        assert!(!is_allowed_command("curl"));
+        assert!(!is_allowed_command("/usr/bin/curl"));
+        assert!(!is_allowed_command("../../etc/sh"));
+        assert!(!is_allowed_command("python"));
     }
 
     #[cfg(unix)]

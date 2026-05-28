@@ -634,9 +634,17 @@ fn pty_spawn(
     on_update: UpdateChannel,
 ) -> AppResult<String> {
     // A PTY is the most direct path to code execution, so harden the inputs:
-    // non-empty command, and a cwd that resolves inside an opened workspace.
+    // non-empty command, allowlisted against the registry + the user's login
+    // shell (a renderer must not be able to spawn `/usr/bin/curl …`), and a cwd
+    // that resolves inside an opened workspace.
     if opts.command.trim().is_empty() {
         return Err(error::AppError::Invalid("empty command".into()));
+    }
+    if !terminal::is_allowed_command(&opts.command) {
+        return Err(error::AppError::Invalid(format!(
+            "command not allowed: {}",
+            opts.command
+        )));
     }
     reg.ensure_within_root(&opts.cwd)?;
     let id = uuid::Uuid::new_v4().to_string();

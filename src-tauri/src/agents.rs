@@ -16,12 +16,12 @@ pub struct AgentDef {
     pub resume: &'static [&'static str],
 }
 
-struct Reg {
-    id: &'static str,
-    name: &'static str,
-    command: &'static str,
-    args: &'static [&'static str],
-    resume: &'static [&'static str],
+pub(crate) struct Reg {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub command: &'static str,
+    pub args: &'static [&'static str],
+    pub resume: &'static [&'static str],
 }
 
 const fn reg(
@@ -39,7 +39,7 @@ const fn reg(
     }
 }
 
-const REGISTRY: &[Reg] = &[
+pub(crate) const REGISTRY: &[Reg] = &[
     reg("claude", "Claude Code", "claude", &["--continue"]),
     reg("codex", "Codex", "codex", &["resume", "--last"]),
     reg("gemini", "Gemini", "gemini", &[]),
