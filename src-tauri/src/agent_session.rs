@@ -94,8 +94,27 @@ pub fn record_session_start(agent: &str, payload: &str) {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(s) = serde_json::to_string(&rec) {
-        let _ = std::fs::write(path, s);
+    let _ = write_record_atomic(&path, &rec);
+}
+
+/// Serialize `rec` and write it to `path` atomically on the local filesystem:
+/// write to `path.json.tmp` first, then `rename` over `path`. A crash mid-write
+/// can leave a `.tmp` sibling behind, but never a half-written `.json` — the
+/// reader either sees the previous valid record or no record at all. Same-FS
+/// `rename` is the POSIX atomicity guarantee we lean on; `~/.swarm/` and its
+/// children are always on one filesystem, so we never cross a mount boundary.
+fn write_record_atomic(path: &std::path::Path, rec: &AgentSession) -> std::io::Result<()> {
+    let s = serde_json::to_string(rec)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, s.as_bytes())?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Best-effort cleanup so a rename failure doesn't leave the .tmp around.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
     }
 }
 
@@ -821,5 +840,36 @@ mod tests {
     fn unknown_agent_has_no_resume() {
         assert!(build_resume("aider", "x", vec![]).is_none());
         assert!(policy("aider").is_none());
+    }
+
+    #[test]
+    fn write_record_atomic_leaves_no_tmp_and_last_write_wins() {
+        let dir = std::env::temp_dir().join(format!("swarm-session-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pane-x.json");
+
+        let rec1 = AgentSession {
+            agent: "claude".into(),
+            session_id: "s1".into(),
+            args: vec!["--first".into()],
+            cwd: "/cwd".into(),
+        };
+        let rec2 = AgentSession {
+            agent: "claude".into(),
+            session_id: "s2".into(),
+            args: vec!["--second".into()],
+            cwd: "/cwd".into(),
+        };
+        write_record_atomic(&path, &rec1).unwrap();
+        write_record_atomic(&path, &rec2).unwrap();
+
+        let tmp = path.with_extension("json.tmp");
+        assert!(!tmp.exists(), "stray .tmp leaked: {tmp:?}");
+        let read: AgentSession =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(read.session_id, "s2");
+        assert_eq!(read.args, vec!["--second".to_string()]);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
