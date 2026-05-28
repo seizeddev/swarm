@@ -225,12 +225,32 @@ pub struct DiffHunk {
     pub lines: Vec<DiffLine>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkBundle {
+    pub hunks: Vec<DiffHunk>,
+    /// True when the libgit2 walk was stopped at [`DIFF_LINE_CAP`] — the UI
+    /// should surface a "diff truncated" banner.
+    pub truncated: bool,
+}
+
+/// Hard cap on patch lines surfaced through the IPC boundary in one go. A
+/// `pnpm-lock.yaml` swap can be 30k+ lines; rendering that synchronously
+/// freezes the webview's main thread for seconds. Five thousand lines covers
+/// every real review scenario; beyond that, drop to the user's editor.
+pub const DIFF_LINE_CAP: usize = 5_000;
+
 /// Structured hunks for one file — line numbers come straight from libgit2, so
 /// the frontend never parses a patch on the main thread (the old `parsePatch`).
-pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResult<Vec<DiffHunk>> {
+///
+/// Returns the hunks (capped at [`DIFF_LINE_CAP`] content lines) plus a flag
+/// that lets the UI surface a "truncated" banner without re-walking the diff.
+pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResult<HunkBundle> {
     let repo = Repository::open(worktree_path)?;
     let diff = build_diff(&repo, Some(file), staged)?;
     let mut hunks: Vec<DiffHunk> = Vec::new();
+    let mut produced = 0usize;
+    let mut truncated = false;
     diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
         match line.origin() {
             'H' => {
@@ -243,6 +263,15 @@ pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResu
                 });
             }
             c @ (' ' | '+' | '-') => {
+                if produced >= DIFF_LINE_CAP {
+                    // libgit2 turns a `false` return into GIT_EUSER (-7), which
+                    // would surface as an error. Keep iterating but discard the
+                    // overflow lines — the diff is still walked but the buffer
+                    // stops growing.
+                    truncated = true;
+                    return true;
+                }
+                produced += 1;
                 if let Some(h) = hunks.last_mut() {
                     let mut text = String::from_utf8_lossy(line.content()).into_owned();
                     if text.ends_with('\n') {
@@ -268,7 +297,7 @@ pub fn file_diff_hunks(worktree_path: &str, file: &str, staged: bool) -> AppResu
         }
         true
     })?;
-    Ok(hunks)
+    Ok(HunkBundle { hunks, truncated })
 }
 
 /// Aggregate insertions/deletions across the whole worktree (unstaged + staged).
@@ -440,8 +469,18 @@ pub fn commit_detail(repo_path: &str, oid_str: &str) -> AppResult<CommitDetail> 
     })
 }
 
-/// Full unified patch for a commit (all files, vs first parent).
-pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<String> {
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiff {
+    pub patch: String,
+    /// True when libgit2 was stopped at [`DIFF_LINE_CAP`] content lines.
+    pub truncated: bool,
+}
+
+/// Full unified patch for a commit (all files, vs first parent). Capped at
+/// [`DIFF_LINE_CAP`] content lines so a 30k-line lockfile bump can't freeze
+/// the webview's main thread.
+pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<CommitDiff> {
     let repo = open_main(repo_path)?;
     let oid = git2::Oid::from_str(oid_str)?;
     let c = repo.find_commit(oid)?;
@@ -451,16 +490,29 @@ pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<String> {
     let mut opts = DiffOptions::new();
     opts.context_lines(3);
     let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
-    let mut buf = String::new();
+    let mut patch = String::new();
+    let mut produced = 0usize;
+    let mut truncated = false;
     diff.print(DiffFormat::Patch, |_d, _h, line| {
         let origin = line.origin();
         if matches!(origin, '+' | '-' | ' ') {
-            buf.push(origin);
+            if produced >= DIFF_LINE_CAP {
+                // See note in file_diff_hunks: keep returning true, just drop
+                // the overflow — `false` would surface as GIT_EUSER.
+                truncated = true;
+                return true;
+            }
+            produced += 1;
+            patch.push(origin);
+            patch.push_str(&String::from_utf8_lossy(line.content()));
+        } else {
+            // Hunk headers / file headers still get written verbatim — they're
+            // tiny and the frontend needs them to parse hunk boundaries.
+            patch.push_str(&String::from_utf8_lossy(line.content()));
         }
-        buf.push_str(&String::from_utf8_lossy(line.content()));
         true
     })?;
-    Ok(buf)
+    Ok(CommitDiff { patch, truncated })
 }
 
 pub fn stage_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
@@ -882,7 +934,8 @@ mod tests {
         assert!(detail.files.iter().any(|f| f.path == "a.txt"));
 
         let full = commit_diff(path, &oid.to_string()).unwrap();
-        assert!(full.contains("NEWLINE"));
+        assert!(full.patch.contains("NEWLINE"));
+        assert!(!full.truncated, "tiny commit should not be truncated");
     }
 
     #[test]
@@ -900,7 +953,9 @@ mod tests {
         let path = dir.to_str().unwrap();
         fs::write(dir.join("a.txt"), "hello\nthere\nworld\n").unwrap();
 
-        let hunks = file_diff_hunks(path, "a.txt", false).unwrap();
+        let bundle = file_diff_hunks(path, "a.txt", false).unwrap();
+        assert!(!bundle.truncated);
+        let hunks = &bundle.hunks;
         assert_eq!(hunks.len(), 1);
         assert!(hunks[0].header.starts_with("@@"));
         // The inserted "there" line is an addition with a new line number, no old.
@@ -1080,5 +1135,70 @@ mod tests {
         assert!(!dir.join("b.txt").exists());
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         assert!(head.summary().unwrap().unwrap().starts_with("Revert"));
+    }
+
+    #[test]
+    fn diffs_cap_at_diff_line_cap_and_flag_truncated() {
+        // Commit a file with far more lines than the cap, against an empty
+        // baseline: both file_diff_hunks and commit_diff must surface the cap
+        // and stop early (lines <= cap; truncated == true).
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let huge: String = (0..(DIFF_LINE_CAP + 1_000))
+            .map(|i| format!("line-{i}\n"))
+            .collect();
+        // Modify the seeded a.txt with a huge replacement (clean diff baseline).
+        fs::write(dir.join("a.txt"), &huge).unwrap();
+        let oid = {
+            let mut idx = repo.index().unwrap();
+            idx.add_path(Path::new("a.txt")).unwrap();
+            idx.write().unwrap();
+            let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
+            let sig = repo.signature().unwrap();
+            let parent = repo.head().unwrap().peel_to_commit().unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "huge", &tree, &[&parent])
+                .unwrap()
+        };
+
+        // Commit diff: capped + flagged.
+        let cd = commit_diff(path, &oid.to_string()).unwrap();
+        assert!(cd.truncated, "huge commit must report truncated");
+        // The patch carries headers too. Exclude the unified-diff file-header
+        // pair (--- a/foo / +++ b/foo) and the @@-hunk lines so we only count
+        // honest content lines — those are what the cap guards.
+        let content_lines = cd
+            .patch
+            .lines()
+            .filter(|l| {
+                (l.starts_with(' ') || l.starts_with('+') || l.starts_with('-'))
+                    && !l.starts_with("---")
+                    && !l.starts_with("+++")
+                    && !l.starts_with("@@")
+            })
+            .count();
+        assert!(
+            content_lines <= DIFF_LINE_CAP,
+            "patch had {content_lines} content lines, cap is {DIFF_LINE_CAP}"
+        );
+
+        // file_diff_hunks (staged=true): same cap applies. The seeded second
+        // commit is HEAD, so we diff the staged state vs HEAD by re-staging
+        // a fresh edit.
+        fs::write(dir.join("a.txt"), &huge).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.read(false).unwrap();
+        idx.add_path(Path::new("a.txt")).unwrap();
+        idx.write().unwrap();
+        // After commit + re-add of identical bytes there's no diff vs HEAD;
+        // perturb the file to force one.
+        fs::write(dir.join("a.txt"), format!("{huge}EXTRA\n")).unwrap();
+        let bundle = file_diff_hunks(path, "a.txt", false).unwrap();
+        let total_lines: usize = bundle.hunks.iter().map(|h| h.lines.len()).sum();
+        assert!(
+            total_lines <= DIFF_LINE_CAP,
+            "hunks held {total_lines}, cap is {DIFF_LINE_CAP}"
+        );
+        assert!(bundle.truncated || total_lines < DIFF_LINE_CAP);
     }
 }

@@ -4,8 +4,9 @@ import { decodeUpdate } from "./term/grid";
 import type {
   AgentDef,
   CommitDetail,
+  CommitDiff,
   CommitInfo,
-  DiffHunk,
+  HunkBundle,
   PrDetail,
   IntegrationPreview,
   IntegrationStatus,
@@ -23,13 +24,14 @@ export const api = {
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
   initRepo: (path: string) => invoke<RepoInfo>("init_repo", { path }),
   fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>
-    invoke<DiffHunk[]>("file_diff_hunks", { worktreePath, file, staged }),
+    invoke<HunkBundle>("file_diff_hunks", { worktreePath, file, staged }),
   statusAndStats: (worktreePath: string) =>
     invoke<StatusAndStats>("status_and_stats", { worktreePath }),
   gitLog: (repoPath: string, limit = 200) => invoke<CommitInfo[]>("git_log", { repoPath, limit }),
   commitDetail: (repoPath: string, oid: string) =>
     invoke<CommitDetail>("commit_detail", { repoPath, oid }),
-  commitDiff: (repoPath: string, oid: string) => invoke<string>("commit_diff", { repoPath, oid }),
+  commitDiff: (repoPath: string, oid: string) =>
+    invoke<CommitDiff>("commit_diff", { repoPath, oid }),
   saveSession: (data: string) => invoke<void>("save_session", { data }),
   loadSession: () => invoke<string | null>("load_session"),
   eventsDir: () => invoke<string>("events_dir"),

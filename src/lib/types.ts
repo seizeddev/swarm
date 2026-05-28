@@ -48,6 +48,20 @@ export interface DiffHunk {
   lines: DiffLine[];
 }
 
+// Returned from `file_diff_hunks`: the structured hunks plus a flag set when
+// the core stopped at DIFF_LINE_CAP (5_000) content lines and the UI should
+// surface a "truncated" banner instead of pretending it has the whole patch.
+export interface HunkBundle {
+  hunks: DiffHunk[];
+  truncated: boolean;
+}
+
+// Returned from `commit_diff`: the unified patch text plus the same cap flag.
+export interface CommitDiff {
+  patch: string;
+  truncated: boolean;
+}
+
 export interface CommitInfo {
   oid: string;
   short: string;

@@ -284,7 +284,7 @@ export function DiffEditor({
     setLoading(true);
     api
       .fileDiffHunks(repoPath, file, staged)
-      .then(setHunks)
+      .then((b) => setHunks(b.hunks))
       .catch(() => setHunks([]))
       .finally(() => setLoading(false));
   }, [repoPath, file, staged]);

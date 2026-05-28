@@ -86,7 +86,7 @@ export function CommitDetail({
     setPatch("");
     setDetail(null);
     api.commitDetail(repoPath, oid).then(setDetail);
-    api.commitDiff(repoPath, oid).then(setPatch);
+    api.commitDiff(repoPath, oid).then((d) => setPatch(d.patch));
   }, [repoPath, oid]);
 
   const files = useMemo(() => parseCommitPatch(patch), [patch]);

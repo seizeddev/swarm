@@ -60,7 +60,7 @@ async fn file_diff_hunks(
     worktree_path: String,
     file: String,
     staged: bool,
-) -> AppResult<Vec<git::DiffHunk>> {
+) -> AppResult<git::HunkBundle> {
     reg.ensure_within_root(&worktree_path)?;
     off_thread(move || git::file_diff_hunks(&worktree_path, &file, staged)).await
 }
@@ -99,7 +99,7 @@ async fn commit_diff(
     reg: State<'_, WorkspaceRegistry>,
     repo_path: String,
     oid: String,
-) -> AppResult<String> {
+) -> AppResult<git::CommitDiff> {
     reg.ensure_within_root(&repo_path)?;
     off_thread(move || git::commit_diff(&repo_path, &oid)).await
 }
