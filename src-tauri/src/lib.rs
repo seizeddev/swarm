@@ -3,6 +3,7 @@ mod agent_hooks;
 mod agent_session;
 mod agents;
 mod error;
+mod fsperm;
 mod git;
 mod github;
 mod guard;
@@ -292,21 +293,11 @@ fn swarm_dir() -> AppResult<std::path::PathBuf> {
     Ok(dir)
 }
 
-/// Tighten a just-written file to owner read/write only (`0600`) on Unix. No-op
-/// elsewhere. Best-effort: a perms failure shouldn't fail the whole write.
-#[cfg(unix)]
-fn restrict_file(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-#[cfg(not(unix))]
-fn restrict_file(_path: &std::path::Path) {}
-
 #[tauri::command]
 fn save_session(data: String) -> AppResult<()> {
     let path = swarm_dir()?.join("session.json");
     std::fs::write(&path, data)?;
-    restrict_file(&path);
+    fsperm::restrict_file(&path);
     Ok(())
 }
 
@@ -370,7 +361,7 @@ fn save_clipboard_image(data: String, ext: String) -> AppResult<String> {
         .unwrap_or(0);
     let path = dir.join(format!("paste-{stamp}.{ext}"));
     std::fs::write(&path, &bytes)?;
-    restrict_file(&path);
+    fsperm::restrict_file(&path);
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -605,7 +596,7 @@ fn prepare_codex_home() -> AppResult<String> {
     let cfg_path = dst.join("config.toml");
     std::fs::write(&cfg_path, cfg_out)?;
     // Holds a copy of the user's Codex config (may carry auth-adjacent settings).
-    restrict_file(&cfg_path);
+    fsperm::restrict_file(&cfg_path);
     Ok(dst.to_string_lossy().into_owned())
 }
 
