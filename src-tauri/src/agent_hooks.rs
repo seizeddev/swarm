@@ -176,40 +176,22 @@ fn array_at<'a>(
     cur.get_mut(*last)?.as_array_mut()
 }
 
-/// True if any `command` string under `arr` already contains our marker (flat
-/// `{command}` entry or a nested `{hooks:[{command}]}` group).
-fn already_present(arr: &[Value]) -> bool {
-    arr.iter().any(entry_is_swarm)
-}
-
-/// True if a session-capture command is already wired in this hook array (match on
-/// `session-start`, not the generic marker the notify hooks share).
-fn has_session_capture(arr: &[Value]) -> bool {
-    arr.iter().any(|v| entry_contains(v, "session-start"))
-}
-
-/// Does this hook entry (flat or nested) carry a command containing `needle`?
-fn entry_contains(v: &Value, needle: &str) -> bool {
-    let direct = v
-        .get("command")
-        .and_then(Value::as_str)
-        .is_some_and(|c| c.contains(needle));
-    let nested = v
-        .get("hooks")
-        .and_then(Value::as_array)
-        .map(|h| {
-            h.iter().any(|e| {
-                e.get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(|c| c.contains(needle))
-            })
-        })
-        .unwrap_or(false);
-    direct || nested
-}
-
-fn entry_is_swarm(v: &Value) -> bool {
-    entry_contains(v, MARKER)
+/// Make `arr` carry exactly one swarm entry for `cmd`, stripping any other swarm
+/// entries first. This is what makes the install self-healing across renames:
+/// the old substring-only guard treated any `--notify-helper` string as "already
+/// installed" and silently left a stale-bin entry in place forever (so a renamed
+/// or moved swarm binary kept firing `/bin/sh: …: No such file` on every agent
+/// session-start). Strip-then-add guarantees the resulting array contains the
+/// current bin's command and nothing else of ours — without disturbing
+/// unrelated user hooks (`strip_swarm_entries` only drops our markers).
+///
+/// Idempotent: running this with the same `entry` twice yields the same final
+/// state — the strip removes our just-added entry, the push re-adds an
+/// identical one. That equality is exactly how `is_installed` detects the
+/// installed state (`plan_json` is a no-op iff the current bin is wired up).
+fn refresh_swarm_entry(arr: &mut Vec<Value>, entry: Value) {
+    strip_swarm_entries(arr);
+    arr.push(entry);
 }
 
 /// Strip swarm's hooks from a hook array, defensively: a flat `{command}` entry is
@@ -250,41 +232,43 @@ fn plan_json(
             // Capture only: Claude's turn-completion notify is wired per-launch via
             // `--settings`, not a global hook.
             if let Some(starts) = ensure_array(&mut root, &["hooks", "SessionStart"]) {
-                if !has_session_capture(starts) {
-                    starts.push(json!({
+                refresh_swarm_entry(
+                    starts,
+                    json!({
                         "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "claude"), "timeout": 10 }]
-                    }));
-                }
+                    }),
+                );
             }
         }
         "gemini" => {
             if let Some(after) = ensure_array(&mut root, &["hooks", "AfterAgent"]) {
-                if !already_present(after) {
-                    after.push(json!({
+                refresh_swarm_entry(
+                    after,
+                    json!({
                         "hooks": [{ "type": "command", "command": hook_cmd(bin), "timeout": 10000 }]
-                    }));
-                }
+                    }),
+                );
             }
             if let Some(starts) = ensure_array(&mut root, &["hooks", "SessionStart"]) {
-                if !has_session_capture(starts) {
-                    starts.push(json!({
+                refresh_swarm_entry(
+                    starts,
+                    json!({
                         "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "gemini"), "timeout": 10000 }]
-                    }));
-                }
+                    }),
+                );
             }
         }
         "cursor" => {
             root.entry("version".to_string())
                 .or_insert_with(|| json!(1));
             if let Some(stop) = ensure_array(&mut root, &["hooks", "stop"]) {
-                if !already_present(stop) {
-                    stop.push(json!({ "command": hook_cmd(bin) }));
-                }
+                refresh_swarm_entry(stop, json!({ "command": hook_cmd(bin) }));
             }
             if let Some(arr) = ensure_array(&mut root, &["hooks", "beforeSubmitPrompt"]) {
-                if !has_session_capture(arr) {
-                    arr.push(json!({ "command": session_capture_cmd(bin, "cursor") }));
-                }
+                refresh_swarm_entry(
+                    arr,
+                    json!({ "command": session_capture_cmd(bin, "cursor") }),
+                );
             }
         }
         _ => {}
@@ -733,9 +717,14 @@ mod tests {
         // and swarm's must be gone.
         let root = read_object(&path).unwrap();
         let applied = plan_json("cursor", "/b", root);
-        assert!(already_present(
-            applied["hooks"]["stop"].as_array().unwrap()
-        ));
+        let stop_applied = applied["hooks"]["stop"].as_array().unwrap();
+        assert!(
+            stop_applied.iter().any(|v| v
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|c| c.contains(MARKER) && c.contains("/b"))),
+            "cursor stop must now carry our current-bin hook"
+        );
         let removed = strip_json("cursor", applied);
         let stop = removed["hooks"]["stop"].as_array().unwrap();
         assert_eq!(stop.len(), 1);
