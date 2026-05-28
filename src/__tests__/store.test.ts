@@ -330,6 +330,28 @@ describe("pane creation", () => {
     expect(pane.args).toContain("--settings");
   });
 
+  it("wires Claude's Notification hook so permission prompts and plan mode notify", () => {
+    // `preferredNotifChannel: notifications_disabled` kills Claude's built-in
+    // desktop notifications. Without an explicit Notification hook, mid-turn
+    // pauses — permission requests ("Claude needs your permission to use Bash"),
+    // the idle prompt, and plan mode's ExitPlanMode approval — never reach swarm.
+    // The hook re-invokes our notify-helper, which forwards the `message` to the
+    // events file → watcher → `pane:notify`.
+    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
+    return addWorkspace("/repo").then(() => {
+      s().addPane(CLAUDE);
+      const pane = s().panes.find((p) => p.agentId === "claude")!;
+      const idx = pane.args.indexOf("--settings");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const settings = JSON.parse(pane.args[idx + 1]);
+      expect(settings.hooks.Notification).toBeTruthy();
+      const cmds = JSON.stringify(settings.hooks.Notification);
+      expect(cmds).toContain("--notify-helper claude-notification");
+      // Stop is still wired (turn-complete notification path).
+      expect(settings.hooks.Stop).toBeTruthy();
+    });
+  });
+
   it("wires SWARM_EVENT_FILE into each pane's env", () => {
     const pane = s().panes[0];
     expect(pane.env).toContainEqual(["SWARM_EVENT_FILE", `/events/${pane.paneId}`]);
@@ -487,11 +509,42 @@ describe("notifications + attention", () => {
     expect(s().panes[0].attention).toBe(true);
   });
 
-  it("does not raise an OS banner while the window is focused (in-app only)", () => {
-    s().openDiff("a.txt", false); // not visible, but window still focused
+  it("raises an OS banner when the pane is hidden behind a non-terminal editor view", () => {
+    // The user is on swarm and the source workspace is active, but a diff/PR view
+    // has replaced the terminal — the agent's pane is no longer on screen. The
+    // small in-app bell badge is too easy to miss, so an OS banner fires.
+    s().openDiff("a.txt", false); // editor != terminal → pane not visible
     s().onNotify(ptyId, "Build", "Done");
     expect(s().notifications).toHaveLength(1);
-    expect(notifyOSMock).not.toHaveBeenCalled();
+    expect(notifyOSMock).toHaveBeenCalledWith("Build", "Done", paneId, s().panes[0].workspaceId);
+  });
+
+  it("raises an OS banner when the agent's workspace is not the active one (window still focused)", async () => {
+    // The user-reported bug: agent runs in workspace A, user switches to B with
+    // swarm still in front. Previously the OS banner was gated on
+    // `!windowFocused`, so this scenario emitted only the in-app bell. Now the
+    // gate matches `!lookingAtPane`: a banner fires for any pane the user
+    // isn't currently looking at.
+    const wsA = s().panes[0].workspaceId;
+    await addWorkspace("/repo-b");
+    expect(s().activeWorkspaceId).not.toBe(wsA); // ws-B is now active
+    s().onNotify(ptyId, "Build", "Done");
+    expect(s().notifications).toHaveLength(1);
+    expect(notifyOSMock).toHaveBeenCalledWith("Build", "Done", paneId, wsA);
+  });
+
+  it("escalates onPaneNotify to an OS banner across workspaces (window still focused)", async () => {
+    // Same gate change as above, this time on the events-file path that
+    // generic-agent hooks (and now Claude's Notification hook) take.
+    const wsA = s().panes[0].workspaceId;
+    await addWorkspace("/repo-b");
+    s().onPaneNotify(paneId, "permission requested");
+    expect(notifyOSMock).toHaveBeenCalledWith(
+      s().panes.find((p) => p.paneId === paneId)!.title,
+      "permission requested",
+      paneId,
+      wsA,
+    );
   });
 
   it("raises an OS banner when the window is backgrounded, even for the visible pane", () => {
