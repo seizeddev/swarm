@@ -515,11 +515,44 @@ pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<CommitDiff> {
     Ok(CommitDiff { patch, truncated })
 }
 
+/// Resolve `p` (relative to `root`) and confirm it lives under the canonical
+/// `root`. Returns `None` when:
+///   - `root` itself doesn't canonicalise (caller is bogus),
+///   - the resolved candidate escapes the root (e.g. `../outside.txt`,
+///     `/etc/passwd`, or a symlink whose target points outside).
+///
+/// Non-existent leaves are accepted as long as the parent is inside the root —
+/// that's the legitimate "discard an already-staged-but-now-removed file" case.
+/// This is defence-in-depth on top of `WorkspaceRegistry::ensure_within_root`:
+/// per-entry containment guards against the renderer constructing a list with
+/// well-formed worktree-relative paths *and* traversal entries mixed together.
+fn contained(root: &Path, p: &str) -> Option<PathBuf> {
+    let canon_root = std::fs::canonicalize(root).ok()?;
+    let candidate = canon_root.join(p);
+    let canon = std::fs::canonicalize(&candidate).ok().or_else(|| {
+        // Untracked path may have just been removed; resolve via its parent.
+        let parent = candidate.parent()?.to_path_buf();
+        let name = candidate.file_name()?.to_os_string();
+        Some(std::fs::canonicalize(parent).ok()?.join(name))
+    })?;
+    if canon.starts_with(&canon_root) {
+        Some(canon)
+    } else {
+        None
+    }
+}
+
 pub fn stage_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
     let repo = Repository::open(worktree_path)?;
     let mut index = repo.index()?;
     let root = Path::new(worktree_path);
     for p in &paths {
+        // Skip any entry that escapes the worktree (`..`, absolute, symlinked
+        // outside). The path the index sees is still the worktree-relative one
+        // (`rel`), which is what libgit2 expects.
+        if contained(root, p).is_none() {
+            continue;
+        }
         let rel = Path::new(p);
         if root.join(p).exists() {
             index.add_path(rel)?;
@@ -589,21 +622,39 @@ pub fn commit(worktree_path: &str, message: &str) -> AppResult<String> {
 /// Discard working-tree changes for `paths` (VS Code "Discard Changes"):
 /// tracked files are restored to their HEAD content (and unstaged if staged),
 /// untracked files are deleted from disk. Destructive — the frontend confirms.
+///
+/// Per-entry containment: each path is canonicalised against the worktree root
+/// and silently skipped if it would escape (`../outside.txt`, `/etc/passwd`,
+/// a symlink with an out-of-root target). Without this, an untracked entry's
+/// `fs::remove_file(root.join(p))` would happily delete the resolved target.
 pub fn discard_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
     let repo = Repository::open(worktree_path)?;
     let root = Path::new(worktree_path);
     let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
 
+    // Pre-filter to entries that resolve inside the worktree. Anything that
+    // escapes is dropped before it can reach `remove_file` or libgit2.
+    let safe: Vec<(&String, PathBuf)> = paths
+        .iter()
+        .filter_map(|p| contained(root, p).map(|canon| (p, canon)))
+        .collect();
+    if safe.is_empty() {
+        return Ok(());
+    }
+
     // Unstage these paths first so a staged-then-discarded change is fully
     // dropped (index back to HEAD), letting checkout_head restore the worktree.
     if let Some(commit) = repo.head().ok().and_then(|h| h.peel_to_commit().ok()) {
-        repo.reset_default(Some(commit.as_object()), paths.iter().map(|s| s.as_str()))?;
+        repo.reset_default(
+            Some(commit.as_object()),
+            safe.iter().map(|(p, _)| p.as_str()),
+        )?;
     }
 
     let mut co = git2::build::CheckoutBuilder::new();
     co.force();
     let mut had_tracked = false;
-    for p in &paths {
+    for (p, canon) in &safe {
         let tracked = head_tree
             .as_ref()
             .is_some_and(|t| t.get_path(Path::new(p)).is_ok());
@@ -612,7 +663,9 @@ pub fn discard_paths(worktree_path: &str, paths: Vec<String>) -> AppResult<()> {
             had_tracked = true;
         } else {
             // Untracked (or staged-add): remove the file from the worktree.
-            let _ = std::fs::remove_file(root.join(p));
+            // Use the canonical path so a re-evaluation of `root.join(p)` can't
+            // re-introduce traversal between the contain-check and the unlink.
+            let _ = std::fs::remove_file(canon);
         }
     }
     if had_tracked {
@@ -1062,6 +1115,73 @@ mod tests {
         );
         assert!(!dir.join("junk.txt").exists());
         assert!(changes(path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn c3_discard_paths_refuses_escape_with_double_dot() {
+        // A traversal entry (`../outside.txt`) must NOT cause an unlink outside
+        // the worktree. Even though `ensure_within_root` gates the worktree, a
+        // crafted list can mix legitimate entries with a `..` entry — per-path
+        // containment is what defends here.
+        let base = scratch();
+        let work = base.join("inner");
+        fs::create_dir_all(&work).unwrap();
+        let _repo = init_repo(&work);
+        let outside = base.join("outside.txt");
+        fs::write(&outside, "do not delete\n").unwrap();
+        // A worktree file that *should* be deleted, alongside the escape entry.
+        fs::write(work.join("untracked.txt"), "burn me\n").unwrap();
+
+        discard_paths(
+            work.to_str().unwrap(),
+            vec!["../outside.txt".into(), "untracked.txt".into()],
+        )
+        .unwrap();
+
+        assert!(outside.exists(), "discard must not follow `..` out");
+        assert!(
+            !work.join("untracked.txt").exists(),
+            "legitimate entry must still be removed"
+        );
+    }
+
+    #[test]
+    fn c3_discard_paths_refuses_absolute_outside_root() {
+        // An absolute path that *is* a real file but lives outside the worktree
+        // must be ignored, not deleted.
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let outside_dir = scratch();
+        let outside = outside_dir.join("victim.txt");
+        fs::write(&outside, "do not delete\n").unwrap();
+
+        discard_paths(
+            dir.to_str().unwrap(),
+            vec![outside.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+
+        assert!(
+            outside.exists(),
+            "discard must not delete an absolute path outside the worktree"
+        );
+    }
+
+    #[test]
+    fn c3_stage_paths_skips_escape_without_erroring() {
+        // `stage_paths` mixes a legitimate worktree entry with an escape: the
+        // legitimate file is staged, the escape entry is silently dropped (no
+        // libgit2 error, no index corruption).
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        fs::write(dir.join("a.txt"), "edit\n").unwrap();
+
+        stage_paths(path, vec!["a.txt".into(), "../escape.txt".into()]).unwrap();
+
+        let staged = changes(path).unwrap();
+        let a = staged.iter().find(|c| c.path == "a.txt").unwrap();
+        assert!(a.staged, "legitimate stage entry must still apply");
     }
 
     #[test]
