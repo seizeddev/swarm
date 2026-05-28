@@ -109,6 +109,17 @@ pub fn run(args: &[String]) {
             let msg = claude_pretool_message(&payload);
             write_event_line(&msg);
         }
+        // Claude's PermissionRequest hook fires before any normal tool-
+        // permission prompt (Bash, Edit, Write, …). The main-agent
+        // permission UI does NOT go through `executeNotificationHooks`
+        // (verified in the 2.1.153 binary — no J8H call for it), so without
+        // this hook the user only learns they're being asked via the ~60s
+        // idle reminder. Body reads "Claude needs your permission to use
+        // <tool>" — matches Claude's own (now-disabled) banner text.
+        "claude-permission" => {
+            let msg = claude_permission_message(&payload);
+            write_event_line(&msg);
+        }
         _ => {}
     }
 }
@@ -144,6 +155,22 @@ fn claude_notification_message(payload: &str) -> String {
         .map(|s| clean(&s))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| FALLBACK.to_string())
+}
+
+/// Body for Claude's PermissionRequest hook — phrased like Claude's own
+/// (now-disabled) prompt so the banner reads naturally. Falls back to
+/// `FALLBACK` when the payload lacks `tool_name`.
+fn claude_permission_message(payload: &str) -> String {
+    let tool = serde_json::from_str::<Value>(payload)
+        .ok()
+        .as_ref()
+        .and_then(|v| v.get("tool_name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .filter(|t| !t.is_empty());
+    match tool {
+        Some(t) => format!("Claude needs your permission to use {t}"),
+        None => FALLBACK.to_string(),
+    }
 }
 
 /// Body for the PreToolUse hook on Claude's two interactive tools. Reads
@@ -561,6 +588,20 @@ mod tests {
             claude_notification_message(r#"{"message":"**Waiting**\nfor your input"}"#),
             "Waiting for your input"
         );
+    }
+
+    #[test]
+    fn claude_permission_message_phrases_like_claudes_own_prompt() {
+        assert_eq!(
+            claude_permission_message(
+                r#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/foo"}}"#
+            ),
+            "Claude needs your permission to use Bash"
+        );
+        // Missing/blank tool_name → fallback (better than "use <blank>").
+        assert_eq!(claude_permission_message("{}"), FALLBACK);
+        assert_eq!(claude_permission_message(r#"{"tool_name":""}"#), FALLBACK);
+        assert_eq!(claude_permission_message("not json"), FALLBACK);
     }
 
     #[test]

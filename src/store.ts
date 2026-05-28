@@ -171,7 +171,10 @@ function claudeSettings(bin: string): string {
       // idle reminder (~60s after Claude paused); PreToolUse fires the moment
       // Claude calls the tool, so the OS banner is immediate. The matcher is a
       // regex over the tool name (verified against Claude 2.1.153's hook
-      // dispatcher — `matchQuery:H` where H is the tool name).
+      // dispatcher — `matchQuery:H` where H is the tool name). These tools
+      // bypass the standard permission flow (the `requiresUserInteraction +
+      // behavior==="ask"` branch returns before `runHooks` runs), so they do
+      // NOT also fire PermissionRequest — no double-fire.
       PreToolUse: [
         {
           matcher: "AskUserQuestion|ExitPlanMode",
@@ -179,6 +182,24 @@ function claudeSettings(bin: string): string {
             {
               type: "command",
               command: `"${bin}" --notify-helper claude-pretool`,
+              timeout: 10,
+            },
+          ],
+        },
+      ],
+      // Instant notification for normal tool-permission prompts (Bash, Edit,
+      // Write, …). Claude's own notification-channel path (`J8H` → `uc`)
+      // is NOT taken for the main agent's in-terminal permission prompt —
+      // it's the prompt itself. Without this hook the user only learns
+      // they're being asked after the ~60s idle reminder. PermissionRequest
+      // fires before the prompt appears, so the banner is immediate.
+      PermissionRequest: [
+        {
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `"${bin}" --notify-helper claude-permission`,
               timeout: 10,
             },
           ],
