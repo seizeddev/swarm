@@ -5,6 +5,7 @@
 // non-serializable object that would leak into the persisted session.
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import semver from "semver";
 
 let pending: Update | null = null;
 
@@ -15,22 +16,24 @@ export interface UpdateMeta {
   date?: string;
 }
 
-// Parse a semver core ("v1.2.3-rc1+build" → [1,2,3]); ignores pre-release and
-// build metadata. Missing/garbage components read as 0. Tiny on purpose — no dep.
-function parseVersion(v: string): [number, number, number] {
-  const core = v.trim().replace(/^v/, "").split("+")[0].split("-")[0];
-  const parts = core.split(".").map((p) => parseInt(p, 10));
-  return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
-}
-
-/** True iff `candidate` is a strictly higher version than `current`. */
+/**
+ * True iff `candidate` is a strictly higher version than `current`. Uses the
+ * canonical `semver` library so pre-release ordering, build metadata, and
+ * loose-form (`v`-prefixed) inputs all behave per the spec:
+ *
+ *   - `1.2.3-rc.1 < 1.2.3` (a final release supersedes its rc)
+ *   - `1.2.3+meta == 1.2.3` (build metadata is *not* part of ordering)
+ *   - `1.2.4-rc.1 < 1.2.4-rc.2`
+ *
+ * Anything that fails to parse (truly malformed input) is treated as "not
+ * newer" — the rollback-guard defaults to refusing the update.
+ */
 function isNewerVersion(candidate: string, current: string): boolean {
-  const a = parseVersion(candidate);
-  const b = parseVersion(current);
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] > b[i];
+  try {
+    return semver.gt(candidate, current, { loose: true });
+  } catch {
+    return false;
   }
-  return false;
 }
 
 export const updater = {
