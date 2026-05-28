@@ -99,8 +99,47 @@ fn pretty(obj: &serde_json::Map<String, Value>) -> String {
 }
 
 fn write_pretty(path: &PathBuf, obj: &serde_json::Map<String, Value>) -> std::io::Result<()> {
+    let home = dirs::home_dir().ok_or_else(|| std::io::Error::other("no home directory"))?;
+    write_pretty_in(path, obj, &home)
+}
+
+/// Refuse to follow a symlink whose target points outside `home`. The agent
+/// config files we write (`.claude/settings.json`, `.gemini/settings.json`,
+/// `.cursor/hooks.json`) are user-owned; an attacker who gets one of those
+/// paths replaced with a symlink to `/etc/passwd` (or to any privileged file
+/// the user-as-process can write) would otherwise have us clobber the target.
+///
+/// `write_pretty` is best-effort everywhere it's called, so a refusal degrades
+/// to "swarm's hooks aren't installed for this agent" — never to corrupting an
+/// unrelated file.
+fn write_pretty_in(
+    path: &PathBuf,
+    obj: &serde_json::Map<String, Value>,
+    home: &std::path::Path,
+) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
+    }
+    if let Ok(md) = std::fs::symlink_metadata(path) {
+        if md.file_type().is_symlink() {
+            let target = std::fs::read_link(path)?;
+            let resolved = std::fs::canonicalize(&target).unwrap_or_else(|_| {
+                if target.is_absolute() {
+                    target.clone()
+                } else {
+                    path.parent()
+                        .unwrap_or(std::path::Path::new(""))
+                        .join(&target)
+                }
+            });
+            if !resolved.starts_with(home) {
+                return Err(std::io::Error::other(format!(
+                    "refusing to follow symlink outside $HOME: {} -> {}",
+                    path.display(),
+                    resolved.display()
+                )));
+            }
+        }
     }
     std::fs::write(path, pretty(obj))
 }
@@ -748,6 +787,61 @@ mod tests {
             "/home/u/.swarm/codex-home/hooks.json:session_start:0:0"
         );
         assert!(hash.starts_with("sha256:"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn l5_write_pretty_in_refuses_symlink_outside_home() {
+        use std::os::unix::fs as unix_fs;
+        // Scratch "home" with a `.claude/settings.json` that's actually a
+        // symlink pointing to an attacker-controlled file outside the home.
+        let base = std::env::temp_dir().join(format!("swarm-l5-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let home = base.join("home");
+        let outside = base.join("victim");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(&outside, "do not overwrite").unwrap();
+        let settings_dir = home.join(".claude");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        let settings = settings_dir.join("settings.json");
+        unix_fs::symlink(&outside, &settings).unwrap();
+
+        let mut obj = serde_json::Map::new();
+        obj.insert("k".into(), serde_json::json!("v"));
+        let err = write_pretty_in(&settings, &obj, &home).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "got {err}");
+        // The victim file must be untouched.
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            "do not overwrite"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn l5_write_pretty_in_allows_symlink_inside_home() {
+        // A symlink whose target IS inside $HOME (e.g. a stow-style config
+        // layout) still works — we only refuse out-of-home targets.
+        use std::os::unix::fs as unix_fs;
+        let base = std::env::temp_dir().join(format!("swarm-l5-ok-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let home = base.join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join("real-config")).unwrap();
+        let real = home.join("real-config/settings.json");
+        std::fs::write(&real, "{}\n").unwrap();
+        let settings = home.join(".claude/settings.json");
+        unix_fs::symlink(&real, &settings).unwrap();
+        let home_canon = std::fs::canonicalize(&home).unwrap();
+
+        let mut obj = serde_json::Map::new();
+        obj.insert("ok".into(), serde_json::json!(true));
+        write_pretty_in(&settings, &obj, &home_canon).unwrap();
+        // The write went through to the target (via the symlink).
+        let body = std::fs::read_to_string(&real).unwrap();
+        assert!(body.contains("\"ok\": true"), "got {body}");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
