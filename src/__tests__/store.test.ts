@@ -6,7 +6,7 @@ import type { AgentDef, RepoInfo } from "../lib/types";
 // per-test; the store logic itself runs for real.
 vi.mock("../lib/ipc", () => ({
   api: {
-    registerRoot: vi.fn(),
+    pickWorkspace: vi.fn(),
     repoInfo: vi.fn(),
     initRepo: vi.fn(),
     statusAndStats: vi.fn(),
@@ -197,9 +197,26 @@ beforeEach(() => {
 
 const s = () => useStore.getState();
 
+// `store.addWorkspace()` is no-arg in production (it calls the native picker via
+// `api.pickWorkspace`). Tests want to drive the picker outcome explicitly — this
+// helper mocks the next `pickWorkspace` call to return the requested root and
+// then invokes `addWorkspace`, so each test reads naturally as "pick X, then …".
+async function addWorkspace(
+  path: string,
+  opts: { name?: string; isRepo?: boolean } = {},
+): Promise<void> {
+  m.pickWorkspace.mockResolvedValueOnce({
+    path,
+    name: opts.name ?? path.split("/").filter(Boolean).pop() ?? path,
+    headBranch: opts.isRepo === false ? null : "main",
+    isRepo: opts.isRepo ?? true,
+  });
+  await s().addWorkspace();
+}
+
 describe("addWorkspace", () => {
   it("creates a workspace, makes it active, and spawns one shell pane", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     const st = s();
     expect(st.workspaces).toHaveLength(1);
     expect(st.activeWorkspaceId).toBe(st.workspaces[0].id);
@@ -216,35 +233,40 @@ describe("addWorkspace", () => {
       ],
       stats: { filesChanged: 1, insertions: 2, deletions: 1 },
     });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     const ws = s().workspaces[0];
     expect(ws.changes).toHaveLength(1);
     expect(ws.diffStats).toEqual({ filesChanged: 1, insertions: 2, deletions: 1 });
   });
 
   it("starts a worktree watcher for the new workspace", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     const ws = s().workspaces[0];
     expect(m.watchWorktree).toHaveBeenCalledWith(ws.id, ws.repo.path);
   });
 
   it("records an error and clears busy when the repo cannot be opened", async () => {
-    m.repoInfo.mockRejectedValue(new Error("not a git repository"));
-    await s().addWorkspace("/bad");
+    // pick_workspace bundles the repo info; a rejection here mirrors a path
+    // that fails the workspace registry or doesn't canonicalise.
+    m.pickWorkspace.mockRejectedValueOnce(new Error("not a git repository"));
+    await s().addWorkspace();
     expect(s().error).toBe("not a git repository");
     expect(s().busy).toBe(false);
     expect(s().workspaces).toHaveLength(0);
   });
 
+  it("is a no-op when the user cancels the native picker", async () => {
+    // pickWorkspace returns null on cancel — no error, no workspace.
+    m.pickWorkspace.mockResolvedValueOnce(null);
+    await s().addWorkspace();
+    expect(s().error).toBeNull();
+    expect(s().workspaces).toHaveLength(0);
+    expect(s().busy).toBe(false);
+  });
+
   it("opens a plain (non-git) folder without erroring, and skips git status/PR loads", async () => {
     m.ghAvailable.mockResolvedValue(true);
-    m.repoInfo.mockResolvedValue({
-      path: "/new-project",
-      name: "new-project",
-      headBranch: null,
-      isRepo: false,
-    });
-    await s().addWorkspace("/new-project");
+    await addWorkspace("/new-project", { isRepo: false });
     const st = s();
     expect(st.error).toBeNull();
     expect(st.workspaces).toHaveLength(1);
@@ -256,13 +278,7 @@ describe("addWorkspace", () => {
   });
 
   it("initRepo turns an opened plain folder into a git repo and wires it up", async () => {
-    m.repoInfo.mockResolvedValue({
-      path: "/new-project",
-      name: "new-project",
-      headBranch: null,
-      isRepo: false,
-    });
-    await s().addWorkspace("/new-project");
+    await addWorkspace("/new-project", { isRepo: false });
     m.initRepo.mockResolvedValue({
       path: "/new-project",
       name: "new-project",
@@ -293,7 +309,7 @@ describe("addWorkspace", () => {
         checks: "passing",
       },
     ]);
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     await vi.waitFor(() => expect(s().workspaces[0].prs).toHaveLength(1));
     expect(s().workspaces[0].ghLogin).toBe("octocat");
   });
@@ -302,7 +318,7 @@ describe("addWorkspace", () => {
 describe("pane creation", () => {
   beforeEach(async () => {
     useStore.setState({ agents: [SHELL, CLAUDE], eventsDir: "/events" });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("gives a Claude pane a session id and instrumented launch args", () => {
@@ -339,7 +355,7 @@ describe("pane creation", () => {
 describe("split + remove panes", () => {
   beforeEach(async () => {
     useStore.setState({ agents: [SHELL, CLAUDE] });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("splits the active pane into a two-leaf layout", () => {
@@ -374,7 +390,7 @@ describe("split + remove panes", () => {
 
 describe("editor + panel switching", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("opens a diff editor and returns to the terminal", () => {
@@ -450,7 +466,7 @@ describe("notifications + attention", () => {
   let ptyId: string;
   let paneId: string;
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     paneId = s().panes[0].paneId;
     ptyId = "pty-1";
     s().bindPty(paneId, ptyId);
@@ -510,7 +526,7 @@ describe("notifications + attention", () => {
 
   it("wires Aider's completion notification via its launch flag", async () => {
     useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm" });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     s().addPane(AIDER);
     const aiderPane = s().panes.find((p) => p.agentId === "aider")!;
     expect(aiderPane.args).toContain("--notifications-command");
@@ -604,11 +620,11 @@ describe("notifications + attention", () => {
 
 describe("workspace navigation", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/a");
+    await addWorkspace("/a");
     m.repoInfo.mockResolvedValue(repo("/b"));
-    await s().addWorkspace("/b");
+    await addWorkspace("/b");
     m.repoInfo.mockResolvedValue(repo("/c"));
-    await s().addWorkspace("/c");
+    await addWorkspace("/c");
   });
 
   it("cycles forward and wraps around", () => {
@@ -702,7 +718,7 @@ describe("workspace navigation", () => {
 
 describe("staging + commit", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("stages a path then refreshes status", async () => {
@@ -778,7 +794,7 @@ describe("staging + commit", () => {
 
 describe("git write-ops", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("discards files then refreshes status", async () => {
@@ -856,7 +872,7 @@ describe("git write-ops", () => {
 describe("tab close actions", () => {
   beforeEach(async () => {
     useStore.setState({ agents: [SHELL] });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("closeOtherTabs keeps only the named tab and selects it", () => {
@@ -945,7 +961,7 @@ describe("setNotificationRead", () => {
 
 describe("renameWorkspace", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("sets a display-name override without touching repo.name", () => {
@@ -979,7 +995,7 @@ describe("renameWorkspace", () => {
 
 describe("misc workspace actions", () => {
   beforeEach(async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("sets the commit message", () => {
@@ -1100,7 +1116,7 @@ describe("persist + hydrate", () => {
   });
 
   it("serializes workspaces + panes once hydrated", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     useStore.setState({ hydrated: true });
     s().persist();
     expect(m.saveSession).toHaveBeenCalledTimes(1);
@@ -1599,7 +1615,7 @@ describe("actions with no active workspace", () => {
 describe("action edge cases with an active workspace", () => {
   beforeEach(async () => {
     useStore.setState({ agents: [SHELL, CLAUDE], eventsDir: "/events" });
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
   });
 
   it("removePane kills the bound PTY and collapses the empty tab", () => {
@@ -1663,7 +1679,7 @@ describe("action edge cases with an active workspace", () => {
 
 describe("git write-ops (context-menu actions)", () => {
   it("discardFiles calls the backend and refreshes status without moving HEAD", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     m.statusAndStats.mockClear();
     await s().discardFiles(["a.txt", "b.txt"]);
     expect(m.discard).toHaveBeenCalledWith("/repo", ["a.txt", "b.txt"]);
@@ -1673,13 +1689,13 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("discardFiles with no paths is a no-op", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     await s().discardFiles([]);
     expect(m.discard).not.toHaveBeenCalled();
   });
 
   it("checkoutRef moves HEAD: re-fetches repo info and bumps gitNonce", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     m.repoInfo.mockResolvedValue({
       path: "/repo",
       name: "repo",
@@ -1693,7 +1709,7 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("createBranchAt trims the name and skips an empty one", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     await s().createBranchAt("   ", "abc123");
     expect(m.createBranch).not.toHaveBeenCalled();
     await s().createBranchAt("  feat  ", "abc123");
@@ -1701,7 +1717,7 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("resetTo and revertCommit forward to the backend and bump gitNonce", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     await s().resetTo("abc123", "hard");
     expect(m.resetTo).toHaveBeenCalledWith("/repo", "abc123", "hard");
     await s().revertCommit("abc123");
@@ -1710,7 +1726,7 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("prCheckout passes the PR number and surfaces a failure as an error", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     const pr = {
       number: 7,
       title: "t",
@@ -1732,7 +1748,7 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("a failed git op records the error message and clears busy", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     m.checkoutRef.mockRejectedValueOnce(new Error("conflicting changes"));
     await s().checkoutRef("feature");
     expect(s().error).toBe("conflicting changes");
@@ -1747,7 +1763,7 @@ describe("git write-ops (context-menu actions)", () => {
   });
 
   it("revealPath forwards the path and reports failures", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     await s().revealPath("/repo/a.txt");
     expect(m.revealPath).toHaveBeenCalledWith("/repo/a.txt");
 
@@ -1759,7 +1775,7 @@ describe("git write-ops (context-menu actions)", () => {
 
 describe("tab close actions", () => {
   it("closeOtherTabs keeps only the named tab", async () => {
-    await s().addWorkspace("/repo"); // 1 tab
+    await addWorkspace("/repo"); // 1 tab
     s().addPane(SHELL); // 2
     s().addPane(SHELL); // 3
     const tabs = s().workspaces[0].tabs;
@@ -1773,7 +1789,7 @@ describe("tab close actions", () => {
   });
 
   it("closeTabsToRight removes every tab after the named one", async () => {
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     s().addPane(SHELL);
     s().addPane(SHELL);
     const tabs = s().workspaces[0].tabs;
@@ -1785,7 +1801,7 @@ describe("tab close actions", () => {
 
   it("close actions are a no-op with no active workspace / unknown tab", async () => {
     s().closeOtherTabs("nope"); // no active ws
-    await s().addWorkspace("/repo");
+    await addWorkspace("/repo");
     s().closeTabsToRight("unknown-tab"); // tab not found
     expect(s().workspaces[0].tabs).toHaveLength(1);
   });

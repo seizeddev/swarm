@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowUpCircle,
   Bell,
@@ -54,9 +53,11 @@ export function SwarmMark({ size = 22 }: { size?: number }) {
   );
 }
 
-async function pickRepo(addWorkspace: (p: string) => void) {
-  const dir = await open({ directory: true, multiple: false, title: "Open a git repository" });
-  if (typeof dir === "string") addWorkspace(dir);
+// Trigger the native folder picker — which runs in Rust and registers the path
+// as a trusted root before the store sees it — then adopt the result as a new
+// workspace. A no-op when the user cancels.
+function pickRepo(addWorkspace: () => void) {
+  addWorkspace();
 }
 
 function WorkspaceSquare({

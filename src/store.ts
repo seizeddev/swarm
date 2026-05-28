@@ -202,7 +202,10 @@ interface State {
 
   persist(): void;
   hydrate(): Promise<void>;
-  addWorkspace(path: string): Promise<void>;
+  /// Raise the native folder picker (in Rust, so the registry stays the real
+  /// security boundary) and adopt whatever the user picks as a new workspace.
+  /// No-op when the user cancels the dialog.
+  addWorkspace(): Promise<void>;
   closeWorkspace(id: string): void;
   closeWorkspaceWithConfirm(id: string): Promise<void>;
   setActiveWorkspace(id: string): void;
@@ -512,12 +515,12 @@ export const useStore = create<State>((set, get) => {
           for (const sw of snap.workspaces) {
             let repo: RepoInfo;
             try {
-              // Authorize the root before any path command runs against it.
-              await api.registerRoot(sw.repoPath);
+              // Trusted roots are now loaded Rust-side from `trusted-roots.json`
+              // before this command runs (see `setup` + `WorkspaceRegistry::load_trusted`),
+              // so we can call repoInfo directly. A path that no longer
+              // canonicalises (repo moved/deleted) was already dropped on load
+              // and `ensure_within_root` raises Invalid here — we skip it.
               repo = await api.repoInfo(sw.repoPath);
-              // repoInfo resolves to the canonical workdir (which every later
-              // command uses); authorize that too in case it differs.
-              if (repo.path !== sw.repoPath) await api.registerRoot(repo.path);
             } catch {
               continue; // repo moved/deleted/outside-root — drop this workspace
             }
@@ -652,15 +655,18 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
-    async addWorkspace(path) {
+    async addWorkspace() {
       set({ busy: true, error: null });
       try {
         if (!get().agents.length) set({ agents: await api.listAgents() });
-        // Authorize the user-picked root for the path guard before any command
-        // touches it; repoInfo's canonical path (used by everything after) too.
-        await api.registerRoot(path);
-        const [repo, gh] = await Promise.all([api.repoInfo(path), ghAvailableOnce()]);
-        if (repo.path !== path) await api.registerRoot(repo.path);
+        // pickWorkspace raises the OS folder picker IN RUST, registers the
+        // chosen path as a trusted root (along with the canonical workdir from
+        // repo_info), and returns the repo info — there is no longer a renderer
+        // call that authorizes a path. `null` = user cancelled.
+        const picked = await api.pickWorkspace();
+        if (!picked) return;
+        const gh = await ghAvailableOnce();
+        const repo: RepoInfo = picked;
         const id = uid("ws");
         const ws: Workspace = {
           id,

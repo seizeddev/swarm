@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "./store";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
@@ -24,9 +23,11 @@ const setZoom = (v: number) => {
   document.documentElement.style.zoom = String(zoom);
 };
 
-async function pickAndAddWorkspace() {
-  const dir = await open({ directory: true, multiple: false, title: "Open a git repository" });
-  if (typeof dir === "string") useStore.getState().addWorkspace(dir);
+// The native folder picker runs in Rust (so the workspace registry stays a real
+// security boundary — see `pick_workspace`), and `addWorkspace` adopts the
+// chosen path. A no-op when the user cancels the dialog.
+function pickAndAddWorkspace() {
+  return useStore.getState().addWorkspace();
 }
 
 export default function App() {

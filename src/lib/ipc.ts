@@ -18,9 +18,12 @@ import type {
 } from "./types";
 
 export const api = {
-  // Authorize a repository root for the path-allowlist guard (src-tauri/guard.rs).
-  // Must be called before any git/PTY command touches that root.
-  registerRoot: (path: string) => invoke<void>("register_root", { path }),
+  // Raise the OS folder picker in Rust, register the picked path with the
+  // workspace guard, and return its repo info. Replaces the old
+  // renderer-side dialog + `register_root` pair: the registry is now a real
+  // security boundary because the renderer can no longer authorize a path.
+  // `null` when the user cancels the dialog.
+  pickWorkspace: () => invoke<RepoInfo | null>("pick_workspace"),
   repoInfo: (path: string) => invoke<RepoInfo>("repo_info", { path }),
   initRepo: (path: string) => invoke<RepoInfo>("init_repo", { path }),
   fileDiffHunks: (worktreePath: string, file: string, staged: boolean) =>

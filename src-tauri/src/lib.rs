@@ -18,6 +18,7 @@ use error::AppResult;
 use guard::WorkspaceRegistry;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use terminal::{SpawnOpts, TerminalManager, UpdateChannel};
 use watcher::WatcherManager;
 
@@ -34,13 +35,45 @@ where
         .map_err(|e| error::AppError::Other(e.to_string()))?
 }
 
-/// Record a repository root the frontend has explicitly opened. Every
-/// path-taking command below is gated on the registry (see `guard.rs`), so this
-/// must be called — by the open-repo dialog flow and session restore — before
-/// any git/PTY operation on that root.
+/// Raise the OS folder picker, register whatever the user clicks on as a trusted
+/// root, and return that root's repo info. Replaces the renderer-side dialog +
+/// `register_root` IPC pair, so the registry is now a real security boundary:
+/// the renderer can no longer authorize an arbitrary path. `Ok(None)` when the
+/// user cancels the dialog.
+///
+/// The blocking variant of the picker is wrapped in `spawn_blocking` so it never
+/// parks the async IPC task; the OS picker itself runs on its own main-thread
+/// runloop, which is what `tauri-plugin-dialog`'s `blocking_pick_folder`
+/// underneath wraps with a oneshot channel.
 #[tauri::command]
-fn register_root(reg: State<WorkspaceRegistry>, path: String) -> AppResult<()> {
-    reg.register(&path)
+async fn pick_workspace(
+    app: AppHandle,
+    reg: State<'_, WorkspaceRegistry>,
+) -> AppResult<Option<git::RepoInfo>> {
+    let app2 = app.clone();
+    let folder = tauri::async_runtime::spawn_blocking(move || {
+        app2.dialog()
+            .file()
+            .set_title("Open a git repository")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| error::AppError::Other(e.to_string()))?;
+    let Some(folder) = folder else {
+        return Ok(None);
+    };
+    let path = folder
+        .into_path()
+        .map_err(|e| error::AppError::Other(e.to_string()))?;
+    let canon = reg.register(path.to_str().unwrap_or_default())?;
+    let canon_s = canon.to_string_lossy().into_owned();
+    let info = off_thread(move || git::repo_info(&canon_s)).await?;
+    // `repo_info` resolves to the canonical workdir — re-register it in case it
+    // differs (the user opened a worktree or a symlinked path).
+    if info.path != canon.to_string_lossy() {
+        reg.register(&info.path)?;
+    }
+    Ok(Some(info))
 }
 
 #[tauri::command]
@@ -907,6 +940,15 @@ pub fn run() {
             // request notification authorization. No-op unless bundled.
             #[cfg(target_os = "macos")]
             macos_notify::init(app.handle().clone());
+            // Wire the trusted-roots persistence into the registry, and rehydrate
+            // any roots from a previous session before any path-taking command
+            // can run. Failures here are non-fatal: a fresh registry just starts
+            // empty, which the (now-Rust-only) folder picker then refills.
+            if let Ok(dir) = swarm_dir() {
+                let store = dir.join("trusted-roots.json");
+                let reg = app.state::<WorkspaceRegistry>();
+                let _ = reg.load_trusted(&store);
+            }
             // Watch ~/.swarm/events (one file per pane) event-driven: an agent
             // appending a line fires `pane:notify` with no interval polling.
             if let Some(home) = dirs::home_dir() {
@@ -917,7 +959,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            register_root,
+            pick_workspace,
             repo_info,
             init_repo,
             file_diff_hunks,

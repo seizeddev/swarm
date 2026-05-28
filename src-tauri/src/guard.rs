@@ -8,29 +8,122 @@
 //! subverted it could only touch repositories already on screen — never a sudden
 //! read of `/etc` or a shell spawned in `/`.
 //!
+//! Roots only enter the registry through the **native folder picker**: the
+//! `pick_workspace` IPC asks Rust to raise an OS dialog and registers whatever
+//! the user clicks on — the renderer never gets to call `register`. The set is
+//! mirrored to `~/.swarm/trusted-roots.json` (`0600`) so a relaunch can restore
+//! it without reissuing the dialog; an entry that no longer canonicalises is
+//! silently dropped on load.
+//!
 //! Mirrors the `TerminalManager`/`WatcherManager` state-manager pattern: a cheap
 //! `Clone` wrapper around `Arc<Mutex<…>>` managed by Tauri.
 
 use crate::error::{AppError, AppResult};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-/// Canonicalized roots the frontend has explicitly opened (via the native
+/// On-disk schema for the trusted-roots file. A flat versioned envelope so a
+/// future shape change won't silently downgrade the contents.
+#[derive(Serialize, Deserialize)]
+struct TrustedRoots {
+    v: u32,
+    roots: Vec<String>,
+}
+
+const SCHEMA_V: u32 = 1;
+
+/// Canonicalized roots the user has explicitly opened (via the native
 /// "open repository" dialog or session restore). Containment is checked against
 /// these registered roots only.
 #[derive(Clone, Default)]
 pub struct WorkspaceRegistry {
     roots: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Set once at startup (via `with_persist_path`); when present, every
+    /// `register` writes the snapshot back. A bare `OnceLock` so the path is
+    /// fixed for the process — no race with concurrent registrations.
+    persist_path: Arc<OnceLock<PathBuf>>,
 }
 
 impl WorkspaceRegistry {
-    /// Record a root the user opened. Canonicalizes first so later containment
-    /// checks compare resolved (symlink-free) paths on both sides.
-    pub fn register(&self, path: &str) -> AppResult<()> {
+    /// Configure the persistence file path. Idempotent: a second call is a
+    /// no-op (the first wins), since the path is fixed for the process.
+    pub fn with_persist_path(&self, path: PathBuf) {
+        let _ = self.persist_path.set(path);
+    }
+
+    /// Record a root the user opened. Canonicalises first so later containment
+    /// checks compare resolved (symlink-free) paths on both sides, then writes
+    /// the snapshot to the persist file (if configured). Returns the canonical
+    /// path so the caller can use it for the immediate follow-up call (which
+    /// it would otherwise have to canonicalise again).
+    pub fn register(&self, path: &str) -> AppResult<PathBuf> {
         let canon = std::fs::canonicalize(path)?;
-        self.roots.lock().insert(canon);
+        {
+            let mut roots = self.roots.lock();
+            roots.insert(canon.clone());
+        }
+        self.persist();
+        Ok(canon)
+    }
+
+    /// Snapshot of registered roots, sorted by path for deterministic on-disk output.
+    pub fn roots(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.roots.lock().iter().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// Write the current snapshot to the persist file (best-effort). Called
+    /// after every mutation. A write failure is intentionally swallowed: the
+    /// in-memory registry remains correct for the current session, and the
+    /// file is reconstructed on the next successful write.
+    fn persist(&self) {
+        let Some(path) = self.persist_path.get() else {
+            return;
+        };
+        let roots = self
+            .roots()
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let envelope = TrustedRoots { v: SCHEMA_V, roots };
+        let Ok(json) = serde_json::to_string(&envelope) else {
+            return;
+        };
+        if std::fs::write(path, json).is_ok() {
+            crate::fsperm::restrict_file(path);
+        }
+    }
+
+    /// Load roots from a previously persisted snapshot. Entries that no longer
+    /// canonicalise (e.g. the user moved/deleted the repo while swarm was off)
+    /// are silently dropped. The persist path is set as a side effect, so any
+    /// later `register` will rewrite this file.
+    pub fn load_trusted(&self, store_path: &Path) -> AppResult<()> {
+        self.with_persist_path(store_path.to_path_buf());
+        let s = match std::fs::read_to_string(store_path) {
+            Ok(s) => s,
+            // No prior snapshot yet: that's the first-run case; nothing to do.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let envelope: TrustedRoots = match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(_) => return Ok(()), // unparseable: ignore, will be overwritten on next register
+        };
+        if envelope.v != SCHEMA_V {
+            return Ok(()); // unknown schema — drop the file silently
+        }
+        let mut loaded = HashSet::new();
+        for p in envelope.roots {
+            if let Ok(canon) = std::fs::canonicalize(&p) {
+                loaded.insert(canon);
+            }
+        }
+        *self.roots.lock() = loaded;
         Ok(())
     }
 
@@ -80,7 +173,8 @@ mod tests {
     fn registered_root_and_children_are_allowed() {
         let reg = WorkspaceRegistry::default();
         let root = scratch();
-        reg.register(root.to_str().unwrap()).unwrap();
+        let returned = reg.register(root.to_str().unwrap()).unwrap();
+        assert_eq!(returned, root, "register returns the canonical path");
 
         // The root itself.
         assert_eq!(
@@ -122,5 +216,63 @@ mod tests {
         let candidate = base.join("repo").join("src");
         let reg = WorkspaceRegistry::default(); // nothing registered
         assert!(!reg.is_allowed(&candidate));
+    }
+
+    #[test]
+    fn c2_trusted_roots_round_trip_through_disk() {
+        // Registering a root in one registry must persist to disk; a fresh
+        // registry pointed at the same file then loads the root back and
+        // accepts paths inside it.
+        let store_dir = scratch();
+        let store_file = store_dir.join("trusted-roots.json");
+        let repo = scratch();
+        let nested = repo.join("src");
+        fs::create_dir_all(&nested).unwrap();
+
+        let first = WorkspaceRegistry::default();
+        first.with_persist_path(store_file.clone());
+        first.register(repo.to_str().unwrap()).unwrap();
+        assert!(store_file.exists(), "register must write the persist file");
+
+        let second = WorkspaceRegistry::default();
+        second.load_trusted(&store_file).unwrap();
+        assert!(
+            second.ensure_within_root(nested.to_str().unwrap()).is_ok(),
+            "reloaded registry must allow children of a previously-registered root"
+        );
+    }
+
+    #[test]
+    fn c2_load_drops_entries_that_no_longer_resolve() {
+        // A persisted root that no longer canonicalises (deleted/moved) is
+        // silently dropped on load — the registry never trusts a stale path.
+        let store_dir = scratch();
+        let store_file = store_dir.join("trusted-roots.json");
+        let gone = store_dir.join("not-there");
+        let envelope = TrustedRoots {
+            v: SCHEMA_V,
+            roots: vec![gone.to_string_lossy().into_owned()],
+        };
+        std::fs::write(&store_file, serde_json::to_string(&envelope).unwrap()).unwrap();
+
+        let reg = WorkspaceRegistry::default();
+        reg.load_trusted(&store_file).unwrap();
+        assert!(reg.roots().is_empty(), "stale root must not load");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn c2_persist_file_is_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let store_dir = scratch();
+        let store_file = store_dir.join("trusted-roots.json");
+        let repo = scratch();
+
+        let reg = WorkspaceRegistry::default();
+        reg.with_persist_path(store_file.clone());
+        reg.register(repo.to_str().unwrap()).unwrap();
+
+        let m = std::fs::metadata(&store_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(m, 0o600, "persist file must be owner-only, got {m:o}");
     }
 }
