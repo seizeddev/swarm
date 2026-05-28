@@ -408,6 +408,20 @@ fn prune_clipboard_dir(dir: &std::path::Path) {
 /// which avoids the macOS pasteboard-type mismatch that makes Claude's own
 /// `«class PNGf»` read miss WebKit's `public.png` images. `ext` is allowlisted
 /// before it reaches the filename.
+/// Build the `notify = [...]` TOML array literal for Codex's verbatim-append
+/// fallback. The naïve format `"{bin}"` breaks the moment `bin` contains a
+/// quote or backslash — `toml::Value::String` handles every TOML escaping rule
+/// (quotes, control chars, backslashes) byte-correctly. Tested with a golden
+/// round-trip back through `toml::from_str`.
+fn codex_notify_string(bin: &str) -> String {
+    let arr = toml::Value::Array(vec![
+        toml::Value::String(bin.to_string()),
+        toml::Value::String("--notify-helper".into()),
+        toml::Value::String("event".into()),
+    ]);
+    arr.to_string()
+}
+
 /// Per-paste size cap for clipboard images. WKWebView's paste event will
 /// happily hand us a multi-hundred-megabyte buffer if a user pastes a photo
 /// from a different app, and the agent can't usefully consume an image that
@@ -669,9 +683,9 @@ fn prepare_codex_home() -> AppResult<String> {
         Err(_) => {
             let mut s = raw;
             if !s.contains("swarm-notify") {
-                let b = bin.replace('\\', "\\\\");
                 s.push_str(&format!(
-                    "\n# swarm-notify\nnotify = [\"{b}\", \"--notify-helper\", \"event\"]\n",
+                    "\n# swarm-notify\nnotify = {}\n",
+                    codex_notify_string(&bin)
                 ));
             }
             s
@@ -1181,6 +1195,23 @@ mod tests {
         assert!(dir.is_dir(), "swarm_dir created the directory");
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "expected 0700, got {mode:o}");
+    }
+
+    #[test]
+    fn l3_codex_notify_string_round_trips_a_quote_in_bin_path() {
+        // Verbatim-append fallback must produce a TOML array literal that
+        // parses back to the same three strings, no matter what's in the bin
+        // path. The hand-rolled `"{bin}"` format broke on quotes/backslashes;
+        // `toml::Value::String` handles every escaping rule the spec requires.
+        let nasty = r#"/p/a"b\c/swarm"#;
+        let line = format!("notify = {}", codex_notify_string(nasty));
+        // Parse the synthesised line back.
+        let parsed: toml::Table = toml::from_str(&line).expect("must parse");
+        let arr = parsed["notify"].as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0].as_str().unwrap(), nasty);
+        assert_eq!(arr[1].as_str().unwrap(), "--notify-helper");
+        assert_eq!(arr[2].as_str().unwrap(), "event");
     }
 
     #[test]
