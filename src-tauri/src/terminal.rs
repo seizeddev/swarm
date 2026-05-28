@@ -339,7 +339,24 @@ const WIRE_VERSION: u8 = 2;
 ///   i32 fg · i32 bg · u16 flags · u16 textLen · textLen UTF-8 bytes,
 ///   and — only when flags has bit 7 (WF_HYPERLINK) — u16 linkLen · linkLen bytes.
 fn encode(u: &WireUpdate) -> Vec<u8> {
-    let mut b = Vec::with_capacity(30 + u.lines.len() * 8);
+    // Pre-size the buffer for the actual payload, not just the line headers.
+    // 30-byte header + per-line `u16 y + u16 runCount` (4) + per-run
+    // `i32 fg + i32 bg + u16 flags + u16 textLen` (12) + textLen bytes +
+    // (when the run carries a hyperlink) `u16 linkLen + link bytes` (2 +
+    // link.len()). This kills the doubling realloc storm the old
+    // `u.lines.len() * 8` hint left for grids with styled full rows.
+    let payload: usize = u
+        .lines
+        .iter()
+        .map(|l| {
+            4 + l
+                .runs
+                .iter()
+                .map(|r| 12 + r.text.len() + r.link.as_deref().map_or(0, |s| 2 + s.len()))
+                .sum::<usize>()
+        })
+        .sum();
+    let mut b = Vec::with_capacity(30 + payload);
     b.push(WIRE_VERSION);
     b.push(if u.kind == "delta" { 1 } else { 0 });
     b.push(u.cursor_visible as u8);
@@ -1207,6 +1224,58 @@ mod tests {
         assert_eq!(link_len, "https://e.x".len());
         let link = &b[link_len_at + 2..link_len_at + 2 + link_len];
         assert_eq!(link, b"https://e.x");
+    }
+
+    #[test]
+    fn encode_pre_sizes_the_buffer_exactly() {
+        // Mix plain runs, ASCII, multi-byte UTF-8 and a hyperlink run across two
+        // lines: the buffer capacity must match the final length, proving the
+        // capacity hint covered the payload precisely (no doubling realloc storm
+        // when the render thread is emitting frames at 60 fps).
+        let u = WireUpdate {
+            kind: "delta",
+            cols: 12,
+            rows: 2,
+            cursor_x: 1,
+            cursor_y: 0,
+            cursor_visible: true,
+            mode: 0,
+            display_offset: 0,
+            history: 0,
+            lines: vec![
+                WireLine {
+                    y: 0,
+                    runs: vec![
+                        WireRun {
+                            text: "hello ".to_string(),
+                            fg: 256,
+                            bg: 257,
+                            flags: 0,
+                            link: None,
+                        },
+                        WireRun {
+                            text: "wörld".to_string(),
+                            fg: 1,
+                            bg: 257,
+                            flags: 1, // BOLD
+                            link: None,
+                        },
+                    ],
+                },
+                WireLine {
+                    y: 1,
+                    runs: vec![WireRun {
+                        text: "click".to_string(),
+                        fg: 256,
+                        bg: 257,
+                        flags: WF_HYPERLINK,
+                        link: Some("https://example.com".to_string()),
+                    }],
+                },
+            ],
+        };
+        let b = encode(&u);
+        assert_eq!(b.capacity(), b.len(), "encode reserved too much/too little");
     }
 
     #[test]
