@@ -16,6 +16,7 @@
 
 use serde_json::Value;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 
 // OSC 777 title for our Claude Stop-hook notification. A sentinel (not the
 // display name) so the frontend can accept *only* our notification on a Claude
@@ -24,6 +25,29 @@ use std::io::Read;
 const AGENT_NAME: &str = "swarm-claude";
 const FALLBACK: &str = "Turn complete";
 const MAX_LEN: usize = 200;
+
+/// Refuse a `SWARM_EVENT_FILE` whose canonicalised parent is not the events
+/// root (or whose basename contains traversal characters). Returns the
+/// resolved path the caller may safely write to.
+fn validated_event_file_in(events_root: &Path, target_str: &str) -> Option<PathBuf> {
+    let target = Path::new(target_str);
+    let events_root_canon = events_root.canonicalize().ok()?;
+    let parent_canon = target.parent()?.canonicalize().ok()?;
+    if parent_canon != events_root_canon {
+        return None;
+    }
+    let name = target.file_name()?.to_str()?;
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return None;
+    }
+    Some(events_root_canon.join(name))
+}
+
+/// Resolve `target_str` against the user's `~/.swarm/events` events root.
+fn validated_event_file(target_str: &str) -> Option<PathBuf> {
+    let events_root = dirs::home_dir()?.join(".swarm").join("events");
+    validated_event_file_in(&events_root, target_str)
+}
 
 /// Entry point. `args` are everything after `--notify-helper`. Never panics —
 /// any failure degrades to the fallback (or silence) so a hook never errors out.
@@ -59,14 +83,16 @@ pub fn run(args: &[String]) {
         }
         "event" => {
             let msg = field_message(&payload).unwrap_or_else(|| FALLBACK.to_string());
-            if let Ok(path) = std::env::var("SWARM_EVENT_FILE") {
-                if !path.is_empty() {
+            if let Ok(path_str) = std::env::var("SWARM_EVENT_FILE") {
+                // Containment check: the renderer set `SWARM_EVENT_FILE` from
+                // swarm's events_dir, but a compromised renderer could swap it
+                // for `/etc/passwd` (or any other writable file) before spawn.
+                // Refuse anything that doesn't sit DIRECTLY under
+                // `~/.swarm/events/` — the same containment posture as
+                // discard_paths.
+                if let Some(path) = validated_event_file(&path_str) {
                     use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                    {
+                    if let Ok(mut f) = crate::fsperm::open_options_owner_only().open(path) {
                         let _ = writeln!(f, "{msg}");
                     }
                 }
@@ -348,6 +374,59 @@ fn is_word(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_root() -> PathBuf {
+        let p = std::env::temp_dir().join(format!("swarm-m3-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::canonicalize(&p).unwrap()
+    }
+
+    #[test]
+    fn m3_validated_event_file_in_accepts_legitimate_target() {
+        // The legitimate case: target sits directly under the events root.
+        let root = scratch_root();
+        let target = root.join("pane-x");
+        // The file doesn't need to exist yet — only its parent must
+        // canonicalise to the events root.
+        let resolved = validated_event_file_in(&root, target.to_str().unwrap()).unwrap();
+        assert_eq!(resolved, root.join("pane-x"));
+    }
+
+    #[test]
+    fn m3_validated_event_file_in_rejects_sibling_dir() {
+        // Target lives outside the events root: refused even though the path
+        // looks innocuous.
+        let base = std::env::temp_dir().join(format!("swarm-m3-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let root = base.join("events");
+        let outside = base.join("evil");
+        std::fs::create_dir_all(&root).unwrap();
+        let target = outside.join("pane-x");
+        assert!(validated_event_file_in(&root, target.to_str().unwrap()).is_none());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn m3_validated_event_file_in_rejects_traversal() {
+        // `events_root/../etc/passwd` resolves outside the events root — must
+        // be rejected even though the surface path "starts inside".
+        let base = std::env::temp_dir().join(format!("swarm-m3-trav-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let root = base.join("events");
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("..").join("escape");
+        assert!(validated_event_file_in(&root, target.to_str().unwrap()).is_none());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn m3_validated_event_file_in_rejects_absolute_path_outside() {
+        // A canonical absolute path outside the events root: refused. This is
+        // the most direct vector — the renderer setting `SWARM_EVENT_FILE` to
+        // `/etc/passwd` (or `/dev/log`, …).
+        let root = scratch_root();
+        assert!(validated_event_file_in(&root, "/etc/passwd").is_none());
+    }
 
     #[test]
     fn clean_collapses_and_truncates() {

@@ -43,7 +43,6 @@ pub fn restrict_dir(path: &Path) {
 /// `OpenOptions` configured for an append-only owner-only log file: create it
 /// with mode `0600` on Unix (no race window between create and chmod), append
 /// and write enabled. Non-Unix gets the same flags without the mode bit.
-#[allow(dead_code)] // consumed by M-3 in this PR
 #[cfg(unix)]
 pub fn open_options_owner_only() -> OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
