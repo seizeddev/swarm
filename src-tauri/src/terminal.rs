@@ -48,6 +48,23 @@ const CHUNK_QUEUE_CAP: usize = 256;
 /// (the elapsed gap already exceeds the budget); only sustained output is paced.
 const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
 
+/// Scrollback ceiling per pane. Alacritty's library default is 10_000 lines
+/// (verified in `alacritty_terminal::term::Config::default`); at ~80 cols ×
+/// ~16 bytes/cell that's ~12 MB of grid backing per PTY even when hidden —
+/// and we routinely keep many panes live across workspaces. 2_000 lines is
+/// in line with xterm/iTerm defaults and is plenty for interactive sessions;
+/// long-history viewing happens in commit/PR views, not the live shell.
+const SCROLLBACK_HISTORY: usize = 2_000;
+
+/// One source of truth for Alacritty `Config` across every `Term::new` site.
+/// Capped scrollback (see [`SCROLLBACK_HISTORY`]) is the only knob we change.
+fn term_config() -> Config {
+    Config {
+        scrolling_history: SCROLLBACK_HISTORY,
+        ..Default::default()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnOpts {
@@ -530,7 +547,7 @@ impl TerminalManager {
             id: id.clone(),
         };
         let term = Arc::new(Mutex::new(Term::new(
-            Config::default(),
+            term_config(),
             &TermSize {
                 cols: cols as usize,
                 lines: rows as usize,
@@ -911,6 +928,32 @@ mod tests {
             b: 0x56,
         }));
         assert_eq!(v, RGB_FLAG | 0x123456);
+    }
+
+    #[test]
+    fn term_config_caps_scrollback() {
+        // Production panes must use the capped scrollback (not the 10_000-line
+        // library default), or many idle panes would pin tens of MB each.
+        assert_eq!(term_config().scrolling_history, SCROLLBACK_HISTORY);
+        assert_eq!(SCROLLBACK_HISTORY, 2_000);
+
+        let size = TermSize { cols: 8, lines: 2 };
+        let mut term = Term::new(
+            term_config(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        // Pump more lines than the cap so we exercise the eviction path.
+        let payload: Vec<u8> = (0..(SCROLLBACK_HISTORY + 50))
+            .flat_map(|i| format!("r{i}\r\n").into_bytes())
+            .collect();
+        let mut parser = Processor::<StdSyncHandler>::new();
+        parser.advance(&mut term, &payload);
+        assert!(
+            term.grid().history_size() <= SCROLLBACK_HISTORY,
+            "history grew past cap: {}",
+            term.grid().history_size()
+        );
     }
 
     #[test]
