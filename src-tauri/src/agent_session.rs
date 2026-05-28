@@ -960,6 +960,110 @@ mod tests {
     }
 
     #[test]
+    fn m1_claude_mcp_config_marks_launch_non_restorable() {
+        // The user case M-1 was designed for: a Claude launched with
+        // `--mcp-config <evil.json>` would auto-rearm an attacker-supplied
+        // MCP server on every restart. Sanitize must refuse the whole launch.
+        let out = sanitize("claude", &["--mcp-config".into(), "evil.json".into()]);
+        assert!(out.is_none(), "expected None, got {out:?}");
+    }
+
+    #[test]
+    fn m1_claude_security_value_deny_covers_every_listed_flag() {
+        // Every flag the M-1 policy lists must make the launch non-restorable
+        // when present — exercised as a loop so adding a flag to the deny set
+        // automatically gets covered.
+        for flag in [
+            "--mcp-config",
+            "--add-dir",
+            "--plugin-dir",
+            "--allowedTools",
+            "--allowed-tools",
+            "--disallowedTools",
+            "--disallowed-tools",
+            "--permission-mode",
+            "--system-prompt",
+            "--append-system-prompt",
+            "--agents",
+            "--setting-sources",
+        ] {
+            let out = sanitize("claude", &[flag.to_string(), "x".into()]);
+            assert!(
+                out.is_none(),
+                "claude {flag} should mark launch non-restorable (got {out:?})"
+            );
+            // Same for the `--flag=value` form (handled by the head-split
+            // branch in `sanitize`).
+            let eq = format!("{flag}=x");
+            let out = sanitize("claude", &[eq.clone()]);
+            assert!(
+                out.is_none(),
+                "claude {eq} should also be denied (got {out:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn m1_claude_security_value_deny_respects_swarm_settings_filter() {
+        // The swarm-injected `--settings <json>` is filtered BEFORE the
+        // security gate — otherwise every swarm-launched Claude would be
+        // non-restorable. Sanity-check: a launch carrying both swarm's
+        // injection AND a user flag still preserves the user flag.
+        let out = sanitize(
+            "claude",
+            &[
+                "--settings".into(),
+                "{json}".into(),
+                "--dangerously-skip-permissions".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out, vec!["--dangerously-skip-permissions"]);
+    }
+
+    #[test]
+    fn m1_codex_remote_denies_resume() {
+        // A codex launched against a remote backend doesn't auto-restore —
+        // the remote env may have moved/expired and the resume isn't
+        // meaningful out of that original context.
+        assert!(sanitize("codex", &["--remote".into(), "https://x/y".into()]).is_none());
+    }
+
+    #[test]
+    fn m1_cursor_workspace_pinning_denies_resume() {
+        // Pinning a worktree/workspace is M-1-denied: the target might be
+        // gone, moved, or a stale checkout. Loop over the family.
+        for flag in ["--workspace", "--worktree", "--worktree-base"] {
+            let out = sanitize("cursor", &[flag.to_string(), "x".into()]);
+            assert!(
+                out.is_none(),
+                "cursor {flag} should be denied (got {out:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn m1_opencode_one_shot_prompts_deny_resume() {
+        // `--prompt` / `--file` (and short `-f`) signal a one-shot command,
+        // not an interactive session worth resurrecting.
+        for flag in ["--prompt", "--file", "-f"] {
+            let out = sanitize("opencode", &[flag.to_string(), "x".into()]);
+            assert!(
+                out.is_none(),
+                "opencode {flag} should be denied (got {out:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn m1_amp_label_denies_resume() {
+        // Amp's `--label` names a specific thread — resuming into a stale
+        // label is the wrong context.
+        assert!(sanitize("amp", &["--label".into(), "x".into()]).is_none());
+        assert!(sanitize("amp", &["-l".into(), "x".into()]).is_none());
+    }
+
+    #[test]
     fn h3_redact_credentials_cursor_api_key_value_form() {
         // `--api-key sk-x --keep` → the *value* of --api-key is redacted, the
         // surrounding flags pass through verbatim.
