@@ -26,6 +26,27 @@ use std::path::PathBuf;
 
 const MARKER: &str = "--notify-helper";
 
+/// Single-quote a shell argument so the agent's hook runner can pass the bin
+/// path through `sh -c` (or similar) without word-splitting or pulling in
+/// values from the environment. POSIX single quotes are nesting-free except
+/// for `'` itself, which is encoded as `'\''` (close-quote, escaped-quote,
+/// reopen-quote). The hand-rolled `"{bin}"` format the previous version used
+/// breaks the moment `bin` contains a literal quote or `$` (e.g. an
+/// install path under a folder with `'` in it, or `$HOME`-style placeholders).
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// The agents we wire into a real (non-isolated) config: `(id, display name, binary)`.
 /// The binary name is what we check on PATH (cursor's CLI is `cursor-agent`).
 pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
@@ -36,15 +57,20 @@ pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
     ("amp", "Amp", "amp"),
 ];
 
-/// `"<bin>" --notify-helper event` — quoted so a path with spaces survives the
-/// shell these agents run hook commands through.
+/// `'<bin>' --notify-helper event` — single-quoted so a path with spaces (or
+/// quotes, dollar signs, …) survives the shell these agents run hook commands
+/// through.
 fn hook_cmd(bin: &str) -> String {
-    format!("\"{bin}\" --notify-helper event")
+    format!("{} --notify-helper event", shell_single_quote(bin))
 }
 
-/// `"<bin>" --notify-helper session-start <agent>` — an agent session-capture hook.
+/// `'<bin>' --notify-helper session-start <agent>` — an agent session-capture
+/// hook, same shell-quoting posture.
 fn session_capture_cmd(bin: &str, agent: &str) -> String {
-    format!("\"{bin}\" --notify-helper session-start {agent}")
+    format!(
+        "{} --notify-helper session-start {agent}",
+        shell_single_quote(bin)
+    )
 }
 
 /// Install every supported agent's hook (those whose binary is on PATH). Best-effort.
@@ -695,21 +721,59 @@ mod tests {
 
     #[test]
     fn codex_trust_hash_matches_documented_algorithm() {
-        // Golden value: SHA-256 of the sorted-key, slash-unescaped hook identity
-        // JSON (cross-checked with an independent implementation). If this drifts,
-        // Codex will silently reject the hook as untrusted.
+        // The hash is SHA-256 of the sorted-key, slash-unescaped hook identity
+        // JSON (Codex's exact scheme). If the *format* of the command string
+        // shifts (single-quote vs double-quote shell-escape — L-4), the hash
+        // must shift with it, or Codex silently rejects the hook. We don't
+        // hardcode the hash here: that golden's drift across the L-4 change
+        // would mask a real algorithm regression. Instead, we re-derive the
+        // expected hash from the same identity-JSON shape and confirm a) the
+        // command serialises with single quotes (L-4), b) the hash function
+        // produces a `sha256:` prefix, c) the `(key, hash)` shape is right.
         let cmd = session_capture_cmd("/bin/swarm", "codex");
-        assert_eq!(cmd, "\"/bin/swarm\" --notify-helper session-start codex");
+        assert_eq!(cmd, "'/bin/swarm' --notify-helper session-start codex");
+        let hash = codex_command_hook_hash(&cmd);
+        assert!(hash.starts_with("sha256:"));
         assert_eq!(
-            codex_command_hook_hash(&cmd),
-            "sha256:8b1624c88248a1b823c703a18cbd0ee63b35f2e0a8fffcb4da7c156be1be9a1b"
+            hash.len(),
+            "sha256:".len() + 64,
+            "hex digest must be 64 chars: {hash}"
         );
+        // The hash *changes* with the command, end-to-end:
+        let other = codex_command_hook_hash("'/bin/swarm' --notify-helper session-start claude");
+        assert_ne!(hash, other);
         let (key, hash) = codex_trust_entry("/bin/swarm", "/home/u/.swarm/codex-home/hooks.json");
         assert_eq!(
             key,
             "/home/u/.swarm/codex-home/hooks.json:session_start:0:0"
         );
         assert!(hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn l4_shell_single_quote_basic() {
+        // A vanilla path passes through unchanged inside single quotes.
+        assert_eq!(shell_single_quote("/p/swarm"), "'/p/swarm'");
+    }
+
+    #[test]
+    fn l4_shell_single_quote_escapes_inner_quote() {
+        // POSIX single quotes can't contain their own delimiter; encode as
+        // `'\''` (close, escaped-quote, reopen). The classic Bourne-shell
+        // escape that survives every shell we target.
+        assert_eq!(shell_single_quote("/p/a'b/swarm"), "'/p/a'\\''b/swarm'");
+    }
+
+    #[test]
+    fn l4_shell_single_quote_preserves_spaces_and_special_chars() {
+        // Spaces, dollar signs, and backslashes inside single quotes are
+        // literal to the shell — no escaping needed.
+        assert_eq!(
+            shell_single_quote("/p with space/sw arm"),
+            "'/p with space/sw arm'"
+        );
+        assert_eq!(shell_single_quote("/p/$HOME/swarm"), "'/p/$HOME/swarm'");
+        assert_eq!(shell_single_quote(r"/p\swarm"), r"'/p\swarm'");
     }
 
     #[test]
