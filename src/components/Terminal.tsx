@@ -441,14 +441,28 @@ export function Terminal({
 
   // OSC 52 copy: a program asked to set the system clipboard. Honour it for this
   // pane only (filtered by id), writing via the WebView clipboard API.
+  //
+  // Cleanup races a fast remount (e.g. arrow-keying across panes): if `listen()`
+  // hasn't resolved yet, calling `un.then((f) => f())` from the cleanup arms a
+  // callback that runs *after* the new effect already registered a fresh
+  // listener — leaving the prior one alive and double-firing OSC 52 copies.
+  // Track resolution synchronously and unregister whichever way the race lands.
   useEffect(() => {
-    const un = listen<{ id: string; text: string }>("term:clipboard", (e) => {
+    let cancelled = false;
+    let off: (() => void) | null = null;
+    listen<{ id: string; text: string }>("term:clipboard", (e) => {
       if (e.payload.id === ptyIdRef.current && e.payload.text) {
         navigator.clipboard?.writeText(e.payload.text).catch(() => {});
       }
-    });
+    })
+      .then((un) => {
+        if (cancelled) un();
+        else off = un;
+      })
+      .catch(() => {});
     return () => {
-      un.then((f) => f()).catch(() => {});
+      cancelled = true;
+      off?.();
     };
   }, []);
 
