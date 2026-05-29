@@ -15,49 +15,47 @@
 
 /* Surface scale sampled 1:1 from the reference (opaque hex). */
 @theme {
-  /* Warm-graphite neutral ramp (Wave 1). A whisper of warmth (R ≳ G ≳ B by
-     ~1–2) reads as graphite/paper instead of cold display, without ever
-     becoming a hue. Elevation steps are perceptually even. Eyedropped origin
-     was a flat neutral #161616 ramp; this keeps the same value structure. */
-  --color-bg: #161513;
-  --color-bg-deep: #161513;
-  --color-panel: #161513;
-  --color-surface-1: #1d1b19;
-  --color-surface-2: #252220;
-  --color-surface-3: #2b2825;
-  --color-recessed: #111110;
-  --color-border: rgba(255, 255, 255, 0.1);
-  --color-border-strong: rgba(255, 255, 255, 0.2);
+  /* Paper Stone — warm-graphite ramp with a deliberate cream tilt (R−B ≈ 4).
+     Reads as a hint of paper warmth rather than a hue, and the elevation steps
+     are perceptually even. The surface ramp moves in lockstep with the bg so
+     the brightness contract from the original warm-graphite scale carries over. */
+  --color-bg: #1c1b18;
+  --color-bg-deep: #1c1b18;
+  --color-panel: #1c1b18;
+  --color-surface-1: #232220;
+  --color-surface-2: #2b2a26;
+  --color-surface-3: #34322e;
+  --color-recessed: #131211;
+  --color-border: rgba(216, 212, 200, 0.1);
+  --color-border-strong: rgba(216, 212, 200, 0.2);
 
-  /* Text as alpha-white (Wave 1). Composites over any elevation with stable
-     perceived contrast, instead of fixed grays that sink on lighter surfaces.
-     Tiers ≈ 93 / 58 / 40 % white = primary / muted / faint. */
-  --color-text: rgba(255, 255, 255, 0.93);
-  --color-muted: rgba(255, 255, 255, 0.58);
-  /* 0.53, not the old 0.40 — faint at 0.40 was ~3.8:1 on --color-bg (below the
-     WCAG-AA 4.5:1 floor for body text); 0.53 lifts it to ~5.7:1 while still
-     reading as the quietest tier. */
-  --color-faint: rgba(255, 255, 255, 0.53);
+  /* Text as fixed warm-grey hex (not alpha-white anymore). Stone commits to the
+     cream tone — alpha-white over a warm bg reads cooler than a fixed cream of
+     the same luminance, so the tiers are spelled out instead of composited.
+     Contrast on --color-bg:  text ≈ 11.4:1 (AAA) · muted ≈ 5.5:1 (AA) ·
+     faint #8a8674 ≈ 4.7:1 (AA — the floor for body text). */
+  --color-text: #d8d4c8;
+  --color-muted: #989484;
+  --color-faint: #8a8674;
 
-  --color-accent: rgba(255, 255, 255, 0.93);
-  --color-accent-2: #ffffff;
-  --color-accent-soft: rgba(255, 255, 255, 0.07);
+  --color-accent: rgba(216, 212, 200, 0.92);
+  --color-accent-2: #e4e0d4;
+  --color-accent-soft: rgba(216, 212, 200, 0.07);
 
-  /* Status as muted "ink" (Wave 1) — the only non-monochrome hues. Calmer than
-     the old neon (#34d399 / #ff6b6b) so green/red read as deliberate marks
-     beside the restrained chrome, not traffic lights. One canonical value +
-     a soft tinted-fill variant each. */
-  --color-success: #5bb894;
-  --color-success-soft: rgba(91, 184, 148, 0.14);
-  --color-danger: #e07a72;
-  --color-danger-soft: rgba(224, 122, 114, 0.13);
-  --color-warning: #d9b56a;
-  --color-warning-soft: rgba(217, 181, 106, 0.13);
+  /* Status as earthy "ink" — the only non-monochrome hues. Sage olive / burnt
+     clay / mustard read as deliberate marks beside the cream chrome, not
+     traffic lights. One canonical value + a soft tinted-fill variant each. */
+  --color-success: #8fa370;
+  --color-success-soft: rgba(143, 163, 112, 0.14);
+  --color-danger: #cc6e5e;
+  --color-danger-soft: rgba(204, 110, 94, 0.14);
+  --color-warning: #d4a85a;
+  --color-warning-soft: rgba(212, 168, 90, 0.14);
   --color-info: var(--color-muted); /* diff hunk headers — monochrome, no accent colour */
   /* Stronger fills for the *changed words* inside an intra-line diff — they sit
      on top of the line's soft fill, so the eye lands on the actual edit. */
-  --color-success-word: rgba(91, 184, 148, 0.32);
-  --color-danger-word: rgba(224, 122, 114, 0.32);
+  --color-success-word: rgba(143, 163, 112, 0.32);
+  --color-danger-word: rgba(204, 110, 94, 0.32);
 
   --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
@@ -137,7 +135,7 @@ body,
 }
 
 body {
-  background: linear-gradient(180deg, #1a1816 0%, #161513 60%, #141210 100%);
+  background: linear-gradient(180deg, #1f1e1b 0%, #1c1b18 60%, #161512 100%);
   color: var(--color-text);
   font-family: var(--font-sans);
   /* Inter wants its optical sizing + ligatures on; a hair of negative tracking
@@ -341,7 +339,7 @@ svg.lucide {
   }
 
   .row {
-    background: #171513;
+    background: #1f1e1b;
     border: 0.5px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-row);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
@@ -350,12 +348,12 @@ svg.lucide {
       border-color var(--dur-fast) var(--ease-out);
   }
   .row:hover {
-    background: #201e1b;
+    background: #272620;
     border-color: rgba(255, 255, 255, 0.14);
   }
   .row[data-active="true"],
   .row[data-active="true"]:hover {
-    background: #262320;
+    background: #2f2d27;
     border-color: var(--color-border-strong);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
   }
@@ -387,7 +385,7 @@ svg.lucide {
       transform var(--dur-fast) var(--ease-out);
   }
   .btn:hover {
-    background: #2f2c28;
+    background: #2f2d27;
   }
   .btn:active {
     transform: translateY(1px);
@@ -400,13 +398,13 @@ svg.lucide {
   }
 
   .btn.btn-accent {
-    color: #ecebe8;
-    background: #4e4b46;
+    color: #e4e0d4;
+    background: #44423c;
     border: 0.5px solid rgba(255, 255, 255, 0.14);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22);
   }
   .btn.btn-accent:hover {
-    background: #58544e;
+    background: #504e46;
   }
 
   .btn:disabled {
@@ -464,7 +462,7 @@ svg.lucide {
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
   }
   .pill-muted {
-    background: #242220;
+    background: #25241f;
     color: var(--color-muted);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
   }
