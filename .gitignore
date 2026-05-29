@@ -31,3 +31,6 @@ design/
 
 # Claude Code local artifacts (scheduled-task locks, etc.)
 .claude/
+
+# Visual brainstorming companion (transient mockups)
+.superpowers/
