@@ -28,6 +28,7 @@
 - **Frontend formatting is `prettier`** (`pnpm format` / `pnpm format:check`; config in `.prettierrc.json`). Scoped via `.prettierignore` to frontend TS/TSX/CSS + root JSON only — **Rust is owned by `cargo fmt`**, and `*.md`/`docs/`/`pnpm-lock.yaml`/`src-tauri/` are deliberately excluded (hand-maintained or another formatter's turf). Run `pnpm format` before committing frontend changes.
 - **Zero `unwrap/expect/panic!` in production Rust** (only the Tauri entrypoint in `lib.rs`). Keep it that way; errors go through `error.rs`.
 - **Every source file carries an SPDX header** `// SPDX-License-Identifier: GPL-3.0-or-later` (CSS uses `/* */`). Add it to any new file. Don't strip trailing newlines (breaks `cargo fmt --check`/prettier).
+- **Windows Rust tests are compile-only in CI** (`cargo test --no-run`) and `cargo test` runs only on macOS + Linux. Upstream Tauri 2.x bug: `tauri-build` links the `common-controls-v6` manifest only into the main app exe, not a libtest exe, so the lib test binary imports a ComCtl-v6-only symbol and the Windows loader fails at process start with `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139), before any test runs. Tracked as `tauri-apps/tauri#13419` / `#14580`. The release bundle (`cargo build --release`, with the manifest) is unaffected — that's what the matrix ships. When upstream fixes it, drop the `--no-run` from the Windows test step in `.github/workflows/ci.yml` and verify locally that the lib exe runs.
 
 ## License
 
