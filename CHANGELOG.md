@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-29
+
+A hardening release. The headline is a security pass that closes cross-pane
+PTY injection, locks workspace registration to a Rust-only IPC, redacts
+credentials in persisted records, and tightens filesystem perms across
+`~/.swarm`. Alongside it: a command palette, an inspectable Agent
+Integrations panel, missing-workspace restore stubs, a warmer default
+palette, and a round of perf work on terminal scrollback, diffs, and
+panel re-renders. No data migration required.
+
 ### Added
 
 - **Command palette (⌘/Ctrl+⇧+P).** A searchable, keyboard-driven list of every menu action — new terminal, splits, panel switches, zoom, switch project, agent integrations — backed by a shared command registry so each entry runs the exact same path as its native-menu twin.
@@ -13,12 +23,51 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Agent Integrations panel.** A transparent view of the hooks swarm installs into agents' real configs (Claude/Gemini/Cursor JSON, OpenCode/Amp plugin files): per-agent status (on PATH? installed?), a real before→after diff of the config file, and Apply / Remove. Removal strips only swarm's own `--notify-helper` entries, never unrelated hooks. The best-effort silent install still runs on launch; this just makes it inspectable and reversible.
 - **Drag a file onto a terminal** to paste its absolute path (quoted, as one bracketed paste) — so a TUI such as Claude Code attaches it. Multiple files are space-joined.
 - **Rename a project.** Right-click a workspace ▸ Rename… sets a display-name override (the folder is never touched; blank restores the repo name); it persists across restart.
+- **Missing-workspace stubs with Locate / Forget.** A persisted workspace whose folder no longer exists (renamed, moved, or deleted while swarm was off) used to vanish silently. It now stays in the sidebar as a dimmed square; right-click → Locate Folder… raises the native picker and repoints in place (id, name, tabs survive), or Forget Project drops it. Panes restore fresh after a Locate.
+- **Truncated-diff banner.** When a patch is capped at the new 5 000-line content limit, the diff view surfaces a "truncated" banner so it's never silent.
 
 ### Changed
 
+- **Paper Stone is the new default palette.** Replaces alpha-white warm-graphite with fixed-hex cream-on-coal (`#1c1b18` / `#d8d4c8`) and earthy status ink (sage olive / burnt clay / mustard). Surface ramp + body gradient + row/button/pill tones move in lockstep so the brightness contract carries over. Faint sits at `#8a8674` (~4.7:1 on the new bg) to keep the WCAG-AA 4.5:1 floor.
 - **Terminal panes show a brief spinner** until the first frame paints, instead of a blank box on spawn.
 - **Marking a notification unread lifts it back to the top** of the list, the way a fresh one arrives.
 - **The active tab's close button stays visible** (inactive tabs still reveal it on hover).
+
+### Performance
+
+- **Scrollback is capped at 2 000 lines per pane**, so a long-running agent can't grow a pane's history (and the streamed grid) without bound.
+- **Diff output is capped at 5 000 content lines** in the libgit2 layer, with the truncated banner above making the cap visible — keeps a runaway diff from stalling the UI.
+- **Commit-detail patch loads are debounced and cancellable**, so quickly walking through a long history doesn't queue stale fetches.
+- **Word-diff is gated on a length-ratio sanity check** to skip the expensive intra-line pass when one side is wildly longer than the other.
+- **Memoised the PR mine/others split** and wrapped the sidebar attention selector in `useShallow`, dropping redundant re-renders during PR/notification churn.
+- **Pre-sized the terminal encode buffer** for the actual payload, removing per-frame allocator pressure on busy streams.
+- **Dropped the 50 ms ResizeObserver debounce** in the terminal — toggling the inspector now repaints on the next frame instead of after an ~80–100 ms lag. The stable-commit still debounces drags.
+
+### Fixed
+
+- **Instant notification banners for Claude prompts.** The OS banner now fires the moment Claude asks something — wired `Notification`, `PreToolUse` (AskUserQuestion / ExitPlanMode), and `PermissionRequest` hooks with a symmetric cross-workspace gate so a banner pops only when the source pane isn't already visible. Three regressions cover each path.
+- **Integration hooks self-heal a stale binary path.** A `SessionStart` hook pointing at a swarm binary that has since moved (the "non-blocking status code: …/swarm: No such file" message) is now strip-then-readded on the next plan, and refreshed from Tauri `setup()` as well as the post-mount frontend pass so the spawn never races the install.
+- **PR/History live-refresh on `.git/` events.** Branch pills are typed and the panel re-fetches on real ref changes, instead of waiting for a manual refresh.
+- **Workspace roots are registered at startup**, before any path-taking IPC can dispatch — closes a window where an early restore call could hit the guard with an un-registered root.
+- **Race-safe OSC 52 listener cleanup** — switching panes mid-write no longer leaks the listener.
+- **Atomic agent-session record writes**, with a bounded watcher dedup map (1 024 entries) so a chatty workspace can't grow it unboundedly.
+- **Stale-bin SessionStart regression covered.**
+
+### Security
+
+- **Per-PTY sealed token.** `pty_spawn` returns `{id, token}` and every mutating PTY IPC (`pty_write`, `_resize`, `_set_visible`, `_attach`, `_kill`, `_scroll`, `_selection_text`) requires the token, compared constant-time. `pty_live` returns ids only — tokens never leak through it. A webview reload rotates the token via `pty_reattach`.
+- **Workspace registration is Rust-only.** The `register_root` IPC is gone; the renderer can only request a folder via `pick_workspace`, which raises the native picker and registers the path Rust-side before returning. `~/.swarm/trusted-roots.json` (mode `0600`) is the persisted source of truth and is loaded in `setup()` before any path command can run.
+- **Strict env allowlist in PTY spawn.** Only `SWARM_PANE_ID`, `SWARM_EVENT_FILE`, `SWARM_AGENT_ARGV_JSON`, `CODEX_HOME`, and `CLAUDE_CODE_NO_FLICKER` survive the renderer → PTY hop. The login-shell wrapper still sources the user's profile, so the real `PATH` / `LANG` reach the child via the legitimate path.
+- **Command basename allowlist.** `pty_spawn` validates the command basename against the agent registry, so the renderer can't pivot a spawn to an arbitrary binary on `$PATH`.
+- **Credential redaction in persisted agent records.** Values for `--api-key`, `-H`/`--header`, `--remote-auth-token-env`, and friends are replaced with `[REDACTED]` before write; the record itself lands at `0600`. A per-agent `security_value_deny` set blocks resume of launches that carry an attacker-supplied capability (claude `--mcp-config` / `--allowed[d]Tools` / `--system-prompt`, codex `--remote`, …).
+- **Workspace registry is a real boundary.** `git` write-ops (`discard_paths`, `stage_paths`) now do a per-entry containment check on top of the root check, and downstream commands consume the guard's canonical path so a symlink can't drift between check and call.
+- **Tightened `~/.swarm` perms.** Subdirs are `0700`, all files `0600`, asserted from process start. `SWARM_EVENT_FILE` is contained under `~/.swarm/events`, so a renderer can't redirect notify-helper writes outside the swarm tree.
+- **Session schema validation + clipboard image cap.** `save_session` rejects a malformed envelope, and clipboard-image paste is capped at 32 MiB before it ever touches disk.
+- **Scheme-gated external URL opens.** `open_external` accepts only `http`/`https` in Rust — a `javascript:` or `file:` URL passed in from a paste or hijacked control can't open.
+- **Codex hook TOML is escape-safe.** Values flow through `toml::Value` even in the verbatim-append fallback path, so a quote in a path can't break out.
+- **Hook bin shell-quoted, symlink-contained.** `agent_hooks` single-quotes the swarm bin in composed shell strings and refuses to follow a symlink that lands outside `$HOME`.
+- **Updater rollback-guard uses canonical semver ordering.** Prevents a "10.x < 9.x" string-sort confusion across the rollback boundary.
+- **Stale-record GC on startup.** Trust roots whose target no longer canonicalises are pruned from `trusted-roots.json` (only when something actually changed, so the mtime stays clean); orphaned `~/.swarm/agent-sessions/<paneId>.json` records are removed against the live pane-id set parsed from `session.json`.
 
 ## [0.4.0] - 2026-05-26
 
