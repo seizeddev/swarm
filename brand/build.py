@@ -388,9 +388,13 @@ def main():
     write_wordmark_svg(os.path.join(logo, "wordmark.svg"), "currentColor", geom)
     write_wordmark_svg(os.path.join(logo, "wordmark-parchment.svg"), PARCHMENT, geom)
     write_wordmark_svg(os.path.join(logo, "wordmark-ink.svg"), INK, geom)
+    # currentColor master (for inline/CSS use) + fixed-colour variants (for <img>
+    # embedding — README/GitHub etc., where currentColor doesn't inherit).
     write_lockup_horizontal(os.path.join(logo, "lockup-horizontal.svg"), "currentColor", geom)
+    write_lockup_horizontal(os.path.join(logo, "lockup-horizontal-parchment.svg"), PARCHMENT, geom)
     write_lockup_horizontal(os.path.join(logo, "lockup-horizontal-ink.svg"), INK, geom)
     write_lockup_stacked(os.path.join(logo, "lockup-stacked.svg"), "currentColor", geom)
+    write_lockup_stacked(os.path.join(logo, "lockup-stacked-parchment.svg"), PARCHMENT, geom)
     write_lockup_stacked(os.path.join(logo, "lockup-stacked-ink.svg"), INK, geom)
 
     # logo PNGs (transparent)

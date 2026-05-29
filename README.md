@@ -1,6 +1,10 @@
 <div align="center">
 
-# swarm
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo/lockup-horizontal-parchment.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="brand/logo/lockup-horizontal-ink.svg" />
+  <img src="brand/logo/lockup-horizontal-parchment.svg" alt="swarm" height="104" />
+</picture>
 
 **The agentic development environment, built around the terminal.**
 
