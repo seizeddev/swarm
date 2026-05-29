@@ -89,7 +89,6 @@ export function Terminal({
   const fitRaf = useRef<number | undefined>(undefined);
   const fitStable = useRef<{ cols: number; rows: number } | null>(null);
   const lastSent = useRef<{ cols: number; rows: number } | null>(null);
-  const resizeTimer = useRef<number | undefined>(undefined);
   // Debounce timer for tearing down a hidden pane's GPU/canvas resources (see the
   // [visible] effect): fast tab-flipping mustn't thrash teardown/rebuild.
   const releaseTimer = useRef<number | undefined>(undefined);
@@ -313,15 +312,6 @@ export function Terminal({
     if (id) api.ptyResize(id, dims.cols, dims.rows).catch(() => {});
   };
 
-  const scheduleFit = () => {
-    if (resizeTimer.current != null) clearTimeout(resizeTimer.current);
-    resizeTimer.current = window.setTimeout(() => {
-      resizeTimer.current = undefined;
-      fitStable.current = null;
-      requestFit();
-    }, 50);
-  };
-
   // Wait for a real laid-out size before the spawn measures geometry.
   const measureReady = (cancelled: () => boolean) =>
     new Promise<{ cols: number; rows: number }>((resolve) => {
@@ -487,21 +477,25 @@ export function Terminal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.paneId]);
 
-  // ResizeObserver: window/font changes. Layout changes inside the tab are driven
-  // from the fraction effect below (WKWebView misses a %-height grow).
+  // ResizeObserver: outside-the-tab resizes (window, font, and — the load-bearing
+  // one — the inspector panel toggling, which changes the workspace's pixel width
+  // without touching wPct/hPct, so the fraction effect below can't catch it).
+  // No timer debounce: the 2-frame stable-commit in `requestFit` already keeps a
+  // drag from committing intermediate sizes, and a 50ms wait here made the canvas
+  // visibly lag the wrapper on a single discrete toggle (the "second-sidebar
+  // jitter"). Layout changes inside the tab are still driven from the fraction
+  // effect below — WKWebView misses a %-height grow there.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       if (!ptyHandleRef.current) return;
       if (el.clientWidth === 0 || el.clientHeight === 0) return;
-      scheduleFit();
+      fitStable.current = null;
+      requestFit();
     });
     ro.observe(el);
-    return () => {
-      if (resizeTimer.current != null) clearTimeout(resizeTimer.current);
-      ro.disconnect();
-    };
+    return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
