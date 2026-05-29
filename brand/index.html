@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>swarm — brand kit</title>
+<link rel="icon" href="icon/favicon.svg" />
+<style>
+  @font-face { font-family:"Inter"; font-weight:700; src:url("fonts/Inter-Bold.ttf"); }
+  @font-face { font-family:"Inter"; font-weight:500; src:url("fonts/Inter-Medium.ttf"); }
+  :root{
+    --parchment:#d8d4c8; --white:#f4f1e8; --ink:#161512;
+    --bg:#1c1b18; --bg2:#232220; --muted:#989484; --faint:#8a8674;
+    --border:rgba(216,212,200,0.12);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#1c1b18;color:var(--parchment);
+    font-family:"Inter",-apple-system,system-ui,sans-serif;font-weight:500;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 28px 120px}
+  header.hero{padding:96px 0 64px;text-align:center;border-bottom:1px solid var(--border)}
+  header.hero img{height:96px}
+  header.hero .tag{color:var(--muted);margin-top:22px;font-size:18px}
+  h2{font-weight:700;letter-spacing:-0.02em;font-size:13px;text-transform:uppercase;
+    color:var(--faint);margin:64px 0 20px;letter-spacing:0.08em}
+  .grid{display:grid;gap:18px}
+  .cols-2{grid-template-columns:1fr 1fr}
+  .cols-3{grid-template-columns:repeat(3,1fr)}
+  .panel{border:1px solid var(--border);border-radius:16px;overflow:hidden}
+  .panel .body{display:grid;place-items:center;padding:44px 28px;min-height:160px}
+  .panel.dark .body{background:#1c1b18}
+  .panel.light .body{background:#f4f1e8}
+  .panel .cap{display:flex;justify-content:space-between;gap:12px;
+    padding:12px 16px;background:var(--bg2);border-top:1px solid var(--border);
+    font-size:12.5px;color:var(--muted)}
+  .panel .cap code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--parchment)}
+  .clearspace{position:relative}
+  .clearspace .ring{position:absolute;inset:0;border:1px dashed rgba(216,212,200,0.25);border-radius:8px}
+  .sizes{display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap}
+  .sizes figure{margin:0;text-align:center;color:var(--faint);font-size:11px}
+  .sizes figcaption{margin-top:8px}
+  .swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-radius:16px;overflow:hidden;border:1px solid var(--border)}
+  .sw{height:108px;padding:14px 16px;display:flex;flex-direction:column;justify-content:flex-end}
+  .sw b{font-weight:700;font-size:13px}
+  .sw code{font-family:ui-monospace,monospace;font-size:12px;opacity:.85}
+  .specimen .row{display:flex;align-items:baseline;gap:18px;padding:14px 0;border-bottom:1px solid var(--border)}
+  .specimen .lbl{width:130px;color:var(--faint);font-size:12px;flex:none}
+  .dodont{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .dodont .col{border:1px solid var(--border);border-radius:16px;padding:20px 22px}
+  .dodont h3{margin:0 0 12px;font-size:14px;font-weight:700}
+  .dodont .do h3{color:#a9c08f} .dodont .dont h3{color:#c79a8e}
+  .dodont li{margin:6px 0;color:var(--muted);font-size:14px}
+  .big-banner img{width:100%;border-radius:16px;border:1px solid var(--border);display:block}
+  .note{color:var(--faint);font-size:13px;margin-top:10px}
+  a{color:var(--parchment)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <img src="logo/lockup-horizontal.svg" alt="swarm" style="filter:none" />
+    <div class="tag">Mission control for your coding agents.</div>
+  </header>
+
+  <h2>The mark</h2>
+  <div class="grid cols-3">
+    <div class="panel dark"><div class="body"><img src="logo/mark-parchment.svg" height="96" alt="mark, parchment" /></div><div class="cap"><span>on dark</span><code>#d8d4c8</code></div></div>
+    <div class="panel light"><div class="body"><img src="logo/mark-ink.svg" height="96" alt="mark, ink" /></div><div class="cap"><span>on light</span><code>#161512</code></div></div>
+    <div class="panel dark"><div class="body"><img src="logo/mark-white.svg" height="96" alt="mark, white" /></div><div class="cap"><span>warm white</span><code>#f4f1e8</code></div></div>
+  </div>
+
+  <h2>Clear space &amp; minimum size</h2>
+  <div class="grid cols-2">
+    <div class="panel dark"><div class="body"><div class="clearspace" style="padding:38px"><div class="ring"></div><img src="logo/mark-parchment.svg" height="96" alt="clear space" /></div></div><div class="cap"><span>clear space</span><code>≥ 1× cap diameter</code></div></div>
+    <div class="panel dark"><div class="body"><div class="sizes">
+      <figure><img src="logo/mark-parchment.svg" height="64" alt="64" /><figcaption>64</figcaption></figure>
+      <figure><img src="logo/mark-parchment.svg" height="32" alt="32" /><figcaption>32</figcaption></figure>
+      <figure><img src="logo/mark-parchment.svg" height="16" alt="16" /><figcaption>16 (min)</figcaption></figure>
+    </div></div><div class="cap"><span>minimum size</span><code>mark ≥ 16px</code></div></div>
+  </div>
+
+  <h2>Wordmark</h2>
+  <div class="grid cols-2">
+    <div class="panel dark"><div class="body"><img src="logo/wordmark-parchment.svg" height="56" alt="wordmark" /></div><div class="cap"><span>Inter Bold, outlined</span><code>swarm</code></div></div>
+    <div class="panel light"><div class="body"><img src="logo/wordmark-ink.svg" height="56" alt="wordmark ink" /></div><div class="cap"><span>on light</span><code>#161512</code></div></div>
+  </div>
+
+  <h2>Lockups</h2>
+  <div class="grid cols-2">
+    <div class="panel dark"><div class="body"><img src="logo/lockup-horizontal.svg" height="72" alt="horizontal" /></div><div class="cap"><span>horizontal</span><code>lockup-horizontal.svg</code></div></div>
+    <div class="panel dark"><div class="body"><img src="logo/lockup-stacked.svg" height="128" alt="stacked" /></div><div class="cap"><span>stacked</span><code>lockup-stacked.svg</code></div></div>
+    <div class="panel light"><div class="body"><img src="logo/lockup-horizontal-ink.svg" height="72" alt="horizontal ink" /></div><div class="cap"><span>horizontal · on light</span><code>-ink.svg</code></div></div>
+    <div class="panel light"><div class="body"><img src="logo/lockup-stacked-ink.svg" height="128" alt="stacked ink" /></div><div class="cap"><span>stacked · on light</span><code>-ink.svg</code></div></div>
+  </div>
+
+  <h2>App icon &amp; favicon</h2>
+  <div class="grid cols-3">
+    <div class="panel dark"><div class="body" style="background:#100f0e"><img src="icon/app-icon-1024.png" width="160" alt="app icon" /></div><div class="cap"><span>app icon (tile only)</span><code>app-icon.svg</code></div></div>
+    <div class="panel dark"><div class="body" style="background:#100f0e"><img src="icon/apple-touch-icon.png" width="120" alt="apple touch" /></div><div class="cap"><span>apple-touch</span><code>180²</code></div></div>
+    <div class="panel dark"><div class="body" style="background:#100f0e;gap:18px"><img src="icon/favicon-48.png" width="48" alt="48"><img src="icon/favicon-32.png" width="32" alt="32"><img src="icon/favicon-16.png" width="16" alt="16"></div><div class="cap"><span>favicons</span><code>48 · 32 · 16</code></div></div>
+  </div>
+
+  <h2>Social banner &amp; OG image</h2>
+  <div class="big-banner"><img src="social/banner.png" alt="banner 1280×640" /></div>
+  <div class="note">1280×640 (also written to <code>docs/banner.png</code>) · OG variant 1200×630 in <code>social/og-image.png</code></div>
+
+  <h2>Palette</h2>
+  <div class="swatches">
+    <div class="sw" style="background:#d8d4c8;color:#161512"><b>parchment</b><code>#d8d4c8</code></div>
+    <div class="sw" style="background:#f4f1e8;color:#161512"><b>white</b><code>#f4f1e8</code></div>
+    <div class="sw" style="background:#161512;color:#d8d4c8"><b>ink</b><code>#161512</code></div>
+    <div class="sw" style="background:#1c1b18;color:#d8d4c8"><b>bg</b><code>#1c1b18</code></div>
+    <div class="sw" style="background:#232220;color:#d8d4c8"><b>surface-1</b><code>#232220</code></div>
+    <div class="sw" style="background:#2b2a26;color:#d8d4c8"><b>surface-2</b><code>#2b2a26</code></div>
+    <div class="sw" style="background:#34322e;color:#d8d4c8"><b>surface-3</b><code>#34322e</code></div>
+    <div class="sw" style="background:#989484;color:#161512"><b>muted</b><code>#989484</code></div>
+    <div class="sw" style="background:#8a8674;color:#161512"><b>faint</b><code>#8a8674</code></div>
+  </div>
+
+  <h2>Type</h2>
+  <div class="specimen">
+    <div class="row"><div class="lbl">Wordmark</div><div style="font-weight:700;font-size:40px;letter-spacing:-0.03em">swarm</div><div class="note" style="margin:0">Inter Bold</div></div>
+    <div class="row"><div class="lbl">Supporting</div><div style="font-weight:500;font-size:22px;color:var(--muted)">Mission control for your coding agents.</div><div class="note" style="margin:0">Inter Medium</div></div>
+  </div>
+
+  <h2>Do &amp; Don't</h2>
+  <div class="dodont">
+    <div class="col do"><h3>Do</h3><ul>
+      <li>Parchment on dark, ink on light — that's the system.</li>
+      <li>Keep ≥ 1× cap-diameter of clear space around the mark.</li>
+      <li>Use the outlined wordmark SVG; pair body copy with Inter.</li>
+      <li>Let the mark breathe — it's the hero.</li>
+    </ul></div>
+    <div class="col dont"><h3>Don't</h3><ul>
+      <li>No gradients, glow, or shadow on the mark.</li>
+      <li>No rotation, skew, or stretch.</li>
+      <li>No accent tint — the brand is monochrome.</li>
+      <li>Don't put the bare mark on the squircle tile in running text (tile = icon only).</li>
+      <li>Don't re-typeset the wordmark in another font.</li>
+    </ul></div>
+  </div>
+
+</div>
+</body>
+</html>

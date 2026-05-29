@@ -31,6 +31,8 @@ import { PANEL_DEFAULT, clampPanelWidth } from "../lib/panel";
 
 const ATTN = "var(--color-text)";
 
+// Canonical burst geometry. The same blade/cap coordinates are duplicated in
+// brand/build.py + brand/logo/mark.svg (the logo kit) — keep all three in sync.
 export function SwarmMark({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor" aria-hidden>

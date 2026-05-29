@@ -1,0 +1,49 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1350 96" role="img" aria-label="Swarm palette">
+  <title>Swarm palette</title>
+  <g transform="translate(0,0)">
+    <rect width="150" height="96" fill="#d8d4c8"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#161512">parchment</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#161512" opacity="0.8">#d8d4c8</text>
+  </g>
+  <g transform="translate(150,0)">
+    <rect width="150" height="96" fill="#f4f1e8"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#161512">white</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#161512" opacity="0.8">#f4f1e8</text>
+  </g>
+  <g transform="translate(300,0)">
+    <rect width="150" height="96" fill="#161512"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#d8d4c8">ink</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#d8d4c8" opacity="0.8">#161512</text>
+  </g>
+  <g transform="translate(450,0)">
+    <rect width="150" height="96" fill="#1c1b18"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#d8d4c8">bg</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#d8d4c8" opacity="0.8">#1c1b18</text>
+  </g>
+  <g transform="translate(600,0)">
+    <rect width="150" height="96" fill="#232220"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#d8d4c8">surface-1</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#d8d4c8" opacity="0.8">#232220</text>
+  </g>
+  <g transform="translate(750,0)">
+    <rect width="150" height="96" fill="#2b2a26"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#d8d4c8">surface-2</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#d8d4c8" opacity="0.8">#2b2a26</text>
+  </g>
+  <g transform="translate(900,0)">
+    <rect width="150" height="96" fill="#34322e"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#d8d4c8">surface-3</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#d8d4c8" opacity="0.8">#34322e</text>
+  </g>
+  <g transform="translate(1050,0)">
+    <rect width="150" height="96" fill="#989484"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#161512">muted</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#161512" opacity="0.8">#989484</text>
+  </g>
+  <g transform="translate(1200,0)">
+    <rect width="150" height="96" fill="#8a8674"/>
+    <text x="12" y="68" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#161512">faint</text>
+    <text x="12" y="84" font-family="ui-monospace, monospace" font-size="12" fill="#161512" opacity="0.8">#8a8674</text>
+  </g>
+</svg>

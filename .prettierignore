@@ -6,4 +6,5 @@ dist
 src-tauri
 pnpm-lock.yaml
 docs
+brand
 *.md

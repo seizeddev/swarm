@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Swarm brand palette — mirrors src/styles.css (the app is the source of truth). */
+:root {
+  --swarm-parchment: #d8d4c8; /* default mark on dark (= --color-text) */
+  --swarm-white: #f4f1e8;         /* warm white, for busy/photographic surfaces */
+  --swarm-ink: #161512;             /* mark on light backgrounds */
+  --swarm-bg: #1c1b18;            /* app background / tile base */
+  --swarm-bg-top: #1f1e1b;
+  --swarm-bg-bot: #161512;
+  --swarm-muted: #989484;         /* tagline on dark */
+  --swarm-faint: #8a8674;
+  --swarm-surface-1: #232220;
+  --swarm-surface-2: #2b2a26;
+  --swarm-surface-3: #34322e;
+  --swarm-bg-gradient: linear-gradient(180deg, #1f1e1b 0%, #1c1b18 60%, #161512 100%);
+}

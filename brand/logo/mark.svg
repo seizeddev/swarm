@@ -1,0 +1,20 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="currentColor" role="img" aria-label="swarm">
+  <title>swarm</title>
+  <polygon points="45.97,42.0 47.97,14.68 57.03,16.94"/>
+  <polygon points="52.8,41.5 73.54,23.59 78.35,31.59"/>
+  <polygon points="58.0,45.97 85.32,47.97 83.06,57.03"/>
+  <polygon points="58.5,52.8 76.41,73.54 68.41,78.35"/>
+  <polygon points="54.03,58.0 52.03,85.32 42.97,83.06"/>
+  <polygon points="47.2,58.5 26.46,76.41 21.65,68.41"/>
+  <polygon points="42.0,54.03 14.68,52.03 16.94,42.97"/>
+  <polygon points="41.5,47.2 23.59,26.46 31.59,21.65"/>
+  <circle cx="52.5" cy="15.81" r="4.67"/>
+  <circle cx="75.95" cy="27.59" r="4.67"/>
+  <circle cx="84.19" cy="52.5" r="4.67"/>
+  <circle cx="72.41" cy="75.95" r="4.67"/>
+  <circle cx="47.5" cy="84.19" r="4.67"/>
+  <circle cx="24.05" cy="72.41" r="4.67"/>
+  <circle cx="15.81" cy="47.5" r="4.67"/>
+  <circle cx="27.59" cy="24.05" r="4.67"/>
+</svg>
