@@ -61,6 +61,10 @@ pub fn open_options_owner_only() -> OpenOptions {
 mod tests {
     use super::*;
 
+    // Every caller below is `#[cfg(unix)]` — on Windows this would otherwise
+    // trip the `dead_code` warning that CI's `clippy -D warnings` (Linux) and
+    // every Windows `cargo test` run flag.
+    #[cfg(unix)]
     fn scratch_dir() -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("swarm-fsperm-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&p).unwrap();
