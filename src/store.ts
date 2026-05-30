@@ -297,6 +297,9 @@ interface State {
   /// whenever the watcher reports a change inside `.git/` (HEAD, refs, config).
   refreshRepoMeta(wsId: string): Promise<void>;
   setPanel(p: Panel): void;
+  /// Dismiss the global error banner (Sidebar). The banner otherwise lingers
+  /// until the next op clears `error`, so a one-off failure stays on screen.
+  clearError(): void;
   toggleSidebar(): void;
   setCompact(v: boolean): void;
   setWindowFocused(v: boolean): void;
@@ -484,6 +487,10 @@ export const useStore = create<State>((set, get) => {
     eventsDir: null,
     codexHome: null,
     update: { status: "idle", progress: 0 },
+
+    clearError() {
+      set({ error: null });
+    },
 
     toggleSidebar() {
       set((s) => ({ sidebarVisible: !s.sidebarVisible }));

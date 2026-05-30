@@ -965,6 +965,15 @@ describe("git write-ops", () => {
     expect(s().busy).toBe(false);
   });
 
+  it("clearError dismisses a surfaced error without touching anything else", async () => {
+    m.checkoutRef.mockRejectedValue(new Error("would be overwritten"));
+    await s().checkoutRef("feature");
+    expect(s().error).toBe("would be overwritten");
+
+    s().clearError();
+    expect(s().error).toBeNull();
+  });
+
   it("reveals a path via the OS", async () => {
     await s().revealPath("/repo/a.txt");
     expect(m.revealPath).toHaveBeenCalledWith("/repo/a.txt");

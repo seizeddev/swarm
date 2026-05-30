@@ -126,6 +126,7 @@ export function GraphPanel() {
             body: `New branch starting at ${c.short}.`,
             placeholder: "branch name",
             confirmLabel: "Create",
+            validate: (v) => (v.trim() ? null : "Branch name can't be empty"),
           })
         )?.trim();
         if (name) createBranchAt(name, c.oid);

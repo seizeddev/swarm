@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useState } from "react";
-import { Check, FileCode2, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, FileCode2, Loader2, Plus, Trash2, X } from "lucide-react";
 import { Modal } from "./Modal";
 import { api } from "../lib/ipc";
 import { lineDiff } from "../lib/diff";
@@ -92,7 +92,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={() => setSelected((s) => (s === r.id ? null : r.id))}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/[0.04]"
+                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/[0.04] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
                 >
                   <span className="flex-1 truncate text-base font-medium text-[var(--color-text)]">
                     {r.name}
@@ -154,14 +154,23 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
 
         {error && (
           <div
-            className="mt-2 rounded-xl border p-2.5 text-sm"
+            className="mt-2 flex items-start gap-2 rounded-xl border p-2.5 text-sm"
             style={{
-              borderColor: "rgba(224, 122, 114, 0.30)",
+              borderColor: "var(--color-danger-border)",
               background: "var(--color-danger-soft)",
               color: "var(--color-danger)",
             }}
           >
-            {error}
+            <span className="min-w-0 flex-1 break-words">{error}</span>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setError(null)}
+              className="icon-btn h-5 w-5 flex-none"
+              style={{ color: "var(--color-danger)" }}
+            >
+              <X size={13} />
+            </button>
           </div>
         )}
       </div>

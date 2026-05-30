@@ -49,6 +49,11 @@
   --color-success-soft: rgba(143, 163, 112, 0.14);
   --color-danger: #cc6e5e;
   --color-danger-soft: rgba(204, 110, 94, 0.14);
+  /* Deliberately *brighter* than the danger text: in dark mode you dim the text
+     but brighten the border so the rim still reads against the surface (the
+     60-30-10 "dim text, brighten borders" rule). Used on danger banners + the
+     destructive confirm button + .field[aria-invalid]. */
+  --color-danger-border: rgba(224, 122, 114, 0.3);
   --color-warning: #d4a85a;
   --color-warning-soft: rgba(212, 168, 90, 0.14);
   --color-info: var(--color-muted); /* diff hunk headers — monochrome, no accent colour */
@@ -558,6 +563,31 @@ svg.lucide {
     border-color: rgba(255, 255, 255, 0.28);
     box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
   }
+  /* Error/warning variants — the input itself carries the state colour so a
+     failure reads inline, not only via the global banner. aria-invalid is the
+     accessible signal (screen readers announce it); .field-warning is the softer
+     "heads up, not a hard stop" tier. The focus ring keeps the same hue so
+     focusing an invalid field doesn't wash the error away. */
+  .field[aria-invalid="true"] {
+    border-color: var(--color-danger-border);
+  }
+  .field[aria-invalid="true"]:focus {
+    border-color: var(--color-danger);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+  }
+  .field-warning {
+    border-color: var(--color-warning);
+  }
+  .field-warning:focus {
+    border-color: var(--color-warning);
+    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.07);
+  }
+  /* The message rendered under an invalid field. */
+  .field-error-msg {
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--color-danger);
+  }
 
   .divider {
     height: 0.5px;
@@ -601,6 +631,17 @@ svg.lucide {
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--color-muted);
+  }
+
+  /* The dimmer tier of the same label, for headers *inside* a menu/dialog/popover
+     (one elevation up from the panels). Panel headers stay muted; transient-surface
+     headers go faint — a deliberate two-step, not drift. */
+  .label-caps-dim {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-faint);
   }
 
   /* Loading placeholder — a quiet brightness sweep over a recessed bar, used in

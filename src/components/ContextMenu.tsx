@@ -117,10 +117,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
         if (item.kind === "separator") return <div key={i} className="divider my-1" />;
         if (item.kind === "header")
           return (
-            <p
-              key={i}
-              className="truncate px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--color-faint)]"
-            >
+            <p key={i} className="label-caps-dim truncate px-2 py-1.5">
               {item.label}
             </p>
           );

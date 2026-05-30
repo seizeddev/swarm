@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
   Check,
@@ -11,6 +11,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
+  Loader2,
   Minus,
   Plus,
   RefreshCw,
@@ -143,6 +144,11 @@ export function SourceControlPanel() {
       busy: s.busy,
     })),
   );
+  // Scoped in-flight flags for the two awaited actions, so the button shows a
+  // spinner for *its own* work — `busy` is global (any git op on any workspace),
+  // so keying the affordance off it would spin these for unrelated operations.
+  const [committing, setCommitting] = useState(false);
+  const [initing, setIniting] = useState(false);
   if (!ws) return null;
 
   // A plain folder (no git repo yet) — offer to initialize one. Terminals/agents
@@ -159,10 +165,18 @@ export function SourceControlPanel() {
           <button
             type="button"
             className="btn btn-accent"
-            disabled={busy}
-            onClick={() => initRepo()}
+            disabled={busy || initing}
+            onClick={async () => {
+              setIniting(true);
+              try {
+                await initRepo();
+              } finally {
+                setIniting(false);
+              }
+            }}
           >
-            <GitBranch size={15} /> Initialize Repository
+            {initing ? <Loader2 size={15} className="spin" /> : <GitBranch size={15} />} Initialize
+            Repository
           </button>
         </div>
       </div>
@@ -171,6 +185,19 @@ export function SourceControlPanel() {
 
   const staged = ws.changes.filter((c) => c.staged);
   const unstaged = ws.changes.filter((c) => c.unstaged);
+
+  // One commit path for both entrypoints (the button and the textarea's ⌘Enter),
+  // each wrapping the spinner so the affordance shows regardless of how it fired.
+  const canCommit = !busy && !committing && !!ws.commitMsg.trim() && ws.changes.length > 0;
+  const doCommit = async () => {
+    if (!canCommit) return;
+    setCommitting(true);
+    try {
+      await commit();
+    } finally {
+      setCommitting(false);
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -193,16 +220,17 @@ export function SourceControlPanel() {
           value={ws.commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) doCommit();
           }}
         />
         <button
           type="button"
           className="btn btn-accent mt-2 w-full"
-          disabled={busy || !ws.commitMsg.trim() || ws.changes.length === 0}
-          onClick={() => commit()}
+          disabled={!canCommit}
+          onClick={doCommit}
         >
-          <GitCommitHorizontal size={15} /> Commit
+          {committing ? <Loader2 size={15} className="spin" /> : <GitCommitHorizontal size={15} />}{" "}
+          Commit
           {staged.length ? ` ${staged.length} staged` : " all"}
         </button>
       </div>

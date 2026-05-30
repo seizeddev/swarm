@@ -93,9 +93,7 @@ export function CommandPalette({
               className="row flex w-full items-center justify-between gap-3 border-transparent bg-transparent px-2.5 py-2 text-left text-base text-[var(--color-text)]"
             >
               <span className="truncate">{cmd.label}</span>
-              <span className="flex-none text-xs uppercase tracking-wide text-[var(--color-faint)]">
-                {cmd.group}
-              </span>
+              <span className="label-caps-dim flex-none">{cmd.group}</span>
             </button>
           ))
         )}
