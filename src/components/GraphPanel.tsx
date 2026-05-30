@@ -257,10 +257,17 @@ export function GraphPanel() {
                 onContextMenu={(e) => openMenu(e, commitMenu(r.commit))}
                 title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
                 className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
-                // Start the row just past the widest node (gw carries a full
-                // COLW of trailing slack we strip back off); NODE_R clears the
-                // HEAD ring so the box sits flush against the graph column.
-                style={{ top: vi.start + 3, left: gw - COLW + NODE_R, right: 8, height: ROW - 6 }}
+                // Start the row past the widest node (gw carries a full COLW of
+                // trailing slack we strip back off). NODE_R only reaches the ring's
+                // geometric edge — its 1.5px stroke (plus the box border) then
+                // pokes under the row's opaque background and clips the HEAD dot,
+                // so add a small gap to keep the marker fully visible.
+                style={{
+                  top: vi.start + 3,
+                  left: gw - COLW + NODE_R + 5,
+                  right: 8,
+                  height: ROW - 6,
+                }}
               >
                 {r.commit.refs.map((ref) => (
                   <RefPill key={`${ref.kind}:${ref.name}`} badge={ref} />
