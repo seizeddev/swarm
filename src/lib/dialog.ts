@@ -24,6 +24,12 @@ export interface ConfirmOptions {
 export interface PromptOptions extends ConfirmOptions {
   placeholder?: string;
   defaultValue?: string;
+  /**
+   * Inline validation. Run against the live input value; a returned string is
+   * shown under the field (which goes aria-invalid) and disables submit, a null
+   * means valid. Omit for an unvalidated prompt (unchanged behaviour).
+   */
+  validate?: (value: string) => string | null;
 }
 
 export type DialogRequest =

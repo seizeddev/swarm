@@ -53,4 +53,25 @@ describe("dialog service", () => {
     expect(() => useDialogStore.getState().resolveCurrent(true)).not.toThrow();
     expect(useDialogStore.getState().current).toBeNull();
   });
+
+  it("carries a prompt's validate through to the current request, and resolves the value", async () => {
+    const validate = (v: string) => (v.trim() ? null : "Branch name can't be empty");
+    const p = promptDialog({ title: "Create Branch", validate });
+
+    // The validator survives the enqueue→current plumbing (DialogHost reads it
+    // off `current.opts` to gate submission).
+    const cur = useDialogStore.getState().current;
+    expect(cur?.kind).toBe("prompt");
+    if (cur?.kind === "prompt") {
+      expect(cur.opts.validate).toBe(validate);
+      // The representative non-empty validator: a message for blank/whitespace,
+      // null once there's real text.
+      expect(cur.opts.validate?.("")).toBe("Branch name can't be empty");
+      expect(cur.opts.validate?.("   ")).toBe("Branch name can't be empty");
+      expect(cur.opts.validate?.("feature/x")).toBeNull();
+    }
+
+    useDialogStore.getState().resolveCurrent("feature/x");
+    await expect(p).resolves.toBe("feature/x");
+  });
 });

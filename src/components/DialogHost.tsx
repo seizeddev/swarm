@@ -26,8 +26,16 @@ export function DialogHost() {
   if (!current) return null;
 
   const { opts } = current;
+  // Inline validation only applies to prompts with a validator; the message
+  // gates submission so a known-bad value can't be confirmed.
+  const validationMsg =
+    current.kind === "prompt" && current.opts.validate ? current.opts.validate(value) : null;
+  const invalid = validationMsg !== null;
   const cancel = () => resolveCurrent(current.kind === "prompt" ? null : false);
-  const confirm = () => resolveCurrent(current.kind === "prompt" ? value : true);
+  const confirm = () => {
+    if (invalid) return;
+    resolveCurrent(current.kind === "prompt" ? value : true);
+  };
 
   return (
     <Modal onClose={cancel} labelledBy="dialog-title">
@@ -46,14 +54,23 @@ export function DialogHost() {
         </div>
 
         {current.kind === "prompt" && (
-          <input
-            ref={inputRef}
-            className="field"
-            value={value}
-            placeholder={current.opts.placeholder}
-            aria-labelledby="dialog-title"
-            onChange={(e) => setValue(e.target.value)}
-          />
+          <div className="flex flex-col gap-1.5">
+            <input
+              ref={inputRef}
+              className="field"
+              value={value}
+              placeholder={current.opts.placeholder}
+              aria-labelledby="dialog-title"
+              aria-invalid={invalid}
+              aria-describedby={invalid ? "dialog-error" : undefined}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            {invalid && (
+              <p id="dialog-error" className="field-error-msg">
+                {validationMsg}
+              </p>
+            )}
+          </div>
         )}
 
         <div className="flex justify-end gap-2">
@@ -62,13 +79,14 @@ export function DialogHost() {
           </button>
           <button
             type="submit"
+            disabled={invalid}
             className={opts.destructive ? "btn" : "btn btn-accent"}
             style={
               opts.destructive
                 ? {
                     color: "var(--color-danger)",
                     background: "var(--color-danger-soft)",
-                    borderColor: "rgba(224, 122, 114, 0.30)",
+                    borderColor: "var(--color-danger-border)",
                   }
                 : undefined
             }

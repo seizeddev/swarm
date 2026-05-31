@@ -29,6 +29,10 @@ coverage
 # design scratch (logo concept grids)
 design/
 
+# UI/UX design-script transcripts dropped at the repo root (reference notes, not
+# source). Root-level only, so the vendored brand/fonts/OFL.txt license stays tracked.
+/*.txt
+
 # Claude Code local artifacts (scheduled-task locks, etc.)
 .claude/
 

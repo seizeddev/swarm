@@ -352,6 +352,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
     renameWorkspace,
     notifications,
     error,
+    clearError,
     sidebarVisible,
     compact,
     toggleSidebar,
@@ -368,6 +369,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
       renameWorkspace: s.renameWorkspace,
       notifications: s.notifications,
       error: s.error,
+      clearError: s.clearError,
       sidebarVisible: s.sidebarVisible,
       compact: s.compact,
       toggleSidebar: s.toggleSidebar,
@@ -610,14 +612,23 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
 
         {error && (
           <div
-            className="m-3 rounded-xl border p-3 text-sm"
+            className="m-3 flex items-start gap-2 rounded-xl border p-3 text-sm"
             style={{
-              borderColor: "rgba(224, 122, 114, 0.30)",
+              borderColor: "var(--color-danger-border)",
               background: "var(--color-danger-soft)",
               color: "var(--color-danger)",
             }}
           >
-            {error}
+            <span className="min-w-0 flex-1 break-words">{error}</span>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => clearError()}
+              className="icon-btn h-5 w-5 flex-none"
+              style={{ color: "var(--color-danger)" }}
+            >
+              <X size={13} />
+            </button>
           </div>
         )}
       </div>
@@ -743,7 +754,7 @@ function RenameWorkspaceModal({
           onChange={(e) => setValue(e.target.value)}
           placeholder={repoName}
           spellCheck={false}
-          className="w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-3 py-2 text-base text-[var(--color-text)] outline-none focus-visible:border-[var(--color-border-strong)]"
+          className="field"
         />
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn h-9 text-base">

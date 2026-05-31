@@ -34,8 +34,16 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # No `--locked`: cargo-fuzz 0.13.1's bundled Cargo.lock pins ancient
+      # transitive deps (tempfile 3.3.0 -> rustix 0.36.5). rustix 0.36.5 uses the
+      # internal `#[rustc_layout_scalar_valid_range_*]` attributes gated behind a
+      # build-script `cfg(rustc_attrs)` probe, which current nightly rejects for
+      # non-std crates ("attributes starting with `rustc` are reserved") -> the
+      # install fails to compile before the fuzzer runs. We pull the latest nightly
+      # each Sunday, so a frozen 2022 dep snapshot bit-rots. Resolving fresh picks
+      # tempfile 3.x -> rustix 1.x, which builds on nightly. Don't re-add --locked.
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz
 
       - name: Fuzz parse_notifications
         working-directory: src-tauri

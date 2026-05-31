@@ -77,9 +77,7 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           {GROUPS.map((g) => (
             <section key={g.title}>
-              <h3 className="mb-2 text-xs uppercase tracking-wide text-[var(--color-faint)]">
-                {g.title}
-              </h3>
+              <h3 className="label-caps-dim mb-2">{g.title}</h3>
               <ul className="flex flex-col gap-2">
                 {g.items.map((s) => (
                   <li key={s.action} className="flex items-center justify-between gap-3">

@@ -19,6 +19,14 @@ function AgentMenu() {
   );
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  // Shell is index 0, the agents follow — one flat list for roving focus, so
+  // ↑/↓/Home/End walk every item (the canonical menu behaviour, same as
+  // ContextMenu/CommandPalette; the old bespoke rows had no keyboard nav).
+  const spawnAgents = agents.filter((a) => a.name.toLowerCase() !== "shell");
+  const itemCount = 1 + spawnAgents.length;
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+
   useEffect(() => {
     const h = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -26,6 +34,28 @@ function AgentMenu() {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  // Focus the first item when the popover opens (rAF so the buttons have
+  // mounted), mirroring ContextMenu.
+  useEffect(() => {
+    if (!open) return;
+    setActiveIdx(0);
+    const r = requestAnimationFrame(() => itemRefs.current[0]?.focus());
+    return () => cancelAnimationFrame(r);
+  }, [open]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    const next = rovingIndex(activeIdx, e.key, itemCount);
+    if (next === null) return;
+    e.preventDefault();
+    setActiveIdx(next);
+    itemRefs.current[next]?.focus();
+  };
+
   return (
     <div ref={ref} className="relative">
       <button
@@ -37,32 +67,44 @@ function AgentMenu() {
         <Plus size={14} />
       </button>
       {open && (
-        <div className="surface animate-scale-in absolute right-0 top-9 z-50 w-52 p-1.5">
-          <p className="px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--color-faint)]">
-            Spawn
-          </p>
+        <div
+          role="menu"
+          onKeyDown={onKeyDown}
+          className="surface animate-scale-in absolute right-0 top-9 z-50 w-52 p-1.5"
+        >
+          <p className="label-caps-dim px-2 py-1.5">Spawn</p>
           <button
             type="button"
+            role="menuitem"
+            ref={(el) => {
+              itemRefs.current[0] = el;
+            }}
+            tabIndex={activeIdx === 0 ? 0 : -1}
             onClick={() => {
               addPane();
               setOpen(false);
             }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+            className="menu-item gap-2.5 px-2 py-2 text-base"
           >
             <TerminalSquare size={14} className="text-[var(--color-muted)]" />
             <span className="flex-1">Shell</span>
           </button>
-          {agents
-            .filter((a) => a.name.toLowerCase() !== "shell")
-            .map((a: AgentDef) => (
+          {spawnAgents.map((a: AgentDef, i) => {
+            const idx = i + 1;
+            return (
               <button
                 type="button"
+                role="menuitem"
                 key={a.id}
+                ref={(el) => {
+                  itemRefs.current[idx] = el;
+                }}
+                tabIndex={activeIdx === idx ? 0 : -1}
                 onClick={() => {
                   addPane(a);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-base transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:bg-white/[0.06]"
+                className="menu-item gap-2.5 px-2 py-2 text-base"
               >
                 <span
                   className="h-2 w-2 flex-none rounded-full"
@@ -73,7 +115,8 @@ function AgentMenu() {
                   <span className="text-2xs text-[var(--color-faint)]">missing</span>
                 )}
               </button>
-            ))}
+            );
+          })}
         </div>
       )}
     </div>
