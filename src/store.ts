@@ -296,6 +296,10 @@ interface State {
   /// while the project is open in swarm. Called from the fs:changed handler
   /// whenever the watcher reports a change inside `.git/` (HEAD, refs, config).
   refreshRepoMeta(wsId: string): Promise<void>;
+  /// Full git re-sync for a workspace (defaults to active): SCM status +
+  /// repo info / refs / PRs, bumping gitNonce so the history graph reloads.
+  /// One path for the focus catch-up and the History panel's manual refresh.
+  refreshGit(wsId?: string): Promise<void>;
   setPanel(p: Panel): void;
   /// Dismiss the global error banner (Sidebar). The banner otherwise lingers
   /// until the next op clears `error`, so a one-off failure stays on screen.
@@ -925,6 +929,18 @@ export const useStore = create<State>((set, get) => {
         }
         get().loadPrs(ws.id, true);
       }
+    },
+
+    // Full git re-sync, reusing the existing actions: SCM status plus repo
+    // info / refs / PRs (refreshRepoMeta bumps gitNonce → the history graph
+    // reloads). The single path the focus catch-up and the History panel's
+    // manual ↻ both call; bails when the workspace has no repo (the sub-actions
+    // guard internally).
+    async refreshGit(wsId) {
+      const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
+      if (!ws) return;
+      await get().refreshStatus(ws.id);
+      await get().refreshRepoMeta(ws.id);
     },
 
     // Turn an opened plain folder into a git repo (the SCM panel's Initialize

@@ -14,7 +14,7 @@ use crate::error::{AppError, AppResult};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,20 +22,21 @@ use tauri::{AppHandle, Emitter};
 
 const GIT_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// True when `p` lies under `<root>/.git/` — used by the worktree watcher to
-/// tell apart user-file changes (status/diff) from repo-state changes (HEAD,
-/// refs, config). A path *inside* the `.git/` directory ⇒ HEAD moved, a branch
+/// True when `p` contains a `.git` path component — used by the worktree watcher
+/// to tell apart user-file changes (status/diff) from repo-state changes (HEAD,
+/// refs, config). A path *inside* a `.git/` directory ⇒ HEAD moved, a branch
 /// landed, a remote was added, etc. — the frontend bumps gitNonce and re-reads
 /// repo info / PRs on top of the usual status refresh.
-fn is_git_meta_path(root: &Path, p: &Path) -> bool {
-    let Ok(rel) = p.strip_prefix(root) else {
-        return false;
-    };
-    let mut comps = rel.components();
-    matches!(
-        comps.next(),
-        Some(std::path::Component::Normal(seg)) if seg == ".git"
-    )
+///
+/// The scan is deliberately prefix-independent: `notify` only ever reports paths
+/// *inside* the watched worktree, so "has a `.git` component" reliably means a
+/// repo-meta change without depending on the FSEvent path sharing the registered
+/// root's canonical prefix. macOS firmlink/symlink resolution can report a change
+/// under `/System/Volumes/Data/…` or `/private/var/…`, which a `strip_prefix`
+/// against the root would miss — silently dropping the graph reload.
+fn is_git_meta_path(p: &Path) -> bool {
+    p.components()
+        .any(|c| matches!(c, std::path::Component::Normal(seg) if seg == ".git"))
 }
 
 #[derive(Default)]
@@ -144,7 +145,6 @@ impl WatcherManager {
             .map_err(|e| AppError::Other(e.to_string()))?;
 
         let emit_id = workspace_id.clone();
-        let root: PathBuf = PathBuf::from(&path);
         std::thread::spawn(move || loop {
             // Block for the first event, then coalesce the burst: keep draining
             // until the tree has been quiet for the debounce window, then emit once.
@@ -154,13 +154,13 @@ impl WatcherManager {
                 Err(_) => break, // watcher dropped → workspace closed
             };
             if let Ok(ev) = first {
-                git_meta |= ev.paths.iter().any(|p| is_git_meta_path(&root, p));
+                git_meta |= ev.paths.iter().any(|p| is_git_meta_path(p));
             }
             loop {
                 match rx.recv_timeout(GIT_DEBOUNCE) {
                     Ok(res) => {
                         if let Ok(ev) = res {
-                            git_meta |= ev.paths.iter().any(|p| is_git_meta_path(&root, p));
+                            git_meta |= ev.paths.iter().any(|p| is_git_meta_path(p));
                         }
                     }
                     Err(RecvTimeoutError::Timeout) => break,
@@ -213,20 +213,34 @@ mod tests {
 
     #[test]
     fn is_git_meta_path_recognises_dot_git_descendants() {
-        let root = Path::new("/tmp/repo");
-        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git/HEAD")));
-        assert!(is_git_meta_path(
-            root,
-            Path::new("/tmp/repo/.git/refs/heads/main")
-        ));
-        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git/config")));
+        assert!(is_git_meta_path(Path::new("/tmp/repo/.git/HEAD")));
+        assert!(is_git_meta_path(Path::new(
+            "/tmp/repo/.git/refs/heads/main"
+        )));
+        assert!(is_git_meta_path(Path::new("/tmp/repo/.git/config")));
         // Plain worktree changes are *not* git meta.
-        assert!(!is_git_meta_path(root, Path::new("/tmp/repo/src/main.rs")));
-        assert!(!is_git_meta_path(root, Path::new("/tmp/repo/.gitignore")));
-        // A file outside the root cannot be a meta path.
-        assert!(!is_git_meta_path(root, Path::new("/tmp/other/.git/HEAD")));
+        assert!(!is_git_meta_path(Path::new("/tmp/repo/src/main.rs")));
+        assert!(!is_git_meta_path(Path::new("/tmp/repo/.gitignore")));
+        // Any `.git` component counts now — the watcher only reports paths inside
+        // a watched worktree, so the root prefix is irrelevant. (This returned
+        // false under the old strip_prefix(root) form.)
+        assert!(is_git_meta_path(Path::new("/tmp/other/.git/HEAD")));
         // The bare `.git` directory itself counts as meta (covers `git init`).
-        assert!(is_git_meta_path(root, Path::new("/tmp/repo/.git")));
+        assert!(is_git_meta_path(Path::new("/tmp/repo/.git")));
+    }
+
+    #[test]
+    fn is_git_meta_path_is_prefix_robust() {
+        // macOS can report an FSEvent under a firmlink/symlink-resolved prefix
+        // (e.g. /System/Volumes/Data/…, /private/var/…) that differs from the
+        // registered worktree root. The component scan still flags the `.git`
+        // change; the old strip_prefix(root) form silently returned false here.
+        assert!(is_git_meta_path(Path::new(
+            "/System/Volumes/Data/Users/x/repo/.git/packed-refs"
+        )));
+        assert!(is_git_meta_path(Path::new(
+            "/private/var/folders/repo/.git/refs/remotes/origin/main"
+        )));
     }
 
     #[test]

@@ -155,8 +155,23 @@ export default function App() {
     };
     checkUpdate();
     const updateTimer = setInterval(checkUpdate, 15 * 60 * 1000);
+    let lastGitSync = 0;
+    // Self-healing git catch-up: an FSEvent can be missed while the app is
+    // backgrounded/suspended (or the user just returns from a terminal), so
+    // re-sync git on focus/visibility — throttled so rapid focus toggling
+    // doesn't spam IPC. refreshGit() defaults to the active workspace and
+    // guards when there's no repo.
+    const syncGit = () => {
+      const now = Date.now();
+      if (now - lastGitSync < 1_500) return;
+      lastGitSync = now;
+      void useStore.getState().refreshGit();
+    };
     const onFocus = () => {
-      if (document.visibilityState === "visible") checkUpdate();
+      if (document.visibilityState === "visible") {
+        checkUpdate();
+        syncGit();
+      }
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -172,7 +187,11 @@ export default function App() {
       .isFocused()
       .then(setFocused)
       .catch(() => {});
-    const unlistenFocus = win.onFocusChanged(({ payload }) => setFocused(payload));
+    const unlistenFocus = win.onFocusChanged(({ payload }) => {
+      setFocused(payload);
+      // Window regained focus at the OS level → catch up on external git ops.
+      if (payload) syncGit();
+    });
     const onVisibility = () => {
       if (document.visibilityState === "hidden") setFocused(false);
     };

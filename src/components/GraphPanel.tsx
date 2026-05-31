@@ -192,7 +192,12 @@ export function GraphPanel() {
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="History">
-        <button type="button" className="icon-btn h-7 w-7" title="Refresh" onClick={load}>
+        <button
+          type="button"
+          className="icon-btn h-7 w-7"
+          title="Refresh"
+          onClick={() => useStore.getState().refreshGit(ws?.id)}
+        >
           <RefreshCw size={14} className={loading ? "spin" : ""} />
         </button>
       </PanelHeader>

@@ -1983,6 +1983,39 @@ describe("git write-ops (context-menu actions)", () => {
   });
 });
 
+describe("refreshGit (focus catch-up + manual ↻)", () => {
+  it("re-syncs SCM status + repo info and bumps gitNonce", async () => {
+    // One path for the on-focus catch-up and the History panel's manual ↻:
+    // refreshStatus (statusAndStats) for the SCM panel AND refreshRepoMeta
+    // (repoInfo + gitNonce bump → history graph reloads).
+    await addWorkspace("/repo");
+    const before = s().gitNonce;
+    m.statusAndStats.mockClear();
+    m.repoInfo.mockClear();
+    m.repoInfo.mockResolvedValue({
+      path: "/repo",
+      name: "repo",
+      headBranch: "feature",
+      isRepo: true,
+      originUrl: null,
+    });
+    await s().refreshGit(s().workspaces[0].id);
+    expect(m.statusAndStats).toHaveBeenCalledWith("/repo");
+    expect(m.repoInfo).toHaveBeenCalledWith("/repo");
+    expect(s().workspaces[0].repo.headBranch).toBe("feature");
+    expect(s().gitNonce).toBe(before + 1);
+  });
+
+  it("defaults to the active workspace, and is a no-op with none", async () => {
+    // No wsId + no active workspace → bail before touching the API.
+    m.statusAndStats.mockClear();
+    m.repoInfo.mockClear();
+    await s().refreshGit();
+    expect(m.statusAndStats).not.toHaveBeenCalled();
+    expect(m.repoInfo).not.toHaveBeenCalled();
+  });
+});
+
 describe("refreshRepoMeta (fs:changed → .git/ events)", () => {
   it("re-reads repo info and bumps gitNonce when a .git/ event fires", async () => {
     // Bug B: History was stuck until the next HEAD-mutating op or a manual
