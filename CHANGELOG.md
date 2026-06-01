@@ -6,6 +6,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-01
+
+A reliability release for two things you feel every day: agent notifications
+and git freshness. Notifications now fire for **any** agent — including one you
+just type into a shell (`claude`, `codex`, `aider`), on every Claude version
+and every platform — not only picker-launched ones. And the git view self-heals:
+returning to the window re-syncs, one ↻ refreshes everything, and the worktree
+watcher no longer goes blind to external git ops behind macOS firmlinks. No data
+migration required.
+
+### Added
+
+- **Window-focus git catch-up.** Returning to swarm (window focus, tab becoming
+  visible, or the OS-level focus change) re-syncs git for the active workspace,
+  so a missed filesystem event — e.g. an external `git remote prune` while swarm
+  was in the background — self-heals instead of leaving the graph and SCM stale.
+  Throttled (~1.5 s) to avoid IPC spam.
+
+### Changed
+
+- **One History ↻ refreshes everything.** The refresh button now resyncs commits,
+  branch/refs/PRs, and the SCM status through a single shared `refreshGit` path —
+  one click, one `gitLog` fetch — instead of only re-fetching commits.
+
+### Fixed
+
+- **Notifications fire for every agent, typed or picker-launched.** An agent
+  *typed into a shell* (e.g. `claude`) used to be completely silent — system and
+  in-app — because the notify chain was wired per-launch via `--settings` and a
+  Claude-version-gated OSC sequence, which a hand-typed agent never carries. Notify
+  is now wired **globally** over the version-robust event-file path: Claude installs
+  `Stop`/`Notification`/`PreToolUse`/`PermissionRequest` hooks into the real
+  `~/.claude/settings.json` (and `claude-stop` writes the last message to the event
+  file rather than emitting OSC, so it works on every Claude version); codex runs in
+  the notify-enabled isolated `CODEX_HOME` on every pane (the user's `~/.codex` is
+  never touched); aider gets `AIDER_NOTIFICATIONS[_COMMAND]` set from Rust. The
+  cross-workspace focus gate is unchanged — a banner still pops only when the source
+  pane isn't already visible, so a turn never double-banners.
+- **Worktree watcher is firmlink/symlink-robust.** `.git` change detection now scans
+  for a `.git` path component instead of stripping the registered root prefix, so an
+  FSEvent reported under a macOS firmlink- or symlink-resolved path
+  (`/System/Volumes/Data/…`, `/private/var/…`) still flags a repo-meta change and
+  refreshes the graph/PRs.
+
 ## [0.6.0] - 2026-05-29
 
 A hardening release. The headline is a security pass that closes cross-pane
