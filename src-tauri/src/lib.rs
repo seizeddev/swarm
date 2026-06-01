@@ -645,16 +645,19 @@ fn swarm_bin_path() -> String {
         .unwrap_or_else(|_| "swarm".into())
 }
 
-/// Exposed to the frontend so it can build Claude Code's Stop-hook command
-/// (`<bin> --notify-helper claude-stop`).
+/// The swarm binary path, exposed to the frontend so it can embed `<bin>
+/// --notify-helper …` into an agent's per-launch flags (e.g. Aider's
+/// `--notifications-command`). The agents we own a config for are wired globally
+/// instead (see `install_agent_hooks`).
 #[tauri::command]
 fn swarm_bin() -> String {
     swarm_bin_path()
 }
 
-/// Install turn-completion notification hooks into the real configs of agents
-/// without an isolated-config override (Gemini, Cursor, OpenCode, Amp). Gated
-/// on each binary being on PATH; idempotent + defensive. Best-effort.
+/// Install turn-completion + interaction notification hooks into the real configs
+/// of agents without an isolated-config override (Claude, Gemini, Cursor,
+/// OpenCode, Amp) — so a hand-typed agent notifies exactly like a picker-launched
+/// one. Gated on each binary being on PATH; idempotent + defensive. Best-effort.
 #[tauri::command]
 fn install_agent_hooks() {
     agent_hooks::install_all(&swarm_bin_path());

@@ -79,12 +79,7 @@ import { api } from "../lib/ipc";
 import { updater } from "../lib/updater";
 import { notifyOS } from "../lib/notify";
 import { confirmDialog } from "../lib/dialog";
-import {
-  __resetNetworkCaches,
-  CLAUDE_NOTIF_SENTINEL,
-  useActiveWorkspace,
-  useStore,
-} from "../store";
+import { __resetNetworkCaches, useActiveWorkspace, useStore } from "../store";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -329,80 +324,22 @@ describe("pane creation", () => {
     await addWorkspace("/repo");
   });
 
-  it("gives a Claude pane a session id and instrumented launch args", () => {
+  it("gives a Claude pane a session id and a slim --settings (preferredNotifChannel, no hooks)", () => {
     s().addPane(CLAUDE);
     const pane = s().panes.find((p) => p.agentId === "claude")!;
     expect(pane.sessionId).toBeTruthy();
     expect(pane.args).toContain("--session-id");
     expect(pane.args).toContain(pane.sessionId);
-    expect(pane.args).toContain("--settings");
-  });
-
-  it("wires Claude's Notification hook so permission prompts and idle pauses notify", () => {
-    // `preferredNotifChannel: notifications_disabled` kills Claude's built-in
-    // desktop notifications. Without an explicit Notification hook, the events
-    // routed through Claude's own notification flow — subagent permission
-    // prompts, the 60s idle reminder, MCP elicitation — never reach swarm.
-    // The hook re-invokes our notify-helper, which forwards the `message` to the
-    // events file → watcher → `pane:notify`.
-    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
-    return addWorkspace("/repo").then(() => {
-      s().addPane(CLAUDE);
-      const pane = s().panes.find((p) => p.agentId === "claude")!;
-      const idx = pane.args.indexOf("--settings");
-      expect(idx).toBeGreaterThanOrEqual(0);
-      const settings = JSON.parse(pane.args[idx + 1]);
-      expect(settings.hooks.Notification).toBeTruthy();
-      const cmds = JSON.stringify(settings.hooks.Notification);
-      expect(cmds).toContain("--notify-helper claude-notification");
-      // Stop is still wired (turn-complete notification path).
-      expect(settings.hooks.Stop).toBeTruthy();
-    });
-  });
-
-  it("wires PermissionRequest so tool-permission prompts notify instantly (not only after idle)", () => {
-    // For normal permission-needing tools (Bash/Edit/Write/...), Claude's own
-    // `executeNotificationHooks` path (J8H in 2.1.153) is NOT called when the
-    // main agent asks the user — the in-terminal UI is the prompt. The
-    // Notification hook only catches these via the ~60s idle reminder.
-    // PermissionRequest is a separate hook event (matchQuery = tool name,
-    // "Run before permission prompt") that fires the moment Claude is about
-    // to show the prompt — perfect for an instant OS banner.
-    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
-    return addWorkspace("/repo").then(() => {
-      s().addPane(CLAUDE);
-      const pane = s().panes.find((p) => p.agentId === "claude")!;
-      const idx = pane.args.indexOf("--settings");
-      const settings = JSON.parse(pane.args[idx + 1]);
-      expect(settings.hooks.PermissionRequest).toBeTruthy();
-      const serialized = JSON.stringify(settings.hooks.PermissionRequest);
-      expect(serialized).toContain("--notify-helper claude-permission");
-    });
-  });
-
-  it("wires PreToolUse for AskUserQuestion + ExitPlanMode so interactive prompts notify instantly", () => {
-    // AskUserQuestion (multiple-choice prompt) and ExitPlanMode (plan-approval
-    // prompt) are `requiresUserInteraction` tools with their own UI flow — the
-    // Notification hook only fires for them indirectly via the idle reminder
-    // after `messageIdleNotifThresholdMs` (~60s). PreToolUse with a matcher
-    // on these tool names fires the instant Claude calls the tool, so the user
-    // sees the OS banner immediately rather than minutes later.
-    useStore.setState({ ...INITIAL, swarmBin: "/path/to/swarm", agents: [SHELL, CLAUDE] });
-    return addWorkspace("/repo").then(() => {
-      s().addPane(CLAUDE);
-      const pane = s().panes.find((p) => p.agentId === "claude")!;
-      const idx = pane.args.indexOf("--settings");
-      const settings = JSON.parse(pane.args[idx + 1]);
-      expect(settings.hooks.PreToolUse).toBeTruthy();
-      const arr = settings.hooks.PreToolUse;
-      // The matcher is a regex Claude evaluates against the tool name; either
-      // alternation or two separate entries is fine, but BOTH tools must be
-      // covered by the registered command(s).
-      const serialized = JSON.stringify(arr);
-      expect(serialized).toContain("AskUserQuestion");
-      expect(serialized).toContain("ExitPlanMode");
-      expect(serialized).toContain("--notify-helper claude-pretool");
-    });
+    const idx = pane.args.indexOf("--settings");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const settings = JSON.parse(pane.args[idx + 1]);
+    // The notification hooks (Stop/Notification/PreToolUse/PermissionRequest) now
+    // live GLOBALLY in ~/.claude/settings.json (Rust agent_hooks), so a hand-typed
+    // `claude` inside swarm notifies too — see the agent_hooks unit tests for the
+    // hook content. The only per-launch setting left is suppressing Claude's OWN
+    // notification channel so its desktop banner can't double with our hook banner.
+    expect(settings.preferredNotifChannel).toBe("notifications_disabled");
+    expect(settings.hooks).toBeUndefined();
   });
 
   it("wires SWARM_EVENT_FILE into each pane's env", () => {
@@ -410,12 +347,22 @@ describe("pane creation", () => {
     expect(pane.env).toContainEqual(["SWARM_EVENT_FILE", `/events/${pane.paneId}`]);
   });
 
-  it("adds CODEX_HOME only for codex panes", () => {
+  it("adds CODEX_HOME to EVERY pane so a hand-typed codex uses the notify-enabled home", () => {
     useStore.setState({ codexHome: "/codex-home" });
+    // A codex agent pane gets it...
     const codex: AgentDef = { ...SHELL, id: "codex", name: "Codex", command: "codex" };
     s().addPane(codex);
-    const pane = s().panes.find((p) => p.agentId === "codex")!;
-    expect(pane.env).toContainEqual(["CODEX_HOME", "/codex-home"]);
+    expect(s().panes.find((p) => p.agentId === "codex")!.env).toContainEqual([
+      "CODEX_HOME",
+      "/codex-home",
+    ]);
+    // ...and so does a plain shell pane spawned now, so `codex` typed into it is
+    // covered too. (Use the just-added pane — panes capture env at creation, so the
+    // beforeEach shell predates `codexHome` being set.)
+    s().addPane(SHELL);
+    const shell = s().panes[s().panes.length - 1];
+    expect(shell.agentId).toBe("shell");
+    expect(shell.env).toContainEqual(["CODEX_HOME", "/codex-home"]);
   });
 
   it("opens each new pane in its own tab and makes it active", () => {
@@ -650,13 +597,19 @@ describe("notifications + attention", () => {
     expect(s().notifications[0].read).toBe(true);
   });
 
-  it("drops Claude's own terminal notifications, keeping only the sentinel-tagged one", () => {
+  it("drops ALL of Claude's own terminal (OSC) notifications; the real one arrives via the event file", () => {
     s().addPane(CLAUDE);
     const claudePane = s().panes.find((p) => p.agentId === "claude")!;
     s().bindPty(claudePane.paneId, { id: "pty-claude", token: "tok-claude" });
     s().openDiff("a.txt", false); // panes not visible
-    s().onNotify("pty-claude", "No response requested.", "noise"); // Claude's own → dropped
-    s().onNotify("pty-claude", CLAUDE_NOTIF_SENTINEL, "Hi 👋"); // ours → kept
+    // Every OSC notification on a Claude pane is Claude Code's own channel — dropped,
+    // so it never doubles with our hook-based banner (no sentinel handshake anymore).
+    s().onNotify("pty-claude", "Build", "noise");
+    s().onNotify("pty-claude", "swarm-claude", "also noise");
+    expect(s().notifications.filter((n) => n.paneId === claudePane.paneId)).toHaveLength(0);
+    // The real turn-complete notification comes through the global Stop hook's
+    // event file (pane:notify → onPaneNotify), carrying our last-message body.
+    s().onPaneNotify(claudePane.paneId, "Hi 👋");
     const mine = s().notifications.filter((n) => n.paneId === claudePane.paneId);
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ title: claudePane.title, body: "Hi 👋" });

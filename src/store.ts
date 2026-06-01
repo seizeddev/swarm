@@ -126,87 +126,13 @@ export function __resetNetworkCaches() {
   prCache.clear();
 }
 
-// Redirect Claude Code's notifications into our terminal: disable its built-in
-// (desktop) channel, and make the Stop hook emit an OSC 777 our parser catches.
-// So notifications fire on turn-completion only — never on startup or the bell.
-// Our Claude Stop hook tags its OSC 777 with this sentinel title (see
-// notify_helper.rs). On a Claude pane we accept only notifications carrying it,
-// dropping Claude Code's *own* terminal notifications so a turn notifies once.
-export const CLAUDE_NOTIF_SENTINEL = "swarm-claude";
-
-function claudeSettings(bin: string): string {
-  return JSON.stringify({
-    preferredNotifChannel: "notifications_disabled",
-    hooks: {
-      // Turn-complete (Claude finished responding to the user). OSC 777 with
-      // our sentinel, written to the terminal via `terminalSequence`.
-      Stop: [
-        {
-          matcher: "",
-          hooks: [
-            { type: "command", command: `"${bin}" --notify-helper claude-stop`, timeout: 10 },
-          ],
-        },
-      ],
-      // Mid-turn pauses Claude surfaces through its notification flow — the 60s
-      // idle reminder ("Claude is waiting for your input"), subagent permission
-      // prompts, MCP elicitation. Doesn't fire instantly for the top-level
-      // `requiresUserInteraction` tools (those have their own UI flow); the
-      // PreToolUse hook below covers them.
-      Notification: [
-        {
-          matcher: "",
-          hooks: [
-            {
-              type: "command",
-              command: `"${bin}" --notify-helper claude-notification`,
-              timeout: 10,
-            },
-          ],
-        },
-      ],
-      // Instant notification for Claude's two `requiresUserInteraction` tools:
-      // `AskUserQuestion` (multiple-choice prompt) and `ExitPlanMode` (plan-
-      // approval prompt). The Notification hook would catch these only via the
-      // idle reminder (~60s after Claude paused); PreToolUse fires the moment
-      // Claude calls the tool, so the OS banner is immediate. The matcher is a
-      // regex over the tool name (verified against Claude 2.1.153's hook
-      // dispatcher — `matchQuery:H` where H is the tool name). These tools
-      // bypass the standard permission flow (the `requiresUserInteraction +
-      // behavior==="ask"` branch returns before `runHooks` runs), so they do
-      // NOT also fire PermissionRequest — no double-fire.
-      PreToolUse: [
-        {
-          matcher: "AskUserQuestion|ExitPlanMode",
-          hooks: [
-            {
-              type: "command",
-              command: `"${bin}" --notify-helper claude-pretool`,
-              timeout: 10,
-            },
-          ],
-        },
-      ],
-      // Instant notification for normal tool-permission prompts (Bash, Edit,
-      // Write, …). Claude's own notification-channel path (`J8H` → `uc`)
-      // is NOT taken for the main agent's in-terminal permission prompt —
-      // it's the prompt itself. Without this hook the user only learns
-      // they're being asked after the ~60s idle reminder. PermissionRequest
-      // fires before the prompt appears, so the banner is immediate.
-      PermissionRequest: [
-        {
-          matcher: "",
-          hooks: [
-            {
-              type: "command",
-              command: `"${bin}" --notify-helper claude-permission`,
-              timeout: 10,
-            },
-          ],
-        },
-      ],
-    },
-  });
+// swarm-launched Claude: suppress Claude Code's OWN notification channel so its
+// desktop banner can't double with ours. The notifications themselves are wired
+// GLOBALLY in ~/.claude/settings.json (src-tauri/agent_hooks.rs) over the
+// version-independent event-file path, so they fire for a hand-typed `claude`
+// too, not only picker launches — we inject no hooks here.
+function claudeSettings(): string {
+  return JSON.stringify({ preferredNotifChannel: "notifications_disabled" });
 }
 
 // Per-agent launch args: instrument Claude (session id + settings), and on
@@ -220,7 +146,7 @@ function launchArgs(
 ): string[] {
   if (agent.id === "claude" && sessionId) {
     const base = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
-    return [...base, "--settings", claudeSettings(bin)];
+    return [...base, "--settings", claudeSettings()];
   }
   const base = resume && agent.resume.length ? agent.resume : agent.args;
   // Aider has no hook config; it takes a completion command via launch flag.
@@ -445,8 +371,13 @@ export const useStore = create<State>((set, get) => {
     if (agentId !== "shell" && args && args.length) {
       env.push(["SWARM_AGENT_ARGV_JSON", JSON.stringify(args)]);
     }
+    // CODEX_HOME on EVERY pane (not just codex agent panes): a `codex` TYPED into
+    // any shell inside swarm then uses our notify-enabled isolated home too, so it
+    // notifies exactly like a picker-launched one — the user's real ~/.codex is
+    // never modified (the isolated home mirrors it + adds the notify program and
+    // session-capture hook). CODEX_HOME only affects codex; harmless elsewhere.
     const ch = get().codexHome;
-    if (agentId === "codex" && ch) env.push(["CODEX_HOME", ch]);
+    if (ch) env.push(["CODEX_HOME", ch]);
     return env;
   };
 
@@ -694,7 +625,7 @@ export const useStore = create<State>((set, get) => {
                 const a = agents.find((x) => x.id === captured.agent);
                 const args =
                   captured.agent === "claude"
-                    ? [...captured.args, "--settings", claudeSettings(swarmBin ?? "swarm")]
+                    ? [...captured.args, "--settings", claudeSettings()]
                     : captured.args;
                 panes.push({
                   paneId: sp.paneId,
@@ -1215,11 +1146,15 @@ export const useStore = create<State>((set, get) => {
       // cross-workspace + cross-editor cases (only the small in-app bell
       // remained, easy to miss).
       if (!pane || lookingAtPane(pane)) return;
-      // On a Claude pane our Stop hook is the source of truth (sentinel title);
-      // drop Claude Code's own terminal notifications so a turn fires once, with
-      // our real-last-message body — not a duplicate / an intermediate preamble.
-      if (pane.agentId === "claude" && title !== CLAUDE_NOTIF_SENTINEL) return;
-      const shownTitle = pane.agentId === "claude" ? pane.title : title || pane.title;
+      // On a Claude pane, ALL terminal (OSC) notifications are Claude Code's own
+      // channel — drop them. Our notifications come through the global Stop/
+      // Notification/PreToolUse/PermissionRequest hooks (event file → onPaneNotify),
+      // never OSC, so a Claude turn notifies once with our real-last-message body
+      // and never doubles with Claude's built-in banner. (Claude's bell is inert,
+      // its OSC dropped here — which is why no `preferredNotifChannel` is needed
+      // for a hand-typed Claude that can't carry our per-launch `--settings`.)
+      if (pane.agentId === "claude") return;
+      const shownTitle = title || pane.title;
       const notif: Notif = {
         id: uid("n"),
         workspaceId: pane.workspaceId,

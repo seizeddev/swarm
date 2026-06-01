@@ -2,27 +2,30 @@
 //! Cross-platform notification helper, invoked as `swarm --notify-helper <mode>`
 //! from agent completion hooks. Pure Rust (no bash/jq), so the same hook command
 //! works on macOS, Linux and Windows — the agents only ever need to run our own
-//! binary. Two modes:
+//! binary. Every mode that produces a notification appends one line to
+//! `$SWARM_EVENT_FILE`; the events watcher turns that into a `pane:notify`. This
+//! file-based path is deliberately version-independent: it depends only on an
+//! agent's hook *running a command*, never on a terminal-rendering feature like
+//! Claude Code's `terminalSequence`/OSC 777 (which exists only on ≥2.1.141 and
+//! could change). Modes:
 //!
-//!   - `claude-stop`: read Claude Code's Stop-hook JSON from stdin, pull the last
-//!     assistant message out of its transcript, and print a `terminalSequence`
-//!     JSON (OSC 777) to stdout for Claude to emit into the PTY.
+//!   - `claude-stop`: Claude Code's Stop hook — pull the last assistant message
+//!     (Stop payload field, transcript fallback) and write it to the event file.
 //!   - `event`: read an agent's completion payload (Codex passes it as an argv
-//!     arg; others pipe it on stdin), pull the last assistant message, and append
-//!     one line to `$SWARM_EVENT_FILE` — the events watcher turns it into a
-//!     `pane:notify`.
+//!     arg; others pipe it on stdin), pull the last assistant message, and write
+//!     one line to the event file.
+//!   - `claude-notification` / `claude-pretool` / `claude-permission`: Claude's
+//!     Notification / PreToolUse / PermissionRequest hooks — extract the
+//!     user-visible reason and write it to the event file.
 //!
-//! Both fall back to "Turn complete" when no message is available.
+//! All fall back to "Turn complete" when no message is available. Outside swarm
+//! (`SWARM_EVENT_FILE` unset) every mode is a no-op, so a globally-installed hook
+//! is harmless in the user's own terminal.
 
 use serde_json::Value;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-// OSC 777 title for our Claude Stop-hook notification. A sentinel (not the
-// display name) so the frontend can accept *only* our notification on a Claude
-// pane and drop Claude Code's own — see CLAUDE_NOTIF_SENTINEL in store.ts. The
-// UI shows the pane title ("Claude Code"), not this token.
-const AGENT_NAME: &str = "swarm-claude";
 const FALLBACK: &str = "Turn complete";
 const MAX_LEN: usize = 200;
 
@@ -74,12 +77,10 @@ pub fn run(args: &[String]) {
     match mode {
         "claude-stop" => {
             let msg = claude_stop_message(&payload);
-            let seq = format!("\u{1b}]777;notify;{AGENT_NAME};{msg}\u{7}");
-            // serde_json escapes the ESC/BEL control bytes as  / .
-            let out = serde_json::json!({ "terminalSequence": seq });
-            if let Ok(s) = serde_json::to_string(&out) {
-                print!("{s}");
-            }
+            // Turn-complete: the final assistant message -> the event file. This
+            // was an OSC 777 `terminalSequence` (gated on Claude >= 2.1.141); the
+            // event-file path works on every Claude that can run a Stop hook.
+            write_event_line(&msg);
         }
         "event" => {
             let msg = field_message(&payload).unwrap_or_else(|| FALLBACK.to_string());

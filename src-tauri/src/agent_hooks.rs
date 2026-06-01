@@ -10,8 +10,9 @@
 //! Writes are: gated on the agent's binary being on PATH (don't create config for
 //! tools you don't have); idempotent (skip if our command is already present); and
 //! defensive (never clobber an unparseable file or unrelated keys). The OpenCode/Amp
-//! plugin files are ours, so we just (over)write them. Claude/Codex notify is wired
-//! elsewhere (per-launch `--settings` / CODEX_HOME). Best-effort: failures are ignored.
+//! plugin files are ours, so we just (over)write them. Claude's notify hooks are now
+//! installed here too (globally, so a hand-typed `claude` notifies); only Codex notify
+//! lives elsewhere (its isolated CODEX_HOME). Best-effort: failures are ignored.
 //!
 //! The install is also **inspectable and reversible** through the Agent Integrations
 //! UI: `integrations_status` reports which are present, `integration_preview` returns
@@ -62,6 +63,14 @@ pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
 /// through.
 fn hook_cmd(bin: &str) -> String {
     format!("{} --notify-helper event", shell_single_quote(bin))
+}
+
+/// `'<bin>' --notify-helper <mode>` — a Claude-specific notification hook
+/// (`claude-stop` / `claude-notification` / `claude-pretool` / `claude-permission`),
+/// same shell-quoting posture. Each mode writes the user-visible reason to the
+/// event file, so it's version-independent (no OSC `terminalSequence` reliance).
+fn notify_cmd(bin: &str, mode: &str) -> String {
+    format!("{} --notify-helper {mode}", shell_single_quote(bin))
 }
 
 /// `'<bin>' --notify-helper session-start <agent>` — an agent session-capture
@@ -229,8 +238,7 @@ fn plan_json(
 ) -> serde_json::Map<String, Value> {
     match agent {
         "claude" => {
-            // Capture only: Claude's turn-completion notify is wired per-launch via
-            // `--settings`, not a global hook.
+            // Session capture for cmux-style resume-on-restart.
             if let Some(starts) = ensure_array(&mut root, &["hooks", "SessionStart"]) {
                 refresh_swarm_entry(
                     starts,
@@ -238,6 +246,38 @@ fn plan_json(
                         "hooks": [{ "type": "command", "command": session_capture_cmd(bin, "claude"), "timeout": 10 }]
                     }),
                 );
+            }
+            // Turn-completion + interaction notifications, wired GLOBALLY (not just
+            // per-launch via `--settings`) so a `claude` *typed* into any shell
+            // inside swarm notifies exactly like one started through the picker —
+            // the previous per-launch-only wiring left hand-typed Claude silent.
+            // Every hook writes to the event file (version-independent; no OSC
+            // `terminalSequence` reliance) and is a no-op outside swarm
+            // (`SWARM_EVENT_FILE` unset). The matchers/modes mirror the set we used
+            // to inject via `--settings`:
+            //   - Stop              → final assistant message (turn complete)
+            //   - Notification      → idle reminder / MCP elicitation / subagent ask
+            //   - PreToolUse        → AskUserQuestion / ExitPlanMode (instant banner)
+            //   - PermissionRequest → tool-permission prompt (Bash/Edit/Write/…)
+            for (event, mode, matcher) in [
+                ("Stop", "claude-stop", ""),
+                ("Notification", "claude-notification", ""),
+                (
+                    "PreToolUse",
+                    "claude-pretool",
+                    "AskUserQuestion|ExitPlanMode",
+                ),
+                ("PermissionRequest", "claude-permission", ""),
+            ] {
+                if let Some(arr) = ensure_array(&mut root, &["hooks", event]) {
+                    refresh_swarm_entry(
+                        arr,
+                        json!({
+                            "matcher": matcher,
+                            "hooks": [{ "type": "command", "command": notify_cmd(bin, mode), "timeout": 10 }]
+                        }),
+                    );
+                }
             }
         }
         "gemini" => {
@@ -282,7 +322,13 @@ fn strip_json(
     mut root: serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
     let arrays: &[&[&str]] = match agent {
-        "claude" => &[&["hooks", "SessionStart"]],
+        "claude" => &[
+            &["hooks", "SessionStart"],
+            &["hooks", "Stop"],
+            &["hooks", "Notification"],
+            &["hooks", "PreToolUse"],
+            &["hooks", "PermissionRequest"],
+        ],
         "gemini" => &[&["hooks", "AfterAgent"], &["hooks", "SessionStart"]],
         "cursor" => &[&["hooks", "stop"], &["hooks", "beforeSubmitPrompt"]],
         _ => &[],
@@ -795,6 +841,57 @@ mod tests {
         // Installed: planning is a no-op.
         let installed = plan_json("claude", "/b", empty);
         assert_eq!(plan_json("claude", "/b", installed.clone()), installed);
+    }
+
+    #[test]
+    fn claude_plan_installs_global_notify_hooks() {
+        // Regression: a `claude` *typed* into a shell carries no per-launch
+        // `--settings`, so its turn-completion / interaction notifications must
+        // come from the GLOBAL ~/.claude/settings.json. Before, only SessionStart
+        // (capture) was global → hand-typed Claude was completely silent. The
+        // notify hooks must now be installed globally, each invoking the matching
+        // event-file helper mode (version-independent — no OSC `terminalSequence`).
+        let planned = plan_json("claude", "/b", serde_json::Map::new());
+        let hooks = &planned["hooks"];
+        // Capture hook (resume-on-restart) stays.
+        assert!(hooks["SessionStart"].is_array());
+        for (event, mode) in [
+            ("Stop", "claude-stop"),
+            ("Notification", "claude-notification"),
+            ("PreToolUse", "claude-pretool"),
+            ("PermissionRequest", "claude-permission"),
+        ] {
+            let serialized = serde_json::to_string(&hooks[event]).unwrap();
+            assert!(
+                serialized.contains(&format!("--notify-helper {mode}")),
+                "{event} must invoke `--notify-helper {mode}`, got: {serialized}"
+            );
+        }
+        // PreToolUse is scoped to Claude's two interactive tools.
+        let pretool = serde_json::to_string(&hooks["PreToolUse"]).unwrap();
+        assert!(pretool.contains("AskUserQuestion|ExitPlanMode"));
+        // Idempotent: re-planning an installed config is a no-op (how installed
+        // state is detected). Covers the per-event refresh_swarm_entry loop.
+        assert_eq!(plan_json("claude", "/b", planned.clone()), planned);
+    }
+
+    #[test]
+    fn strip_removes_all_claude_notify_hooks_and_capture() {
+        // Reversibility: removing Claude's integration must strip every swarm hook
+        // it installs — capture AND the four notify hooks — leaving the user's
+        // other hooks untouched (empty arrays where only ours lived).
+        let planned = plan_json("claude", "/b", serde_json::Map::new());
+        let stripped = strip_json("claude", planned);
+        for event in [
+            "SessionStart",
+            "Stop",
+            "Notification",
+            "PreToolUse",
+            "PermissionRequest",
+        ] {
+            let arr = stripped["hooks"][event].as_array().unwrap();
+            assert!(arr.is_empty(), "{event} must be emptied of swarm hooks");
+        }
     }
 
     #[test]

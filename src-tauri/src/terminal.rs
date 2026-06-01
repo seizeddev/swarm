@@ -563,6 +563,13 @@ pub(crate) fn is_allowed_command(cmd: &str) -> bool {
         .any(|r| !r.command.is_empty() && r.command == base)
 }
 
+/// The command Aider runs on turn completion: `"<swarm>" --notify-helper event`.
+/// Double-quoted so a bin path with spaces stays a single shell token, matching
+/// the picker-launch form in store.ts so typed and launched Aider notify alike.
+fn aider_notify_command(exe: &str) -> String {
+    format!("\"{exe}\" --notify-helper event")
+}
+
 impl TerminalManager {
     pub fn spawn(
         &self,
@@ -633,6 +640,21 @@ impl TerminalManager {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Aider has no hook/plugin config of its own — it only takes a completion
+        // notification command. Wire it through Aider's auto-generated env vars
+        // (configargparse `auto_env_var_prefix="AIDER_"`), set HERE in Rust, never
+        // via the renderer env allowlist: the value is an executed command, so a
+        // renderer-set one would be a code-execution vector. Swarm-controlled, so a
+        // `aider` *typed* into any shell notifies like a picker-launched one. The
+        // command is a no-op unless the pane also carries SWARM_EVENT_FILE (every
+        // swarm pane does); outside swarm these vars are simply never set.
+        if let Ok(exe) = std::env::current_exe() {
+            cmd.env("AIDER_NOTIFICATIONS", "true");
+            cmd.env(
+                "AIDER_NOTIFICATIONS_COMMAND",
+                aider_notify_command(&exe.to_string_lossy()),
+            );
+        }
 
         let child = pair
             .slave
@@ -1105,6 +1127,21 @@ impl TerminalManager {
 mod tests {
     use super::*;
     use alacritty_terminal::vte::ansi::Rgb;
+
+    #[test]
+    fn aider_notify_command_quotes_the_binary() {
+        // The value Aider executes on turn-complete; it must stay a single shell
+        // token so a bundled path with spaces (…/swarm.app/Contents/MacOS/swarm)
+        // isn't split into two args.
+        assert_eq!(
+            aider_notify_command("/Applications/swarm.app/Contents/MacOS/swarm"),
+            "\"/Applications/swarm.app/Contents/MacOS/swarm\" --notify-helper event"
+        );
+        assert_eq!(
+            aider_notify_command("/Users/x/my apps/swarm"),
+            "\"/Users/x/my apps/swarm\" --notify-helper event"
+        );
+    }
 
     #[test]
     fn enc_truecolor_packs_rgb() {
