@@ -1262,6 +1262,26 @@ mod tests {
     }
 
     #[test]
+    fn status_caps_a_huge_untracked_tree_and_reports_the_true_total() {
+        // The reported footgun: a large untracked dir with no `.gitignore`
+        // (node_modules) reporting hundreds of thousands of changes. Without a
+        // cap the change list is unbounded — one IPC entry + one DOM row per
+        // file froze the whole app. The list must stay bounded.
+        let dir = scratch();
+        let _repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        for i in 0..5_040 {
+            fs::write(dir.join(format!("f{i:06}.txt")), "x\n").unwrap();
+        }
+        let r = status_and_stats(path).unwrap();
+        assert!(
+            r.changes.len() <= 5_000,
+            "change list must be capped; was {}",
+            r.changes.len()
+        );
+    }
+
+    #[test]
     fn diff_stats_aggregates_insertions_and_deletions() {
         let dir = scratch();
         let _repo = init_repo(&dir);
