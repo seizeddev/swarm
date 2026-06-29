@@ -61,12 +61,19 @@ export function CommandPalette({
   };
 
   return (
-    <Modal onClose={onClose} align="top">
-      <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-3.5 py-3">
+    <Modal onClose={onClose} align="top" labelledBy="cmdp-title">
+      <h2 id="cmdp-title" className="sr-only">
+        Command palette
+      </h2>
+      <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
         <Search size={16} className="flex-none text-[var(--color-faint)]" />
         <input
           ref={inputRef}
+          role="combobox"
           aria-label="Command search"
+          aria-expanded={results.length > 0}
+          aria-controls="cmdp-list"
+          aria-activedescendant={results[active] ? `cmdp-opt-${results[active].id}` : undefined}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
@@ -77,7 +84,13 @@ export function CommandPalette({
         />
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
+      <div
+        ref={listRef}
+        role="listbox"
+        id="cmdp-list"
+        aria-label="Commands"
+        className="min-h-0 flex-1 overflow-y-auto p-1.5"
+      >
         {results.length === 0 ? (
           <p className="px-2.5 py-6 text-center text-base text-[var(--color-muted)]">
             No matching commands
@@ -87,6 +100,9 @@ export function CommandPalette({
             <button
               key={cmd.id}
               type="button"
+              role="option"
+              aria-selected={i === active}
+              id={`cmdp-opt-${cmd.id}`}
               data-active={i === active}
               onMouseMove={() => setActive(i)}
               onClick={() => run(cmd)}

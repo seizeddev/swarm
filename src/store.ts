@@ -13,6 +13,7 @@ import {
 } from "./lib/layout";
 import { loadSnap, saveSnap } from "./lib/persist";
 import { confirmDialog } from "./lib/dialog";
+import { toast } from "./lib/toast";
 import { notifyOS } from "./lib/notify";
 import { updater } from "./lib/updater";
 import type {
@@ -79,6 +80,10 @@ export interface Workspace {
   changesTruncated: boolean;
   diffStats: DiffStatsInfo | null;
   prs: PrSummary[];
+  // Distinguishes "PRs still loading" from "no open PRs" so the panel shows a
+  // skeleton instead of a premature, possibly-wrong "No open pull requests."
+  // True until the first loadPrs settles (or a cache hit resolves it instantly).
+  prsLoading: boolean;
   ghLogin: string | null;
 }
 
@@ -323,7 +328,7 @@ export const useStore = create<State>((set, get) => {
   // so the history graph reloads. Errors are caught and shown, never thrown.
   const gitMutate = async (
     fn: (ws: Workspace) => Promise<void>,
-    opts: { movedHead?: boolean } = {},
+    opts: { movedHead?: boolean; success?: string } = {},
   ) => {
     const ws = active();
     if (!ws) return;
@@ -336,6 +341,9 @@ export const useStore = create<State>((set, get) => {
         if (info) patch(ws.id, { repo: info });
         set((s) => ({ gitNonce: s.gitNonce + 1 }));
       }
+      // A confirmation for the ops whose effect lands where the user can't see it
+      // (HEAD moved, files discarded) — only on success, never after the catch.
+      if (opts.success) toast(opts.success);
     } catch (e: any) {
       set({ error: e?.message ?? String(e) });
     } finally {
@@ -583,6 +591,7 @@ export const useStore = create<State>((set, get) => {
               changesTruncated: false,
               diffStats: null,
               prs: [],
+              prsLoading: true,
               ghLogin: null,
             });
             // Missing workspace: skip pane restore entirely. Pane cwds point at
@@ -733,6 +742,7 @@ export const useStore = create<State>((set, get) => {
           changesTruncated: false,
           diffStats: null,
           prs: [],
+          prsLoading: true,
           ghLogin: null,
         };
         set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: id, ghAvailable: gh }));
@@ -1085,6 +1095,7 @@ export const useStore = create<State>((set, get) => {
         await api.commit(ws.repo.path, msg);
         patch(ws.id, { commitMsg: "" });
         await get().refreshStatus(ws.id);
+        toast("Committed");
       } catch (e: any) {
         set({ error: e?.message ?? String(e) });
       } finally {
@@ -1094,26 +1105,44 @@ export const useStore = create<State>((set, get) => {
 
     async discardFiles(paths) {
       if (!paths.length) return;
-      await gitMutate((ws) => api.discard(ws.repo.path, paths));
+      await gitMutate((ws) => api.discard(ws.repo.path, paths), {
+        success: `Discarded changes to ${paths.length} file${paths.length === 1 ? "" : "s"}`,
+      });
     },
     async checkoutRef(name) {
-      await gitMutate((ws) => api.checkoutRef(ws.repo.path, name), { movedHead: true });
+      // `name` may be a branch ref or a bare 40-char commit oid — short-form the
+      // latter so the toast reads "Checked out a1b2c3d", not a full sha.
+      const label = /^[0-9a-f]{40}$/i.test(name) ? name.slice(0, 7) : name;
+      await gitMutate((ws) => api.checkoutRef(ws.repo.path, name), {
+        movedHead: true,
+        success: `Checked out ${label}`,
+      });
     },
     async createBranchAt(name, start) {
       const clean = name.trim();
       if (!clean) return;
-      await gitMutate((ws) => api.createBranch(ws.repo.path, clean, start), { movedHead: true });
+      await gitMutate((ws) => api.createBranch(ws.repo.path, clean, start), {
+        movedHead: true,
+        success: `Created branch ${clean}`,
+      });
     },
     async resetTo(oid, mode) {
-      await gitMutate((ws) => api.resetTo(ws.repo.path, oid, mode), { movedHead: true });
+      await gitMutate((ws) => api.resetTo(ws.repo.path, oid, mode), {
+        movedHead: true,
+        success: `Reset to ${oid.slice(0, 7)}`,
+      });
     },
     async revertCommit(oid) {
       await gitMutate((ws) => api.revertCommit(ws.repo.path, oid).then(() => {}), {
         movedHead: true,
+        success: `Reverted ${oid.slice(0, 7)}`,
       });
     },
     async prCheckout(pr) {
-      await gitMutate((ws) => api.prCheckout(ws.repo.path, pr.number), { movedHead: true });
+      await gitMutate((ws) => api.prCheckout(ws.repo.path, pr.number), {
+        movedHead: true,
+        success: `Checked out PR #${pr.number}`,
+      });
     },
     async revealPath(path) {
       await api.revealPath(path).catch((e: any) => set({ error: e?.message ?? String(e) }));
@@ -1124,15 +1153,20 @@ export const useStore = create<State>((set, get) => {
       if (!ws) return;
       const cached = prCache.get(ws.repo.path);
       if (!force && cached && Date.now() - cached.ts < PR_TTL_MS) {
-        patch(ws.id, { prs: cached.prs });
+        patch(ws.id, { prs: cached.prs, prsLoading: false });
         return;
       }
+      patch(ws.id, { prsLoading: true });
       try {
         const prs = await api.prList(ws.repo.path);
         prCache.set(ws.repo.path, { ts: Date.now(), prs });
         patch(ws.id, { prs });
       } catch {
         /* gh missing/unauthed */
+      } finally {
+        // Always settle the flag — a gh-missing/unauthed failure still ends the
+        // loading state so the panel falls through to its guidance empty state.
+        patch(ws.id, { prsLoading: false });
       }
     },
 

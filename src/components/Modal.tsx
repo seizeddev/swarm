@@ -78,6 +78,10 @@ export function Modal({
         aria-labelledby={labelledBy}
         tabIndex={-1}
         className="surface animate-scale-in mx-4 flex max-h-[76vh] w-full max-w-lg flex-col overflow-hidden focus:outline-none"
+        // Grow from where the surface actually sits: a centered modal from its
+        // center, a top-anchored one (command palette) from its top edge — not the
+        // CSS default top-right (which is meant for the TopBar/Sidebar popovers).
+        style={{ "--origin": align === "top" ? "top center" : "center" } as React.CSSProperties}
         // Clicks inside the card must not fall through to the backdrop's close.
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}

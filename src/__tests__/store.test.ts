@@ -80,6 +80,7 @@ import { updater } from "../lib/updater";
 import { notifyOS } from "../lib/notify";
 import { confirmDialog } from "../lib/dialog";
 import { __resetNetworkCaches, useActiveWorkspace, useStore } from "../store";
+import { useToastStore } from "../lib/toast";
 
 const m = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const upd = updater as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -341,6 +342,23 @@ describe("addWorkspace", () => {
     await addWorkspace("/repo");
     await vi.waitFor(() => expect(s().workspaces[0].prs).toHaveLength(1));
     expect(s().workspaces[0].ghLogin).toBe("octocat");
+  });
+
+  it("keeps prsLoading true while PRs are in flight, then clears it once settled", async () => {
+    m.ghAvailable.mockResolvedValue(true);
+    // Defer prList so we can observe the in-flight state. addWorkspace fires
+    // loadPrs but does NOT await it, so the flag is still set when it returns.
+    // A unique path avoids the module-level prCache hitting a prior test's entry.
+    let resolvePrs!: (prs: never[]) => void;
+    m.prList.mockReturnValue(
+      new Promise<never[]>((r) => {
+        resolvePrs = r;
+      }),
+    );
+    await addWorkspace("/repo-prload");
+    expect(s().workspaces[0].prsLoading).toBe(true);
+    resolvePrs([]);
+    await vi.waitFor(() => expect(s().workspaces[0].prsLoading).toBe(false));
   });
 });
 
@@ -828,6 +846,38 @@ describe("staging + commit", () => {
     expect(m.stageAll).toHaveBeenCalledWith("/repo");
     expect(m.commit).toHaveBeenCalledWith("/repo", "do it");
     expect(s().workspaces[0].commitMsg).toBe("");
+  });
+
+  it("raises a confirmation toast after a successful commit", async () => {
+    useToastStore.setState({ toasts: [] });
+    useStore.setState({
+      workspaces: s().workspaces.map((w) => ({
+        ...w,
+        commitMsg: "do it",
+        changes: [
+          { path: "a.txt", oldPath: null, status: "modified", staged: true, unstaged: false },
+        ],
+      })),
+    });
+    await s().commit();
+    expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("Committed");
+  });
+
+  it("does not toast when a commit fails", async () => {
+    useToastStore.setState({ toasts: [] });
+    m.commit.mockRejectedValueOnce(new Error("hook rejected"));
+    useStore.setState({
+      workspaces: s().workspaces.map((w) => ({
+        ...w,
+        commitMsg: "do it",
+        changes: [
+          { path: "a.txt", oldPath: null, status: "modified", staged: true, unstaged: false },
+        ],
+      })),
+    });
+    await s().commit();
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(s().error).toBe("hook rejected");
   });
 
   it("does not auto-stage when a file is already staged", async () => {

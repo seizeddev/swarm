@@ -16,17 +16,25 @@ export function Workspace() {
   // unmount, but their PTYs keep running in Rust and reattach on return.
   const wsId = ws?.id;
   const allPanes = useStore(useShallow((s) => s.panes.filter((p) => p.workspaceId === wsId)));
-  const { selectPane, removePane, setRatio, showTerminal, addPane, locateMissingWorkspace } =
-    useStore(
-      useShallow((s) => ({
-        selectPane: s.selectPane,
-        removePane: s.removePane,
-        setRatio: s.setRatio,
-        showTerminal: s.showTerminal,
-        addPane: s.addPane,
-        locateMissingWorkspace: s.locateMissingWorkspace,
-      })),
-    );
+  const {
+    selectPane,
+    removePane,
+    setRatio,
+    showTerminal,
+    addPane,
+    addWorkspace,
+    locateMissingWorkspace,
+  } = useStore(
+    useShallow((s) => ({
+      selectPane: s.selectPane,
+      removePane: s.removePane,
+      setRatio: s.setRatio,
+      showTerminal: s.showTerminal,
+      addPane: s.addPane,
+      addWorkspace: s.addWorkspace,
+      locateMissingWorkspace: s.locateMissingWorkspace,
+    })),
+  );
   const areaRef = useRef<HTMLDivElement>(null);
 
   // Missing workspace: no panes, no editors, no git ops. Show the same Locate /
@@ -121,8 +129,8 @@ export function Workspace() {
                       display: shown ? "block" : "none",
                       boxShadow: split
                         ? focused
-                          ? "inset 0 0 0 1px rgba(255,255,255,0.18)"
-                          : "inset 0 0 0 0.5px rgba(255,255,255,0.08)"
+                          ? "inset 0 0 0 1px var(--color-border-strong)"
+                          : "inset 0 0 0 0.5px var(--color-border)"
                         : "none",
                     }
                   : { inset: 0, display: "none" }
@@ -156,7 +164,8 @@ export function Workspace() {
                     removePane(p.paneId);
                   }}
                   title="Close terminal"
-                  className="icon-btn absolute right-1.5 top-1.5 z-20 h-6 w-6 opacity-0 group-hover:opacity-100"
+                  aria-label="Close terminal"
+                  className="icon-btn absolute right-1.5 top-1.5 z-20 h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                 >
                   <X size={13} />
                 </button>
@@ -196,7 +205,7 @@ export function Workspace() {
                 }
               >
                 <div
-                  className="absolute bg-[var(--color-border)] transition group-hover:bg-[var(--color-border-strong)]"
+                  className="absolute bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-border-strong)]"
                   style={
                     d.dir === "row"
                       ? { left: "50%", top: 0, bottom: 0, width: 1, transform: "translateX(-50%)" }
@@ -234,7 +243,7 @@ export function Workspace() {
         {ws && ws.editor.type === "terminal" && !tab && (
           <div className="grid h-full place-items-center px-6 text-center">
             <div className="animate-fade-rise">
-              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-text)]">
+              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-90">
                 <SwarmMark size={56} />
               </div>
               <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
@@ -258,16 +267,22 @@ export function Workspace() {
         {!ws && (
           <div className="grid h-full place-items-center px-6 text-center">
             <div className="animate-fade-rise">
-              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-80">
-                <SwarmMark size={60} />
+              <div className="mx-auto mb-6 grid h-20 w-20 place-items-center text-[var(--color-muted)] opacity-90">
+                <SwarmMark size={56} />
               </div>
               <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
                 Welcome to swarm
               </p>
               <p className="mx-auto mt-1.5 max-w-[280px] text-base leading-relaxed text-[var(--color-muted)]">
-                Add a project with the <span className="text-[var(--color-text)]">+</span> in the
-                sidebar to spin up terminals, review diffs and ship pull requests.
+                Add a project to spin up terminals, review diffs and ship pull requests.
               </p>
+              <button
+                type="button"
+                className="btn btn-accent mx-auto mt-5"
+                onClick={() => addWorkspace()}
+              >
+                <Plus size={15} /> Add project
+              </button>
             </div>
           </div>
         )}

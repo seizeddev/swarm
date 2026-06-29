@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Plus, SplitSquareHorizontal, SplitSquareVertical, TerminalSquare, X } from "lucide-react";
+import {
+  GitBranch,
+  Plus,
+  SplitSquareHorizontal,
+  SplitSquareVertical,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import { useActiveWorkspace, useStore } from "../store";
 import { leaves } from "../lib/layout";
 import { rovingIndex } from "../lib/roving";
@@ -241,15 +248,19 @@ export function TopBar() {
           the title floats with dead space on the left. */}
       {showIdentity && (
         <div
-          className={`flex h-full flex-none items-center gap-2 pr-3 ${fullscreen ? "pl-3" : "pl-8"}`}
+          className={`flex h-full flex-none items-center gap-2 overflow-hidden pr-3 ${fullscreen ? "pl-3" : "pl-8"}`}
           style={{ width: "var(--panel-w)" }}
         >
-          <h1 className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+          <h1 className="min-w-0 truncate text-base font-semibold tracking-[-0.01em] text-[var(--color-text)]">
             {ws.repo.name}
           </h1>
           {ws.repo.headBranch && (
-            <span className="truncate text-sm text-[var(--color-muted)]">
-              ⎇ {ws.repo.headBranch}
+            // Lucide GitBranch instead of the bare ⎇ glyph (U+2387, rasterized by
+            // Inter at the wrong weight/optical size). flex-none so the repo name
+            // yields first; the inner span caps + truncates a long branch name.
+            <span className="flex flex-none items-center gap-1 text-sm text-[var(--color-muted)]">
+              <GitBranch size={13} className="flex-none" />
+              <span className="max-w-[140px] truncate">{ws.repo.headBranch}</span>
             </span>
           )}
         </div>
@@ -306,9 +317,12 @@ export function TopBar() {
                     ids.forEach((id) => removePane(id));
                   }}
                   title="Close terminal"
+                  aria-label="Close terminal"
                   // The active tab keeps its × visible (you can always close the
                   // current terminal at a glance); inactive tabs reveal it on hover.
-                  className={`icon-btn h-6 w-6 transition ${
+                  // No bare `transition` here — .icon-btn now animates opacity on
+                  // the system curve (it used to override with Tailwind's stock ease).
+                  className={`icon-btn h-6 w-6 ${
                     active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                   }`}
                 >

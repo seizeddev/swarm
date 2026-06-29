@@ -70,7 +70,10 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose} labelledBy="integrations-title">
       <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h2 id="integrations-title" className="text-md font-semibold text-[var(--color-text)]">
+        <h2
+          id="integrations-title"
+          className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]"
+        >
           Agent Integrations
         </h2>
         <p className="mt-0.5 text-sm leading-relaxed text-[var(--color-muted)]">
@@ -92,7 +95,9 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={() => setSelected((s) => (s === r.id ? null : r.id))}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/[0.04] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
+                  aria-expanded={selected === r.id}
+                  aria-controls={`agent-int-panel-${r.id}`}
+                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--tint-hover)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
                 >
                   <span className="flex-1 truncate text-base font-medium text-[var(--color-text)]">
                     {r.name}
@@ -101,7 +106,10 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                 </button>
 
                 {selected === r.id && (
-                  <div className="border-t border-[var(--color-border)] p-3">
+                  <div
+                    id={`agent-int-panel-${r.id}`}
+                    className="border-t border-[var(--color-border)] p-3"
+                  >
                     {!r.onPath && (
                       <p className="mb-2 text-sm text-[var(--color-muted)]">
                         Not found on your PATH — the hook is harmless if installed, but the agent
@@ -109,7 +117,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                       </p>
                     )}
                     <p
-                      className="mb-2 truncate text-sm text-[var(--color-faint)]"
+                      className="mb-2 truncate text-sm text-[var(--color-muted)]"
                       title={r.configPath}
                     >
                       {r.isPlugin ? "Plugin file: " : "Config: "}
@@ -123,7 +131,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
                         type="button"
                         disabled={busy}
                         onClick={() => act(r.id, true)}
-                        className="btn h-8 flex-1 text-base"
+                        className="btn btn-accent h-8 flex-1 text-base"
                       >
                         {busy ? (
                           <Loader2 size={13} className="spin" />
@@ -158,7 +166,7 @@ export function AgentIntegrations({ onClose }: { onClose: () => void }) {
             style={{
               borderColor: "var(--color-danger-border)",
               background: "var(--color-danger-soft)",
-              color: "var(--color-danger)",
+              color: "var(--color-danger-text)",
             }}
           >
             <span className="min-w-0 flex-1 break-words">{error}</span>
@@ -182,15 +190,20 @@ function StatusBadge({ row }: { row: IntegrationStatus }) {
   if (row.installed) {
     return (
       <span
-        className="flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+        className="pill-sm flex-none"
         style={{ background: "var(--color-success-soft)", color: "var(--color-success)" }}
       >
         <Check size={11} /> Installed
       </span>
     );
   }
+  // ring-1 sets box-shadow, overriding pill-sm's top-sheen — so this reads as a
+  // hairline-outlined chip. Muted (not faint) text for AA on the surface.
   return (
-    <span className="flex-none rounded-full px-2 py-0.5 text-xs font-medium text-[var(--color-faint)] ring-1 ring-inset ring-[var(--color-border)]">
+    <span
+      className="pill-sm flex-none ring-1 ring-inset ring-[var(--color-border)]"
+      style={{ background: "transparent", color: "var(--color-muted)" }}
+    >
       {row.onPath ? "Not installed" : "Not on PATH"}
     </span>
   );

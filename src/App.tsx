@@ -11,6 +11,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Shortcuts } from "./components/Shortcuts";
 import { AgentIntegrations } from "./components/AgentIntegrations";
 import { DialogHost } from "./components/DialogHost";
+import { ToastHost } from "./components/ToastHost";
 import { buildCommands, type CommandHandlers } from "./lib/commands";
 import { dispatchDrop } from "./lib/drop";
 import { applyPanelWidth, currentPanelWidth } from "./lib/panel";
@@ -313,6 +314,7 @@ export default function App() {
       {shortcutsOpen && <Shortcuts onClose={() => setShortcutsOpen(false)} />}
       {integrationsOpen && <AgentIntegrations onClose={() => setIntegrationsOpen(false)} />}
       <DialogHost />
+      <ToastHost />
     </div>
   );
 }

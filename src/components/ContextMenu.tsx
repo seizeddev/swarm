@@ -103,12 +103,17 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
       ref={ref}
       role="menu"
       className="surface animate-scale-in fixed z-[70] min-w-[200px] max-w-[280px] p-1.5"
-      style={{
-        left: pos?.left ?? menu.x,
-        top: pos?.top ?? menu.y,
-        // Hide the unmeasured first paint to avoid a one-frame jump.
-        visibility: pos ? "visible" : "hidden",
-      }}
+      style={
+        {
+          left: pos?.left ?? menu.x,
+          top: pos?.top ?? menu.y,
+          // Hide the unmeasured first paint to avoid a one-frame jump.
+          visibility: pos ? "visible" : "hidden",
+          // The menu is positioned by its top-left at the cursor, so grow from
+          // there (the default top-right would expand away from the click point).
+          "--origin": "top left",
+        } as React.CSSProperties
+      }
       // Stop a click inside from bubbling to row/pane handlers underneath.
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={onKeyDown}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, CircleDot, ExternalLink, FileText, GitPullRequest, X } from "lucide-react";
 import { api } from "../lib/ipc";
 import { openExternal } from "../lib/external";
@@ -38,17 +38,23 @@ export function PrView({
 }) {
   const [detail, setDetail] = useState<PrDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  // A fetch failure must read as a failure with a way out — not a successful
+  // empty PR. Kept distinct from a resolved-null body so an empty-description PR
+  // doesn't trip the error state.
+  const [error, setError] = useState(false);
+  const load = useCallback(() => {
     setDetail(null);
+    setError(false);
     setLoading(true);
     api
       .prDetail(repoPath, pr.number)
       .then(setDetail)
-      .catch(() => setDetail(null))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [repoPath, pr.number]);
+  useEffect(load, [load]);
 
-  const checks = pr.checks ? `Checks ${pr.checks}` : "No checks";
+  const checks = pr.checks ?? "No checks";
   const review = pr.reviewDecision
     ? pr.reviewDecision.toLowerCase().replace(/_/g, " ")
     : "No review yet";
@@ -70,9 +76,7 @@ export function PrView({
             {pr.isDraft && <span className="pill pill-muted">draft</span>}
           </div>
 
-          <h1 className="selectable mt-3 text-2xl font-bold leading-tight tracking-[-0.02em]">
-            {pr.title}
-          </h1>
+          <h1 className="selectable mt-3 text-2xl font-bold tracking-[-0.02em]">{pr.title}</h1>
           <p className="mt-2.5 text-base text-[var(--color-muted)]">
             <span className="text-[var(--color-text)]">{pr.author}</span> wants to merge{" "}
             <code className="selectable rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text)]">
@@ -80,7 +84,7 @@ export function PrView({
             </code>
           </p>
 
-          <div className="surface mt-7 divide-y divide-[var(--color-border)] px-5">
+          <div className="surface mt-7 divide-y divide-[var(--color-border)] overflow-hidden">
             <StatusRow
               icon={<CircleDot size={15} style={{ color: checkColor(pr.checks) }} />}
               label="Checks"
@@ -105,6 +109,21 @@ export function PrView({
               <div className="skeleton h-4 w-full" />
               <div className="skeleton h-4 w-5/6" />
               <div className="skeleton h-4 w-2/3" />
+            </section>
+          )}
+
+          {!loading && error && (
+            <section className="mt-8">
+              <p className="text-base text-[var(--color-muted)]">
+                Couldn't load this pull request.{" "}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-[var(--color-text)]"
+                  onClick={load}
+                >
+                  Retry
+                </button>
+              </p>
             </section>
           )}
 
@@ -182,7 +201,7 @@ function StatusRow({
   tone: string;
 }) {
   return (
-    <div className="flex items-center gap-3 py-3.5">
+    <div className="flex items-center gap-3 px-4 py-3.5">
       <span className="flex-none">{icon}</span>
       <span className="w-20 flex-none text-base text-[var(--color-muted)]">{label}</span>
       <span className="flex-1 text-base capitalize" style={{ color: tone }}>

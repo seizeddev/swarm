@@ -25,13 +25,9 @@ import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { checkGlyph } from "../lib/checks";
 import { confirmDialog } from "../lib/dialog";
+import { copyToClipboard } from "../lib/copy";
 import { openExternal } from "../lib/external";
 import type { ChangeStatus, FileChange } from "../lib/types";
-
-/** Best-effort clipboard write — clipboard may be denied; failure is a no-op. */
-function copy(text: string) {
-  void navigator.clipboard?.writeText(text).catch(() => {});
-}
 
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
@@ -39,7 +35,7 @@ const statusMeta: Record<ChangeStatus, { letter: string; color: string }> = {
   added: { letter: "A", color: "var(--color-text)" },
   untracked: { letter: "U", color: "var(--color-text)" },
   modified: { letter: "M", color: "var(--color-muted)" },
-  deleted: { letter: "D", color: "var(--color-danger)" },
+  deleted: { letter: "D", color: "var(--color-danger-text)" },
   renamed: { letter: "R", color: "var(--color-muted)" },
   typechange: { letter: "T", color: "var(--color-muted)" },
   conflicted: { letter: "!", color: "var(--color-warning)" },
@@ -50,6 +46,59 @@ export function PanelHeader({ title, children }: { title: string; children?: Rea
     <div className="flex h-11 flex-none items-center justify-between px-4">
       <span className="label-caps font-semibold">{title}</span>
       <div className="flex items-center gap-1">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The one keyboard-operable inspector row. A bare `<div onClick>` can't be
+ * reached or fired from the keyboard, so the changed-files / PR / notification /
+ * history rows were mouse-only despite the `.row:focus-visible` ring already
+ * defined for them. This gives every such row role="button" + Tab focus +
+ * Enter/Space activation (one path, reused across all four surfaces). The key
+ * handler fires only for the row itself (`e.target === e.currentTarget`) so
+ * Enter on a nested action button — stage, dismiss — doesn't also re-open the row.
+ */
+export function Row({
+  active,
+  onActivate,
+  onContextMenu,
+  className,
+  style,
+  title,
+  ariaLabel,
+  children,
+}: {
+  active?: boolean;
+  onActivate: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  className?: string;
+  style?: React.CSSProperties;
+  title?: string;
+  ariaLabel?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-active={active}
+      aria-current={active || undefined}
+      aria-label={ariaLabel}
+      title={title}
+      onClick={onActivate}
+      onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onActivate();
+        }
+      }}
+      className={className}
+      style={style}
+    >
+      {children}
     </div>
   );
 }
@@ -97,19 +146,23 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
     },
     { kind: "separator" },
     { label: "Reveal in Finder", icon: <FolderOpen size={14} />, onClick: () => revealPath(abs) },
-    { label: "Copy Path", icon: <Copy size={14} />, onClick: () => copy(abs) },
-    { label: "Copy Relative Path", icon: <Copy size={14} />, onClick: () => copy(f.path) },
+    { label: "Copy Path", icon: <Copy size={14} />, onClick: () => copyToClipboard(abs, "path") },
+    {
+      label: "Copy Relative Path",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(f.path, "relative path"),
+    },
   ];
 
   return (
-    <div
-      data-active={active}
-      onClick={() => openDiff(f.path, staged)}
+    <Row
+      active={active}
+      onActivate={() => openDiff(f.path, staged)}
       onContextMenu={(e) => openMenu(e, items)}
       className="group row cv-row mb-1 flex cursor-pointer items-center gap-2 px-2.5 py-1.5"
     >
-      <span className="truncate text-base">{f.path.split("/").pop()}</span>
-      {dir && <span className="truncate text-xs text-[var(--color-faint)]">{dir}</span>}
+      <span className="min-w-0 truncate text-base">{f.path.split("/").pop()}</span>
+      {dir && <span className="min-w-0 truncate text-xs text-[var(--color-muted)]">{dir}</span>}
       <span className="ml-auto flex items-center gap-1.5">
         <button
           type="button"
@@ -117,17 +170,22 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
             e.stopPropagation();
             staged ? unstage(f.path) : stage(f.path);
           }}
-          className="icon-btn h-6 w-6 opacity-0 transition group-hover:opacity-100"
+          className="icon-btn h-6 w-6 opacity-0 group-hover:opacity-100"
           title={staged ? "Unstage" : "Stage"}
         >
           {staged ? <Minus size={13} /> : <Plus size={13} />}
         </button>
-        <span className="w-3 text-center font-mono text-sm font-bold" style={{ color: meta.color }}>
+        <span
+          className="w-3 text-center font-mono text-sm font-bold"
+          style={{ color: meta.color }}
+          title={f.status}
+          aria-label={f.status}
+        >
           {meta.letter}
         </span>
       </span>
       <ContextMenu menu={menu} onClose={closeMenu} />
-    </div>
+    </Row>
   );
 }
 
@@ -263,7 +321,7 @@ export function SourceControlPanel() {
           <div
             role="status"
             data-testid="changes-truncated"
-            className="mb-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2.5 py-2 text-sm text-[var(--color-muted)]"
+            className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2.5 py-2 text-sm text-[var(--color-muted)]"
           >
             <span className="font-semibold text-[var(--color-warning)]">
               {ws.changesTotal.toLocaleString()} changes
@@ -351,19 +409,31 @@ export function PullRequestsPanel() {
       icon: <ExternalLink size={14} />,
       onClick: () => void openExternal(p.url).catch(() => {}),
     },
-    { label: "Copy PR URL", icon: <Copy size={14} />, onClick: () => copy(p.url) },
-    { label: "Copy Branch Name", icon: <Copy size={14} />, onClick: () => copy(p.headRef) },
-    { label: "Copy Number", icon: <Copy size={14} />, onClick: () => copy(`#${p.number}`) },
+    {
+      label: "Copy PR URL",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(p.url, "PR URL"),
+    },
+    {
+      label: "Copy Branch Name",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(p.headRef, "branch name"),
+    },
+    {
+      label: "Copy Number",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(`#${p.number}`, "PR number"),
+    },
   ];
 
-  const Row = (p: (typeof ws.prs)[number]) => {
+  const PrRow = (p: (typeof ws.prs)[number]) => {
     const glyph = checkGlyph(p.checks);
     const Glyph = glyph.Icon;
     return (
-      <div
+      <Row
         key={p.number}
-        data-active={ws.editor.type === "pr" && ws.editor.pr.number === p.number}
-        onClick={() => openPr(p)}
+        active={ws.editor.type === "pr" && ws.editor.pr.number === p.number}
+        onActivate={() => openPr(p)}
         onContextMenu={(e) => openMenu(e, prMenu(p))}
         className="row mb-1.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5"
       >
@@ -376,8 +446,8 @@ export function PullRequestsPanel() {
             #{p.number} · {p.author} · {p.headRef}
           </span>
         </span>
-        {p.isDraft && <span className="pill pill-muted h-5 px-2 text-2xs">draft</span>}
-      </div>
+        {p.isDraft && <span className="pill-sm pill-muted">draft</span>}
+      </Row>
     );
   };
 
@@ -407,6 +477,16 @@ export function PullRequestsPanel() {
             No GitHub remote yet. Run <code>gh repo create</code> in a terminal to publish — the
             panel updates automatically when an <code>origin</code> appears.
           </p>
+        ) : ws.prsLoading && ws.prs.length === 0 ? (
+          <div
+            className="flex flex-col gap-1.5 pt-1"
+            aria-busy="true"
+            aria-label="Loading pull requests"
+          >
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton h-12" />
+            ))}
+          </div>
         ) : ws.prs.length === 0 ? (
           <p className="px-1 py-4 text-base text-[var(--color-muted)]">No open pull requests.</p>
         ) : (
@@ -414,13 +494,13 @@ export function PullRequestsPanel() {
             {mine.length > 0 && (
               <>
                 <p className="px-1 py-1.5 label-caps font-semibold">Created by me</p>
-                {mine.map(Row)}
+                {mine.map(PrRow)}
               </>
             )}
             <p className="px-1 py-1.5 label-caps font-semibold">
               {mine.length ? "All open" : "Open"}
             </p>
-            {others.map(Row)}
+            {others.map(PrRow)}
           </>
         )}
       </div>
@@ -463,7 +543,7 @@ export function NotificationsPanel() {
     {
       label: "Copy Message",
       icon: <Copy size={14} />,
-      onClick: () => copy([n.title, n.body].filter(Boolean).join("\n")),
+      onClick: () => copyToClipboard([n.title, n.body].filter(Boolean).join("\n"), "message"),
     },
     { kind: "separator" },
     {
@@ -495,14 +575,12 @@ export function NotificationsPanel() {
           </p>
         ) : (
           notifications.map((n) => (
-            <div
+            <Row
               key={n.id}
-              onClick={() => {
-                // Navigate to the source terminal (selectPane restores the
-                // terminal editor even if you're on a PR/diff) and mark it read
-                // — but keep it in the history list rather than dismissing it.
-                goToPane(n);
-              }}
+              // Navigate to the source terminal (selectPane restores the terminal
+              // editor even if you're on a PR/diff) and mark it read — but keep it
+              // in the history list rather than dismissing it.
+              onActivate={() => goToPane(n)}
               onContextMenu={(e) => openMenu(e, notifMenu(n))}
               // Read entries stay in the list but recede — the unread ones carry
               // the solid leading dot and full contrast.
@@ -522,15 +600,16 @@ export function NotificationsPanel() {
                 {n.source === "terminal" && (
                   // Untrusted origin: this text came from a program in the
                   // terminal, so mark it plainly and never act on its content.
+                  // Deliberately the faintest tier — a recessive trust marker,
+                  // not a status pill (kept out of .pill-sm for that reason).
                   <span
-                    className="flex-none rounded px-1.5 py-0.5 text-2xs uppercase tracking-wide text-[var(--color-faint)]"
-                    style={{ background: "rgba(255,255,255,0.06)" }}
+                    className="flex-none rounded-full bg-[var(--tint-hover)] px-1.5 py-0.5 text-2xs uppercase tracking-[0.06em] text-[var(--color-faint)]"
                     title="Reported by a program running in the terminal"
                   >
                     terminal
                   </span>
                 )}
-                <span className="nums text-xs text-[var(--color-faint)]">
+                <span className="nums text-xs text-[var(--color-muted)]">
                   {new Date(n.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
                 <button
@@ -540,7 +619,7 @@ export function NotificationsPanel() {
                     dismissNotification(n.id);
                   }}
                   title="Remove from history"
-                  className="icon-btn h-5 w-5 flex-none opacity-0 transition group-hover:opacity-100"
+                  className="icon-btn h-5 w-5 flex-none opacity-0 group-hover:opacity-100"
                 >
                   <X size={12} />
                 </button>
@@ -548,7 +627,7 @@ export function NotificationsPanel() {
               {n.body && (
                 <span className="truncate pl-4 text-sm text-[var(--color-muted)]">{n.body}</span>
               )}
-            </div>
+            </Row>
           ))
         )}
       </div>

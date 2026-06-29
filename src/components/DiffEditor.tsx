@@ -348,7 +348,7 @@ export function DiffEditor({
         <span className="selectable truncate font-mono text-base text-[var(--color-text)]">
           {file}
         </span>
-        {staged && <span className="pill h-5 px-2 text-xs">staged</span>}
+        {staged && <span className="pill-sm">staged</span>}
         {!loading && (added > 0 || removed > 0) && (
           <span className="nums flex-none font-mono text-xs">
             <span style={{ color: "var(--color-success)" }}>+{added}</span>{" "}

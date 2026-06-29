@@ -57,7 +57,7 @@ const GROUPS: Group[] = [
 function Key({ children }: { children: string }) {
   return (
     <kbd
-      className="nums inline-grid min-w-[22px] place-items-center rounded-[6px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-muted)]"
+      className="nums inline-grid min-w-[22px] place-items-center rounded-[8px] border border-[var(--color-border)] bg-[var(--color-recessed)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-muted)]"
       style={{ boxShadow: "inset 0 0.5px 0 rgba(255,255,255,0.08)" }}
     >
       {children}
@@ -69,7 +69,10 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose} labelledBy="shortcuts-title">
       <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h2 id="shortcuts-title" className="text-md font-semibold text-[var(--color-text)]">
+        <h2
+          id="shortcuts-title"
+          className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]"
+        >
           Keyboard Shortcuts
         </h2>
       </div>

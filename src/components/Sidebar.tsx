@@ -28,6 +28,7 @@ import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { useShallow } from "zustand/react/shallow";
 import { PANEL_DEFAULT, clampPanelWidth } from "../lib/panel";
+import { copyToClipboard } from "../lib/copy";
 
 const ATTN = "var(--color-text)";
 
@@ -91,11 +92,15 @@ function WorkspaceSquare({
       onClick={() => setActiveWorkspace(id)}
       onContextMenu={(e) => onMenu(e, id)}
       title={missing ? `${name} — folder not found (right-click to locate)` : name}
-      className="relative grid h-8 w-8 place-items-center rounded-[8px] text-xs font-bold transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]"
+      // The two-letter initials would otherwise BE the accessible name — give the
+      // primary nav spine the real project name and a keyboard focus ring/hover.
+      aria-label={missing ? `${name} — folder not found` : name}
+      className={`relative grid h-8 w-8 place-items-center rounded-[8px] text-xs font-bold transition-colors focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none ${
+        active
+          ? "bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.14)]"
+          : "text-[var(--color-muted)] hover:bg-[var(--tint-hover)] hover:text-[var(--color-text)]"
+      }`}
       style={{
-        background: active ? "var(--color-surface-2)" : "transparent",
-        color: active ? "var(--color-text)" : "var(--color-muted)",
-        boxShadow: active ? "inset 0 0.5px 0 rgba(255,255,255,0.14)" : "none",
         border: missing
           ? "0.5px dashed rgba(255,255,255,0.18)"
           : active
@@ -156,6 +161,7 @@ function RailButton({
       type="button"
       className="icon-btn relative h-8 w-8"
       data-active={shown}
+      aria-pressed={shown}
       title={shown ? `Hide ${title}` : title}
       onClick={() => (shown ? toggleSidebar() : setPanel(panel))}
     >
@@ -250,7 +256,7 @@ function RailUpdate() {
         )}
         {busy && (
           <span
-            className="absolute inset-x-0 bottom-0 h-0.5 transition-[width] duration-200"
+            className="absolute inset-x-0 bottom-0 h-0.5 transition-[width] duration-[var(--dur-base)]"
             style={{ width: `${pct}%`, background: "var(--color-text)" }}
           />
         )}
@@ -282,7 +288,7 @@ function RailUpdate() {
           {busy && (
             <div className="mt-3 h-1 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
               <div
-                className="h-full transition-[width] duration-200"
+                className="h-full transition-[width] duration-[var(--dur-base)]"
                 style={{ width: `${pct}%`, background: "var(--color-text)" }}
               />
             </div>
@@ -436,7 +442,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
       {
         label: "Copy Path",
         icon: <Copy size={14} />,
-        onClick: () => void navigator.clipboard?.writeText(w.repo.path),
+        onClick: () => copyToClipboard(w.repo.path, "path"),
       },
       { kind: "separator" },
       {
@@ -451,12 +457,24 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
   // Drag the invisible handle on the panel's right edge to resize it (regular
   // mode only). Writes --panel-w straight to the DOM for a jank-free drag, then
   // persists the final width. Clamping mirrors App's panelMax().
+  // One read/clamp/persist path shared by the drag handle and its keyboard
+  // nudge — so the two resize entrypoints can't drift (one behaviour, one path).
+  const readPanelWidth = () =>
+    parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--panel-w")) ||
+    PANEL_DEFAULT;
+  const persistPanelWidth = () =>
+    localStorage.setItem("panelW", String(Math.round(readPanelWidth())));
+  const nudgePanelWidth = (delta: number) => {
+    const w = clampPanelWidth(readPanelWidth() + delta, window.innerWidth);
+    document.documentElement.style.setProperty("--panel-w", `${w}px`);
+    persistPanelWidth();
+  };
+
   const startPanelResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const root = document.documentElement;
-    const startW =
-      parseFloat(getComputedStyle(root).getPropertyValue("--panel-w")) || PANEL_DEFAULT;
+    const startW = readPanelWidth();
     const onMove = (ev: MouseEvent) => {
       const w = clampPanelWidth(startW + (ev.clientX - startX), window.innerWidth);
       root.style.setProperty("--panel-w", `${w}px`);
@@ -466,10 +484,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
       window.removeEventListener("mouseup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      localStorage.setItem(
-        "panelW",
-        String(parseInt(getComputedStyle(root).getPropertyValue("--panel-w"), 10)),
-      );
+      persistPanelWidth();
     };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -593,10 +608,10 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
               <div className="mx-auto mb-5 grid h-14 w-14 place-items-center text-[var(--color-muted)] opacity-90">
                 <SwarmMark size={40} />
               </div>
-              <p className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]">
+              <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">
                 No project open
               </p>
-              <p className="mx-auto mb-5 mt-1 max-w-[200px] text-base leading-relaxed text-[var(--color-muted)]">
+              <p className="mx-auto mb-5 mt-1.5 max-w-[200px] text-base leading-relaxed text-[var(--color-muted)]">
                 Open a git repository to start working with terminals, diffs and pull requests.
               </p>
               <button
@@ -616,7 +631,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
             style={{
               borderColor: "var(--color-danger-border)",
               background: "var(--color-danger-soft)",
-              color: "var(--color-danger)",
+              color: "var(--color-danger-text)",
             }}
           >
             <span className="min-w-0 flex-1 break-words">{error}</span>
@@ -625,7 +640,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
               aria-label="Dismiss error"
               onClick={() => clearError()}
               className="icon-btn h-5 w-5 flex-none"
-              style={{ color: "var(--color-danger)" }}
+              style={{ color: "var(--color-danger-text)" }}
             >
               <X size={13} />
             </button>
@@ -640,11 +655,24 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
       {!compact && sidebarVisible && (
         <div
           onMouseDown={startPanelResize}
-          className="group relative z-10 w-0 flex-none cursor-col-resize"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              nudgePanelWidth(-16);
+            } else if (e.key === "ArrowRight") {
+              e.preventDefault();
+              nudgePanelWidth(16);
+            }
+          }}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize inspector panel"
+          tabIndex={0}
+          className="group relative z-10 w-0 flex-none cursor-col-resize focus-visible:outline-none"
           title="Drag to resize"
         >
           <div className="absolute -left-1.5 top-0 h-full w-3" />
-          <div className="absolute -left-px top-0 h-full w-px bg-transparent transition-colors duration-[var(--dur-fast)] group-hover:bg-[var(--color-border-strong)]" />
+          <div className="absolute -left-px top-0 h-full w-px bg-transparent transition-colors group-hover:bg-[var(--color-border-strong)] group-focus-visible:bg-[var(--color-border-strong)]" />
         </div>
       )}
 
@@ -694,7 +722,7 @@ function MissingWorkspacePanel({
         <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-[16px] text-[var(--color-muted)] opacity-90">
           <FolderSearch size={36} />
         </div>
-        <p className="text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]">{name}</p>
+        <p className="text-lg font-semibold tracking-[-0.01em] text-[var(--color-text)]">{name}</p>
         <p className="mx-auto mt-1.5 max-w-[240px] text-sm leading-relaxed text-[var(--color-muted)]">
           The folder no longer exists at this path:
         </p>
@@ -741,7 +769,10 @@ function RenameWorkspaceModal({
         }}
         className="p-4"
       >
-        <h2 id="rename-title" className="mb-1 text-md font-semibold text-[var(--color-text)]">
+        <h2
+          id="rename-title"
+          className="mb-1 text-md font-semibold tracking-[-0.01em] text-[var(--color-text)]"
+        >
           Rename Project
         </h2>
         <p className="mb-3 text-sm text-[var(--color-muted)]">
@@ -757,10 +788,10 @@ function RenameWorkspaceModal({
           className="field"
         />
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn h-9 text-base">
+          <button type="button" onClick={onClose} className="btn">
             Cancel
           </button>
-          <button type="submit" className="btn btn-accent h-9 text-base">
+          <button type="submit" className="btn btn-accent">
             Save
           </button>
         </div>

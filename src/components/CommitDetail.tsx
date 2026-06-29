@@ -82,6 +82,11 @@ export function CommitDetail({
   const [detail, setDetail] = useState<Detail | null>(null);
   const [patch, setPatch] = useState("");
   const [truncated, setTruncated] = useState(false);
+  // Failed-load + a retry nonce. The old `.catch(() => {})` left detail null on a
+  // failure, so a failed fetch showed the loading skeleton forever; this surfaces
+  // the error with a way out (bumping nonce re-runs the effect).
+  const [failed, setFailed] = useState(false);
+  const [nonce, setNonce] = useState(0);
 
   // Arrow-keying through the commit list hits this effect every keystroke.
   // Without a debounce we'd spawn an off-thread libgit2 walk per commit and
@@ -93,6 +98,7 @@ export function CommitDetail({
     setPatch("");
     setDetail(null);
     setTruncated(false);
+    setFailed(false);
     let cancelled = false;
     const t = setTimeout(() => {
       api
@@ -100,7 +106,9 @@ export function CommitDetail({
         .then((d) => {
           if (!cancelled) setDetail(d);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (!cancelled) setFailed(true);
+        });
       api
         .commitDiff(repoPath, oid)
         .then((d) => {
@@ -114,9 +122,18 @@ export function CommitDetail({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [repoPath, oid]);
+  }, [repoPath, oid, nonce]);
 
   const files = useMemo(() => parseCommitPatch(patch), [patch]);
+  if (failed)
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-base text-[var(--color-muted)]">Couldn't load this commit.</p>
+        <button type="button" className="btn" onClick={() => setNonce((n) => n + 1)}>
+          Retry
+        </button>
+      </div>
+    );
   if (!detail)
     return (
       <div className="flex flex-col gap-3 p-6" aria-busy="true" aria-label="Loading commit">
@@ -144,7 +161,7 @@ export function CommitDetail({
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl px-4 py-5 md:px-6 md:py-6">
           {/* message */}
-          <h1 className="selectable text-lg font-semibold leading-snug tracking-[-0.015em]">
+          <h1 className="selectable text-lg font-semibold leading-snug tracking-[-0.01em]">
             {title}
           </h1>
           {body && (
@@ -174,12 +191,9 @@ export function CommitDetail({
               <div key={f.file} className="surface overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3.5 py-2">
                   <span className="selectable font-mono text-base">{f.file}</span>
-                  {f.added && <span className="pill h-5 px-2 text-2xs">added</span>}
+                  {f.added && <span className="pill-sm">added</span>}
                   {f.deleted && (
-                    <span
-                      className="pill h-5 px-2 text-2xs"
-                      style={{ color: "var(--color-danger)" }}
-                    >
+                    <span className="pill-sm" style={{ color: "var(--color-danger)" }}>
                       deleted
                     </span>
                   )}

@@ -40,14 +40,14 @@ export function DialogHost() {
   return (
     <Modal onClose={cancel} labelledBy="dialog-title">
       <form
-        className="flex flex-col gap-4 p-5"
+        className="flex flex-col gap-4 p-4"
         onSubmit={(e) => {
           e.preventDefault();
           confirm();
         }}
       >
         <div className="flex flex-col gap-1.5">
-          <h2 id="dialog-title" className="text-md font-semibold">
+          <h2 id="dialog-title" className="text-md font-semibold tracking-[-0.01em]">
             {opts.title}
           </h2>
           {opts.body && <p className="text-sm text-[var(--color-muted)]">{opts.body}</p>}
@@ -80,16 +80,7 @@ export function DialogHost() {
           <button
             type="submit"
             disabled={invalid}
-            className={opts.destructive ? "btn" : "btn btn-accent"}
-            style={
-              opts.destructive
-                ? {
-                    color: "var(--color-danger)",
-                    background: "var(--color-danger-soft)",
-                    borderColor: "var(--color-danger-border)",
-                  }
-                : undefined
-            }
+            className={opts.destructive ? "btn btn-danger" : "btn btn-accent"}
           >
             {opts.confirmLabel ?? (opts.destructive ? "Delete" : "Confirm")}
           </button>

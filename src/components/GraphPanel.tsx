@@ -18,15 +18,11 @@ import { api } from "../lib/ipc";
 import { buildGraph, laneColor } from "../lib/graph";
 import { useActiveWorkspace, useStore } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
+import { copyToClipboard } from "../lib/copy";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
-import { PanelHeader } from "./panels";
+import { PanelHeader, Row } from "./panels";
 import type { MenuItem } from "../lib/menu";
 import type { CommitInfo, RefBadge } from "../lib/types";
-
-/** Best-effort clipboard write — denial is a no-op. */
-function copyText(text: string) {
-  void navigator.clipboard?.writeText(text).catch(() => {});
-}
 
 function relTime(sec: number): string {
   const d = Math.floor(Date.now() / 1000 - sec);
@@ -168,9 +164,17 @@ export function GraphPanel() {
       },
     },
     { kind: "separator" },
-    { label: "Copy SHA", icon: <Copy size={14} />, onClick: () => copyText(c.oid) },
-    { label: "Copy Short SHA", icon: <Copy size={14} />, onClick: () => copyText(c.short) },
-    { label: "Copy Message", icon: <Copy size={14} />, onClick: () => copyText(c.summary) },
+    { label: "Copy SHA", icon: <Copy size={14} />, onClick: () => copyToClipboard(c.oid, "SHA") },
+    {
+      label: "Copy Short SHA",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(c.short, "short SHA"),
+    },
+    {
+      label: "Copy Message",
+      icon: <Copy size={14} />,
+      onClick: () => copyToClipboard(c.summary, "commit message"),
+    },
   ];
 
   const g = useMemo(() => buildGraph(commits), [commits]);
@@ -203,113 +207,139 @@ export function GraphPanel() {
       </PanelHeader>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        <div className="relative" style={{ height: virt.getTotalSize(), minWidth: "100%" }}>
-          {/* graph edges + nodes — only for rows in the visible window */}
-          <svg
-            width={gw}
-            height={virt.getTotalSize()}
-            className="absolute left-0 top-0"
-            style={{ overflow: "visible" }}
-          >
-            {items.map((vi) => {
-              const r = g.rows[vi.index];
-              return r.commit.parents.map((p) => {
-                const pi = g.index.get(p);
-                if (!pi) return null;
-                const x1 = x(r.col);
-                const y1 = cy(vi.index);
-                const x2 = x(pi.col);
-                const y2 = cy(pi.row);
-                const d =
-                  x1 === x2
-                    ? `M${x1},${y1} L${x2},${y2}`
-                    : `M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}`;
-                return (
-                  <path
-                    key={r.commit.oid + p}
-                    d={d}
-                    fill="none"
-                    stroke={laneColor(Math.max(r.col, pi.col))}
-                    strokeOpacity={0.45}
-                    strokeWidth={1.5}
-                  />
+        {loading && !commits.length ? (
+          // A real skeleton (matching DiffEditor/PrView), rendered as a sibling —
+          // not nested in the height:0 virtualizer wrapper, which would collapse it.
+          <div className="flex flex-col gap-2 p-3" aria-busy="true" aria-label="Loading history">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div
+                key={i}
+                className="skeleton h-3.5"
+                style={{ width: `${45 + ((i * 37) % 50)}%` }}
+              />
+            ))}
+          </div>
+        ) : !commits.length ? (
+          // History is shown for any non-missing workspace, so a plain folder
+          // reaches here too — give it the correct next step, not a bare line.
+          <p className="flex items-center gap-2 p-4 text-base text-[var(--color-muted)]">
+            <GitCommitHorizontal size={14} className="flex-none" />
+            {ws?.repo.isRepo
+              ? "No commits yet."
+              : "Not a Git repository — initialize it from the Source Control panel."}
+          </p>
+        ) : (
+          <div className="relative" style={{ height: virt.getTotalSize(), minWidth: "100%" }}>
+            {/* graph edges + nodes — only for rows in the visible window */}
+            <svg
+              width={gw}
+              height={virt.getTotalSize()}
+              className="absolute left-0 top-0"
+              style={{ overflow: "visible" }}
+            >
+              {items.map((vi) => {
+                const r = g.rows[vi.index];
+                return r.commit.parents.map((p) => {
+                  const pi = g.index.get(p);
+                  if (!pi) return null;
+                  const x1 = x(r.col);
+                  const y1 = cy(vi.index);
+                  const x2 = x(pi.col);
+                  const y2 = cy(pi.row);
+                  const d =
+                    x1 === x2
+                      ? `M${x1},${y1} L${x2},${y2}`
+                      : `M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}`;
+                  return (
+                    <path
+                      key={r.commit.oid + p}
+                      d={d}
+                      fill="none"
+                      stroke={laneColor(Math.max(r.col, pi.col))}
+                      strokeOpacity={0.45}
+                      strokeWidth={1.5}
+                    />
+                  );
+                });
+              })}
+              {items.map((vi) => {
+                const r = g.rows[vi.index];
+                const px = x(r.col);
+                const py = cy(vi.index);
+                return r.commit.isHead ? (
+                  <g key={r.commit.oid}>
+                    <circle
+                      cx={px}
+                      cy={py}
+                      r={DOT + 2}
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth={1.5}
+                    />
+                    <circle cx={px} cy={py} r={DOT - 1} fill="#fff" />
+                  </g>
+                ) : (
+                  <circle key={r.commit.oid} cx={px} cy={py} r={DOT} fill={laneColor(r.col)} />
                 );
-              });
-            })}
+              })}
+            </svg>
+
+            {/* commit rows */}
             {items.map((vi) => {
               const r = g.rows[vi.index];
-              const px = x(r.col);
-              const py = cy(vi.index);
-              return r.commit.isHead ? (
-                <g key={r.commit.oid}>
-                  <circle cx={px} cy={py} r={DOT + 2} fill="none" stroke="#fff" strokeWidth={1.5} />
-                  <circle cx={px} cy={py} r={DOT - 1} fill="#fff" />
-                </g>
-              ) : (
-                <circle key={r.commit.oid} cx={px} cy={py} r={DOT} fill={laneColor(r.col)} />
+              const activeCommit = ws?.editor.type === "commit" && ws.editor.oid === r.commit.oid;
+              return (
+                <Row
+                  key={r.commit.oid}
+                  active={activeCommit}
+                  onActivate={() => openCommit(r.commit.oid)}
+                  onContextMenu={(e) => openMenu(e, commitMenu(r.commit))}
+                  title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
+                  className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
+                  // Start the row past the widest node (gw carries a full COLW of
+                  // trailing slack we strip back off). NODE_R only reaches the ring's
+                  // geometric edge — its 1.5px stroke (plus the box border) then
+                  // pokes under the row's opaque background and clips the HEAD dot,
+                  // so add a small gap to keep the marker fully visible.
+                  style={{
+                    top: vi.start + 3,
+                    left: gw - COLW + NODE_R + 5,
+                    right: 8,
+                    height: ROW - 6,
+                  }}
+                >
+                  {r.commit.refs.map((ref) => (
+                    <RefPill key={`${ref.kind}:${ref.name}`} badge={ref} />
+                  ))}
+                  {r.commit.upstream &&
+                    (r.commit.upstream.ahead > 0 || r.commit.upstream.behind > 0) && (
+                      <span
+                        className="ref-track"
+                        title={`vs ${r.commit.upstream.name}: ahead ${r.commit.upstream.ahead}, behind ${r.commit.upstream.behind}`}
+                      >
+                        {r.commit.upstream.ahead > 0 && (
+                          <>
+                            <ArrowUp size={11} aria-hidden="true" />
+                            {r.commit.upstream.ahead}
+                          </>
+                        )}
+                        {r.commit.upstream.behind > 0 && (
+                          <>
+                            <ArrowDown size={11} aria-hidden="true" />
+                            {r.commit.upstream.behind}
+                          </>
+                        )}
+                      </span>
+                    )}
+                  <span className="min-w-0 flex-1 truncate text-base">{r.commit.summary}</span>
+                  <span className="flex-none font-mono text-2xs text-[var(--color-faint)]">
+                    {relTime(r.commit.time)}
+                  </span>
+                </Row>
               );
             })}
-          </svg>
-
-          {/* commit rows */}
-          {items.map((vi) => {
-            const r = g.rows[vi.index];
-            const activeCommit = ws?.editor.type === "commit" && ws.editor.oid === r.commit.oid;
-            return (
-              <div
-                key={r.commit.oid}
-                data-active={activeCommit}
-                onClick={() => openCommit(r.commit.oid)}
-                onContextMenu={(e) => openMenu(e, commitMenu(r.commit))}
-                title={`${r.commit.author} · ${relTime(r.commit.time)} · ${r.commit.short}`}
-                className="row absolute flex cursor-pointer items-center gap-1.5 overflow-hidden px-2.5"
-                // Start the row past the widest node (gw carries a full COLW of
-                // trailing slack we strip back off). NODE_R only reaches the ring's
-                // geometric edge — its 1.5px stroke (plus the box border) then
-                // pokes under the row's opaque background and clips the HEAD dot,
-                // so add a small gap to keep the marker fully visible.
-                style={{
-                  top: vi.start + 3,
-                  left: gw - COLW + NODE_R + 5,
-                  right: 8,
-                  height: ROW - 6,
-                }}
-              >
-                {r.commit.refs.map((ref) => (
-                  <RefPill key={`${ref.kind}:${ref.name}`} badge={ref} />
-                ))}
-                {r.commit.upstream &&
-                  (r.commit.upstream.ahead > 0 || r.commit.upstream.behind > 0) && (
-                    <span
-                      className="ref-track"
-                      title={`vs ${r.commit.upstream.name}: ahead ${r.commit.upstream.ahead}, behind ${r.commit.upstream.behind}`}
-                    >
-                      {r.commit.upstream.ahead > 0 && (
-                        <>
-                          <ArrowUp size={11} aria-hidden="true" />
-                          {r.commit.upstream.ahead}
-                        </>
-                      )}
-                      {r.commit.upstream.behind > 0 && (
-                        <>
-                          <ArrowDown size={11} aria-hidden="true" />
-                          {r.commit.upstream.behind}
-                        </>
-                      )}
-                    </span>
-                  )}
-                <span className="min-w-0 flex-1 truncate text-base">{r.commit.summary}</span>
-                <span className="flex-none font-mono text-2xs text-[var(--color-faint)]">
-                  {relTime(r.commit.time)}
-                </span>
-              </div>
-            );
-          })}
-
-          {!loading && !commits.length && (
-            <p className="p-4 text-base text-[var(--color-muted)]">No commits.</p>
-          )}
-        </div>
+          </div>
+        )}
       </div>
       <ContextMenu menu={menu} onClose={closeMenu} />
     </div>
