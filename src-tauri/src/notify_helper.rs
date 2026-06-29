@@ -95,8 +95,9 @@ pub fn run(args: &[String]) {
         // `onPaneNotify` (bypasses the Claude OSC sentinel filter, which
         // is Stop's path only).
         "claude-notification" => {
-            let msg = claude_notification_message(&payload);
-            write_event_line(&msg);
+            if let Some(msg) = claude_notification_message(&payload) {
+                write_event_line(&msg);
+            }
         }
         // Claude's two top-level `requiresUserInteraction` tools —
         // `AskUserQuestion` and `ExitPlanMode` — render their own UI rather
@@ -149,13 +150,13 @@ fn write_event_line(msg: &str) {
 /// Extract the user-visible reason from Claude's Notification hook payload.
 /// Falls back to `FALLBACK` ("Turn complete") when the message field is
 /// missing/blank so the user still sees *something* in the banner.
-fn claude_notification_message(payload: &str) -> String {
-    serde_json::from_str::<Value>(payload)
+fn claude_notification_message(payload: &str) -> Option<String> {
+    let message = serde_json::from_str::<Value>(payload)
         .ok()
         .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_owned))
         .map(|s| clean(&s))
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| FALLBACK.to_string())
+        .filter(|t| !t.is_empty());
+    Some(message.unwrap_or_else(|| FALLBACK.to_string()))
 }
 
 /// Body for Claude's PermissionRequest hook — phrased like Claude's own
@@ -577,17 +578,57 @@ mod tests {
             claude_notification_message(
                 r#"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#
             ),
-            "Claude needs your permission to use Bash"
+            Some("Claude needs your permission to use Bash".to_string())
+        );
+    }
+
+    #[test]
+    fn claude_notification_idle_prompt_is_suppressed() {
+        // The duplicate-notification bug: ~60s after the Stop hook already
+        // delivered the real turn-complete message, Claude fires a Notification
+        // with notification_type "idle_prompt" / "Claude is waiting for your
+        // input". Forwarding it double-banners every turn, so it must be dropped.
+        assert_eq!(
+            claude_notification_message(
+                r#"{"hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#
+            ),
+            None
+        );
+        // Defensive: a Claude build that omits notification_type but sends the
+        // exact idle text is still de-duplicated.
+        assert_eq!(
+            claude_notification_message(r#"{"message":"Claude is waiting for your input"}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn claude_notification_non_idle_types_still_notify() {
+        // Everything that ISN'T the idle reminder is genuinely useful and must
+        // still reach the user — MCP elicitation, auth, subagent permission —
+        // even when it carries a notification_type field.
+        assert_eq!(
+            claude_notification_message(
+                r#"{"message":"An MCP server needs a value","notification_type":"elicitation_dialog"}"#
+            ),
+            Some("An MCP server needs a value".to_string())
+        );
+        assert_eq!(
+            claude_notification_message(
+                r#"{"message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}"#
+            ),
+            Some("Claude needs your permission to use Bash".to_string())
         );
     }
 
     #[test]
     fn claude_notification_message_strips_markdown_and_truncates() {
         // `clean` runs over the message so a TUI-friendly payload (newlines,
-        // bold markers) doesn't reach the banner verbatim.
+        // bold markers) doesn't reach the banner verbatim. (Not the exact idle
+        // string, so it isn't suppressed.)
         assert_eq!(
-            claude_notification_message(r#"{"message":"**Waiting**\nfor your input"}"#),
-            "Waiting for your input"
+            claude_notification_message(r#"{"message":"**Waiting**\nfor your turn"}"#),
+            Some("Waiting for your turn".to_string())
         );
     }
 
@@ -658,10 +699,20 @@ mod tests {
     #[test]
     fn claude_notification_message_falls_back_when_missing_or_blank() {
         // Older Claude / unexpected schema: no `message` field → user still
-        // sees a generic banner instead of nothing at all.
-        assert_eq!(claude_notification_message(r#"{}"#), FALLBACK);
-        assert_eq!(claude_notification_message(r#"{"message":""}"#), FALLBACK);
-        assert_eq!(claude_notification_message("not json"), FALLBACK);
+        // sees a generic banner instead of nothing at all. (Distinct from the
+        // idle reminder, which is a present-but-suppressed message.)
+        assert_eq!(
+            claude_notification_message(r#"{}"#),
+            Some(FALLBACK.to_string())
+        );
+        assert_eq!(
+            claude_notification_message(r#"{"message":""}"#),
+            Some(FALLBACK.to_string())
+        );
+        assert_eq!(
+            claude_notification_message("not json"),
+            Some(FALLBACK.to_string())
+        );
     }
 
     #[test]
