@@ -16,7 +16,10 @@
 //!     one line to the event file.
 //!   - `claude-notification` / `claude-pretool` / `claude-permission`: Claude's
 //!     Notification / PreToolUse / PermissionRequest hooks — extract the
-//!     user-visible reason and write it to the event file.
+//!     user-visible reason and write it to the event file. The `idle_prompt`
+//!     Notification ("Claude is waiting for your input") is the one we drop —
+//!     it's redundant with the Stop hook's turn-complete banner, so forwarding
+//!     it too would double-notify every turn.
 //!
 //! All fall back to "Turn complete" when no message is available. Outside swarm
 //! (`SWARM_EVENT_FILE` unset) every mode is a no-op, so a globally-installed hook
@@ -93,7 +96,11 @@ pub fn run(args: &[String]) {
         // the user-visible reason. Forwarded through the same events-file
         // path generic agents use, landing in `pane:notify` →
         // `onPaneNotify` (bypasses the Claude OSC sentinel filter, which
-        // is Stop's path only).
+        // is Stop's path only). The one notification we drop is the
+        // `idle_prompt` reminder ("Claude is waiting for your input"): the
+        // Stop hook already banners turn-complete with the real final
+        // message, so forwarding the idle reminder double-notifies every
+        // turn (~60s later). `claude_notification_message` returns None for it.
         "claude-notification" => {
             if let Some(msg) = claude_notification_message(&payload) {
                 write_event_line(&msg);
@@ -147,15 +154,39 @@ fn write_event_line(msg: &str) {
     }
 }
 
-/// Extract the user-visible reason from Claude's Notification hook payload.
-/// Falls back to `FALLBACK` ("Turn complete") when the message field is
-/// missing/blank so the user still sees *something* in the banner.
+/// Claude Code's idle-reminder Notification (`notification_type: "idle_prompt"`,
+/// message "Claude is waiting for your input") — the one Notification kind we
+/// suppress, because the Stop hook already delivered a turn-complete banner with
+/// the real final message. Forwarding it too double-notifies on every turn
+/// (~60s later), which is exactly the duplicate users complained about. The
+/// strings are taken from the Claude 2.1.x binary's notification dispatch.
+const IDLE_PROMPT_TYPE: &str = "idle_prompt";
+const IDLE_PROMPT_TEXT: &str = "Claude is waiting for your input";
+
+/// Extract the user-visible reason from Claude's Notification hook payload, or
+/// `None` to suppress the banner. The only suppressed kind is the `idle_prompt`
+/// reminder (redundant with the Stop hook — see `IDLE_PROMPT_TYPE`); every other
+/// notification (`permission_prompt`, `elicitation_*`, `auth_success`, …) is
+/// genuinely useful and forwarded. Falls back to `FALLBACK` ("Turn complete")
+/// when a non-idle message field is missing/blank so the user still sees
+/// *something* in the banner.
 fn claude_notification_message(payload: &str) -> Option<String> {
-    let message = serde_json::from_str::<Value>(payload)
-        .ok()
-        .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_owned))
-        .map(|s| clean(&s))
+    let v = serde_json::from_str::<Value>(payload).ok();
+    let notif_type = v
+        .as_ref()
+        .and_then(|v| v.get("notification_type").and_then(Value::as_str))
+        .unwrap_or_default();
+    let message = v
+        .as_ref()
+        .and_then(|v| v.get("message").and_then(Value::as_str))
+        .map(clean)
         .filter(|t| !t.is_empty());
+    // Drop the idle reminder. Match the documented `notification_type` primarily;
+    // also catch the exact message text so a Claude build that omits/renames the
+    // field is still de-duplicated.
+    if notif_type == IDLE_PROMPT_TYPE || message.as_deref() == Some(IDLE_PROMPT_TEXT) {
+        return None;
+    }
     Some(message.unwrap_or_else(|| FALLBACK.to_string()))
 }
 
