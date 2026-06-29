@@ -511,7 +511,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
           // op against `repo.path`, which would just error until the user runs
           // Locate.
           <div className="mt-3 flex flex-col items-center gap-1.5">
-            <RailButton panel="scm" title="Source Control" badge={ws.changes.length}>
+            <RailButton panel="scm" title="Source Control" badge={ws.changesTotal}>
               <GitBranch size={16} />
             </RailButton>
             <RailButton panel="history" title="History">

@@ -144,7 +144,21 @@ fn status_label(s: Status) -> &'static str {
 }
 
 /// Per-file change list for a repo (staged + unstaged + untracked).
-fn changes_in(repo: &Repository) -> AppResult<Vec<FileChange>> {
+/// Hard cap on the number of per-file status entries surfaced through the IPC
+/// boundary in one refresh. A worktree with a large untracked directory and no
+/// `.gitignore` (the classic `node_modules` footgun) reports *hundreds of
+/// thousands* of changes; serializing them all across the webview boundary and
+/// rendering one DOM row each froze the whole app for seconds on every refresh
+/// (and refreshes fire on focus + after every file-change burst). Five thousand
+/// covers every realistic review; past it the list is truncated and the UI
+/// shows a "too many changes" hint. The true count still rides along in
+/// [`StatusAndStats::total`].
+pub const STATUS_FILE_CAP: usize = 5_000;
+
+/// Per-file changes plus the *true* total. The returned Vec is capped at
+/// [`STATUS_FILE_CAP`]; `total` counts every (non-ignored) entry the walk saw,
+/// so the caller can tell whether the list was truncated.
+fn changes_in(repo: &Repository) -> AppResult<(Vec<FileChange>, usize)> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
@@ -152,10 +166,18 @@ fn changes_in(repo: &Repository) -> AppResult<Vec<FileChange>> {
         .renames_index_to_workdir(true);
     let statuses = repo.statuses(Some(&mut opts))?;
 
-    let mut out = Vec::with_capacity(statuses.len());
+    let mut out = Vec::with_capacity(statuses.len().min(STATUS_FILE_CAP));
+    let mut total = 0usize;
     for entry in statuses.iter() {
         let s = entry.status();
         if s.is_ignored() {
+            continue;
+        }
+        total += 1;
+        // Past the cap, keep counting (so `total` stays exact) but stop building
+        // structs — that's what bounds the allocation, the sort, and the IPC
+        // payload when a huge unignored dir (node_modules) floods the walk.
+        if out.len() >= STATUS_FILE_CAP {
             continue;
         }
         let staged = s.intersects(
@@ -202,7 +224,7 @@ fn changes_in(repo: &Repository) -> AppResult<Vec<FileChange>> {
         });
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    Ok((out, total))
 }
 
 fn build_diff<'a>(repo: &'a Repository, file: Option<&str>, staged: bool) -> AppResult<Diff<'a>> {
@@ -342,14 +364,37 @@ fn diff_stats_in(repo: &Repository) -> AppResult<DiffStatsInfo> {
 #[serde(rename_all = "camelCase")]
 pub struct StatusAndStats {
     pub changes: Vec<FileChange>,
+    /// True number of (non-ignored) changed entries, even when `changes` was
+    /// truncated at [`STATUS_FILE_CAP`]. Drives the UI's "N changes" count.
+    pub total: usize,
+    /// `changes` was capped (`total > changes.len()`) — the UI surfaces a
+    /// "showing first N" hint instead of trying to render every row.
+    pub truncated: bool,
     pub stats: DiffStatsInfo,
 }
 
 pub fn status_and_stats(worktree_path: &str) -> AppResult<StatusAndStats> {
     let repo = Repository::open(worktree_path)?;
+    let (changes, total) = changes_in(&repo)?;
+    // Past the cap the tree is pathological (e.g. an unignored node_modules):
+    // skip the content-reading diff entirely. `diff_stats_in` opens two diffs
+    // with `show_untracked_content`, which would read every byte of all those
+    // untracked files on every refresh — the dominant freeze. Report the file
+    // count only; the per-line `+/-` is a nicety nobody needs at that scale.
+    let stats = if total > STATUS_FILE_CAP {
+        DiffStatsInfo {
+            files_changed: total,
+            insertions: 0,
+            deletions: 0,
+        }
+    } else {
+        diff_stats_in(&repo)?
+    };
     Ok(StatusAndStats {
-        changes: changes_in(&repo)?,
-        stats: diff_stats_in(&repo)?,
+        truncated: total > changes.len(),
+        total,
+        changes,
+        stats,
     })
 }
 
@@ -1259,26 +1304,37 @@ mod tests {
             .any(|c| c.path == "a.txt" && c.status == "modified"));
         assert!(combined.stats.insertions >= 1);
         assert!(combined.stats.files_changed >= 1);
+        // A normal-sized tree is never truncated, and the content-reading diff
+        // still runs (untracked `new.txt` contributes its line to insertions).
+        assert!(!combined.truncated);
+        assert_eq!(combined.total, combined.changes.len());
     }
 
     #[test]
     fn status_caps_a_huge_untracked_tree_and_reports_the_true_total() {
         // The reported footgun: a large untracked dir with no `.gitignore`
-        // (node_modules) reporting hundreds of thousands of changes. Without a
-        // cap the change list is unbounded — one IPC entry + one DOM row per
-        // file froze the whole app. The list must stay bounded.
+        // (node_modules) reporting hundreds of thousands of changes. The list
+        // must be capped so the IPC payload + render stay bounded, but `total`
+        // must stay exact and `truncated` set so the UI can warn instead of
+        // freezing trying to render every row.
         let dir = scratch();
         let _repo = init_repo(&dir);
         let path = dir.to_str().unwrap();
-        for i in 0..5_040 {
+        let extra = 40usize;
+        for i in 0..(STATUS_FILE_CAP + extra) {
             fs::write(dir.join(format!("f{i:06}.txt")), "x\n").unwrap();
         }
+
         let r = status_and_stats(path).unwrap();
-        assert!(
-            r.changes.len() <= 5_000,
-            "change list must be capped; was {}",
-            r.changes.len()
-        );
+        assert_eq!(r.changes.len(), STATUS_FILE_CAP, "list is capped");
+        assert!(r.truncated, "truncation is flagged");
+        // Only the untracked files are changes (committed a.txt is unchanged).
+        assert_eq!(r.total, STATUS_FILE_CAP + extra, "true total is exact");
+        // Past the cap the expensive content diff is skipped: no per-line counts,
+        // but the file count is still surfaced so the summary isn't blank.
+        assert_eq!(r.stats.insertions, 0);
+        assert_eq!(r.stats.deletions, 0);
+        assert_eq!(r.stats.files_changed, r.total);
     }
 
     #[test]

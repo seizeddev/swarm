@@ -72,6 +72,11 @@ export interface Workspace {
   activeTab: string | null;
   commitMsg: string;
   changes: FileChange[];
+  // True change count + whether `changes` was capped by the backend
+  // (STATUS_FILE_CAP). Drives the SCM panel's "N changes — showing first M"
+  // hint so a huge unignored tree never tries to render every row.
+  changesTotal: number;
+  changesTruncated: boolean;
   diffStats: DiffStatsInfo | null;
   prs: PrSummary[];
   ghLogin: string | null;
@@ -574,6 +579,8 @@ export const useStore = create<State>((set, get) => {
               activeTab: sw.activeTab,
               commitMsg: "",
               changes: [],
+              changesTotal: 0,
+              changesTruncated: false,
               diffStats: null,
               prs: [],
               ghLogin: null,
@@ -722,6 +729,8 @@ export const useStore = create<State>((set, get) => {
           activeTab: null,
           commitMsg: "",
           changes: [],
+          changesTotal: 0,
+          changesTruncated: false,
           diffStats: null,
           prs: [],
           ghLogin: null,
@@ -832,8 +841,8 @@ export const useStore = create<State>((set, get) => {
     async refreshStatus(wsId) {
       const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
       if (!ws || !ws.repo.isRepo) return; // a plain folder has no git status to read
-      const { changes, stats } = await api.statusAndStats(ws.repo.path);
-      patch(ws.id, { changes, diffStats: stats });
+      const { changes, total, truncated, stats } = await api.statusAndStats(ws.repo.path);
+      patch(ws.id, { changes, changesTotal: total, changesTruncated: truncated, diffStats: stats });
     },
 
     async refreshRepoMeta(wsId) {

@@ -131,6 +131,29 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
   );
 }
 
+// Cap on rendered rows *per section*. The backend already caps the payload at
+// STATUS_FILE_CAP, but even a few thousand keyed rows reconciled on every
+// fs:changed refresh janks the renderer. Beyond this we render a "+N more"
+// line; nobody triages thousands of files one row at a time anyway.
+const MAX_VISIBLE_FILES = 1000;
+
+function FileSection({ files, staged }: { files: FileChange[]; staged: boolean }) {
+  const shown = files.length > MAX_VISIBLE_FILES ? files.slice(0, MAX_VISIBLE_FILES) : files;
+  const hidden = files.length - shown.length;
+  return (
+    <>
+      {shown.map((f) => (
+        <FileRow key={(staged ? "s-" : "u-") + f.path} f={f} staged={staged} />
+      ))}
+      {hidden > 0 && (
+        <p className="px-1 py-1.5 text-sm text-[var(--color-muted)]">
+          … and {hidden.toLocaleString()} more not shown
+        </p>
+      )}
+    </>
+  );
+}
+
 export function SourceControlPanel() {
   const ws = useActiveWorkspace();
   const { setCommitMsg, commit, stageAll, unstageAll, refreshStatus, initRepo, busy } = useStore(
@@ -236,6 +259,20 @@ export function SourceControlPanel() {
       </div>
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        {ws.changesTruncated && (
+          <div
+            role="status"
+            data-testid="changes-truncated"
+            className="mb-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2.5 py-2 text-sm text-[var(--color-muted)]"
+          >
+            <span className="font-semibold text-[var(--color-warning)]">
+              {ws.changesTotal.toLocaleString()} changes
+            </span>{" "}
+            detected — showing the first {ws.changes.length.toLocaleString()}. A large untracked
+            folder (e.g. <code>node_modules</code>) with no <code>.gitignore</code> usually causes
+            this.
+          </div>
+        )}
         {staged.length > 0 && (
           <>
             <div className="flex items-center justify-between px-1 py-1.5">
@@ -249,14 +286,14 @@ export function SourceControlPanel() {
                 <Minus size={13} />
               </button>
             </div>
-            {staged.map((f) => (
-              <FileRow key={"s-" + f.path} f={f} staged />
-            ))}
+            <FileSection files={staged} staged />
           </>
         )}
 
         <div className="flex items-center justify-between px-1 py-1.5">
-          <span className="label-caps font-semibold">Changes ({unstaged.length})</span>
+          <span className="label-caps font-semibold">
+            Changes ({ws.changesTruncated ? ws.changesTotal.toLocaleString() : unstaged.length})
+          </span>
           {unstaged.length > 0 && (
             <button
               type="button"
@@ -268,9 +305,7 @@ export function SourceControlPanel() {
             </button>
           )}
         </div>
-        {unstaged.map((f) => (
-          <FileRow key={"u-" + f.path} f={f} staged={false} />
-        ))}
+        <FileSection files={unstaged} staged={false} />
 
         {ws.changes.length === 0 && (
           <p className="flex items-center gap-2 px-1 py-4 text-base text-[var(--color-muted)]">

@@ -52,6 +52,11 @@ export interface DiffStatsInfo {
 // Per-file changes + aggregate diff stats, computed in one backend pass.
 export interface StatusAndStats {
   changes: FileChange[];
+  // True count of changed files before the backend's per-refresh cap
+  // (STATUS_FILE_CAP). When `truncated`, `changes` holds only the first N — a
+  // huge unignored dir (e.g. node_modules) would otherwise freeze the UI.
+  total: number;
+  truncated: boolean;
   stats: DiffStatsInfo;
 }
 

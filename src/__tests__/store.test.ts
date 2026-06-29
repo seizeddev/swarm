@@ -155,6 +155,8 @@ beforeEach(() => {
   m.installAgentHooks.mockResolvedValue(undefined);
   m.statusAndStats.mockResolvedValue({
     changes: [],
+    total: 0,
+    truncated: false,
     stats: { filesChanged: 0, insertions: 0, deletions: 0 },
   });
   m.eventsDir.mockResolvedValue("/events");
@@ -233,12 +235,36 @@ describe("addWorkspace", () => {
       changes: [
         { path: "a.txt", oldPath: null, status: "modified", staged: false, unstaged: true },
       ],
+      total: 1,
+      truncated: false,
       stats: { filesChanged: 1, insertions: 2, deletions: 1 },
     });
     await addWorkspace("/repo");
     const ws = s().workspaces[0];
     expect(ws.changes).toHaveLength(1);
     expect(ws.diffStats).toEqual({ filesChanged: 1, insertions: 2, deletions: 1 });
+    expect(ws.changesTruncated).toBe(false);
+    expect(ws.changesTotal).toBe(1);
+  });
+
+  it("records the true total + truncation flag when the backend caps a huge tree", async () => {
+    // The node_modules-without-.gitignore footgun: the backend caps the list it
+    // ships, but reports the real count so the panel can warn instead of trying
+    // to render every row (which is what froze the app).
+    m.statusAndStats.mockResolvedValue({
+      changes: [
+        { path: "f000000.txt", oldPath: null, status: "untracked", staged: false, unstaged: true },
+      ],
+      total: 200_000,
+      truncated: true,
+      stats: { filesChanged: 200_000, insertions: 0, deletions: 0 },
+    });
+    await addWorkspace("/repo");
+    const ws = s().workspaces[0];
+    expect(ws.changesTruncated).toBe(true);
+    expect(ws.changesTotal).toBe(200_000);
+    // The shipped list stays small — the renderer never sees 200k rows.
+    expect(ws.changes).toHaveLength(1);
   });
 
   it("starts a worktree watcher for the new workspace", async () => {
