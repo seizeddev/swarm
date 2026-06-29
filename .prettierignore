@@ -8,3 +8,6 @@ pnpm-lock.yaml
 docs
 brand
 *.md
+# Standalone hand-written design note at the repo root (not frontend source);
+# prettier would reformat it on every check. The app's index.html stays managed.
+design-prinzipien-ki-apps.html
