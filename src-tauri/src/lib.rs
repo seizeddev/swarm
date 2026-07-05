@@ -173,6 +173,20 @@ async fn commit_diff(
 }
 
 #[tauri::command]
+async fn commit_file_blobs(
+    reg: State<'_, WorkspaceRegistry>,
+    repo_path: String,
+    oid: String,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    include_data: bool,
+) -> AppResult<git::CommitFileBlobs> {
+    let repo_path = ensured(&reg, &repo_path)?;
+    off_thread(move || git::commit_file_blobs(&repo_path, &oid, old_path, new_path, include_data))
+        .await
+}
+
+#[tauri::command]
 async fn stage(
     reg: State<'_, WorkspaceRegistry>,
     worktree_path: String,
@@ -1257,6 +1271,7 @@ pub fn run() {
             agent_session_forget,
             commit_detail,
             commit_diff,
+            commit_file_blobs,
             pty_spawn,
             pty_attach,
             pty_reattach,

@@ -86,6 +86,20 @@ export interface CommitDiff {
   truncated: boolean;
 }
 
+// One side of `commit_file_blobs`. `base64` is null when data wasn't
+// requested (sizes-only call) or the blob exceeds the Rust-side preview cap.
+export interface BlobSide {
+  size: number;
+  base64: string | null;
+}
+
+// Returned from `commit_file_blobs`: a side is null when the file doesn't
+// exist there (added → no old, deleted → no new).
+export interface CommitFileBlobs {
+  old: BlobSide | null;
+  new: BlobSide | null;
+}
+
 export type RefKind = "branch" | "remote" | "tag" | "head";
 
 export interface RefBadge {

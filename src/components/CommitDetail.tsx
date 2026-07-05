@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../lib/ipc";
 import { tokenize } from "../lib/diff";
-import type { CommitDetail as Detail } from "../lib/types";
+import { parseCommitPatch, type FileDiff } from "../lib/commitPatch";
+import { formatBytes, imageMime } from "../lib/media";
+import type { BlobSide, CommitDetail as Detail, CommitFileBlobs } from "../lib/types";
 
 function tokClass(kind: string): string {
   switch (kind) {
@@ -31,43 +33,109 @@ function CodeSpans({ text }: { text: string }) {
   );
 }
 
-type DLine = { kind: "add" | "del" | "ctx"; text: string };
-type Hunk = { header: string; lines: DLine[] };
-type FileDiff = { file: string; added: boolean; deleted: boolean; hunks: Hunk[] };
+// One side of an image preview: the rendered image plus a dimensions/size
+// caption (dimensions read off the decoded image itself).
+function ImageSide({
+  label,
+  side,
+  mime,
+  tone,
+}: {
+  label: string | null;
+  side: BlobSide;
+  mime: string;
+  tone: "old" | "new";
+}) {
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const edge = tone === "old" ? "var(--color-danger)" : "var(--color-success)";
+  return (
+    <figure className="flex min-w-0 flex-1 flex-col items-center gap-1.5 px-3 py-4">
+      {label && (
+        <figcaption className="text-xs uppercase tracking-wide" style={{ color: edge }}>
+          {label}
+        </figcaption>
+      )}
+      {side.base64 ? (
+        <img
+          src={`data:${mime};base64,${side.base64}`}
+          alt={label ?? "Image preview"}
+          className="img-checker max-h-72 max-w-full rounded border object-contain"
+          style={{ borderColor: edge }}
+          onLoad={(e) =>
+            setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+          }
+        />
+      ) : (
+        <div className="px-4 py-6 text-sm text-[var(--color-muted)]">Too large to preview</div>
+      )}
+      <figcaption className="nums text-xs text-[var(--color-faint)]">
+        {dims ? `${dims.w}×${dims.h} · ` : ""}
+        {formatBytes(side.size)}
+      </figcaption>
+    </figure>
+  );
+}
 
-// Split a full commit patch into per-file sections (GitHub-style).
-function parseCommitPatch(patch: string): FileDiff[] {
-  const out: FileDiff[] = [];
-  const chunks = patch.split(/(?=^diff --git )/m).filter((c) => c.startsWith("diff --git"));
-  for (const chunk of chunks) {
-    const lines = chunk.split("\n");
-    const plus = chunk.match(/^\+\+\+ b\/(.+)$/m)?.[1];
-    const minus = chunk.match(/^--- a\/(.+)$/m)?.[1];
-    const gitm = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
-    const file = plus && plus !== "/dev/null" ? plus : (gitm?.[2] ?? minus ?? "file");
-    const hunks: Hunk[] = [];
-    let cur: Hunk | null = null;
-    for (const raw of lines) {
-      if (raw.startsWith("@@")) {
-        cur = { header: raw, lines: [] };
-        hunks.push(cur);
-      } else if (cur) {
-        const c = raw[0];
-        if (c === "+" && !raw.startsWith("+++"))
-          cur.lines.push({ kind: "add", text: raw.slice(1) });
-        else if (c === "-" && !raw.startsWith("---"))
-          cur.lines.push({ kind: "del", text: raw.slice(1) });
-        else if (c === " ") cur.lines.push({ kind: "ctx", text: raw.slice(1) });
-      }
-    }
-    out.push({
-      file,
-      added: plus !== undefined && minus === "/dev/null",
-      deleted: plus === "/dev/null",
-      hunks,
-    });
+// Body of a binary file in the commit view: images render inline (before/after
+// for a modified image), everything else gets a size caption instead of the
+// old silent empty box. Blobs are fetched lazily per file; image bytes only
+// when the extension is renderable.
+function BinaryBody({ repoPath, oid, f }: { repoPath: string; oid: string; f: FileDiff }) {
+  const mime = imageMime(f.file);
+  const [blobs, setBlobs] = useState<CommitFileBlobs | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setBlobs(null);
+    setFailed(false);
+    api
+      .commitFileBlobs(repoPath, oid, f.oldFile ?? f.file, f.file, mime !== null)
+      .then((b) => {
+        if (!cancelled) setBlobs(b);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repoPath, oid, f, mime]);
+
+  if (failed)
+    return (
+      <div className="px-3.5 py-2.5 text-sm text-[var(--color-muted)]">
+        Couldn't load file contents.
+      </div>
+    );
+  if (!blobs)
+    return (
+      <div className="p-3" aria-busy="true" aria-label={`Loading ${f.file}`}>
+        <div className="skeleton h-20 w-full" />
+      </div>
+    );
+
+  if (mime && (blobs.old || blobs.new)) {
+    const both = blobs.old !== null && blobs.new !== null;
+    return (
+      <div className="flex items-stretch justify-center divide-x divide-[var(--color-border)]">
+        {blobs.old && (
+          <ImageSide label={both ? "Before" : null} side={blobs.old} mime={mime} tone="old" />
+        )}
+        {blobs.new && (
+          <ImageSide label={both ? "After" : null} side={blobs.new} mime={mime} tone="new" />
+        )}
+      </div>
+    );
   }
-  return out;
+
+  const oldSize = blobs.old ? formatBytes(blobs.old.size) : null;
+  const newSize = blobs.new ? formatBytes(blobs.new.size) : null;
+  return (
+    <div className="nums px-3.5 py-2.5 text-sm text-[var(--color-muted)]">
+      Binary file ·{" "}
+      {oldSize && newSize ? `${oldSize} → ${newSize}` : (newSize ?? `was ${oldSize ?? "empty"}`)}
+    </div>
+  );
 }
 
 export function CommitDetail({
@@ -190,54 +258,65 @@ export function CommitDetail({
             {files.map((f) => (
               <div key={f.file} className="surface overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3.5 py-2">
-                  <span className="selectable font-mono text-base">{f.file}</span>
+                  <span className="selectable min-w-0 truncate font-mono text-base">
+                    {f.renamed && f.oldFile ? `${f.oldFile} → ${f.file}` : f.file}
+                  </span>
                   {f.added && <span className="pill-sm">added</span>}
                   {f.deleted && (
                     <span className="pill-sm" style={{ color: "var(--color-danger)" }}>
                       deleted
                     </span>
                   )}
+                  {f.renamed && <span className="pill-sm">renamed</span>}
                 </div>
-                <div className="overflow-x-auto font-mono text-[12.5px] leading-[1.5]">
-                  {f.hunks.map((h, hi) => (
-                    <div key={hi}>
-                      <div className="bg-[var(--color-surface-1)] px-3.5 py-0.5 text-[var(--color-info)]">
-                        {h.header}
-                      </div>
-                      {h.lines.map((l, li) => (
-                        <div
-                          key={li}
-                          className="flex px-3.5"
-                          style={{
-                            background:
-                              l.kind === "add"
-                                ? "var(--color-success-soft)"
-                                : l.kind === "del"
-                                  ? "var(--color-danger-soft)"
-                                  : "transparent",
-                          }}
-                        >
-                          <span
-                            className="w-4 flex-none select-none"
+                {f.binary ? (
+                  <BinaryBody repoPath={repoPath} oid={oid} f={f} />
+                ) : f.hunks.length === 0 ? (
+                  <div className="px-3.5 py-2.5 text-sm text-[var(--color-muted)]">
+                    No content changes.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto font-mono text-[12.5px] leading-[1.5]">
+                    {f.hunks.map((h, hi) => (
+                      <div key={hi}>
+                        <div className="bg-[var(--color-surface-1)] px-3.5 py-0.5 text-[var(--color-info)]">
+                          {h.header}
+                        </div>
+                        {h.lines.map((l, li) => (
+                          <div
+                            key={li}
+                            className="flex px-3.5"
                             style={{
-                              color:
+                              background:
                                 l.kind === "add"
-                                  ? "var(--color-success)"
+                                  ? "var(--color-success-soft)"
                                   : l.kind === "del"
-                                    ? "var(--color-danger)"
-                                    : "var(--color-faint)",
+                                    ? "var(--color-danger-soft)"
+                                    : "transparent",
                             }}
                           >
-                            {l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}
-                          </span>
-                          <span className="selectable whitespace-pre text-[var(--color-text)]">
-                            <CodeSpans text={l.text} />
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
+                            <span
+                              className="w-4 flex-none select-none"
+                              style={{
+                                color:
+                                  l.kind === "add"
+                                    ? "var(--color-success)"
+                                    : l.kind === "del"
+                                      ? "var(--color-danger)"
+                                      : "var(--color-faint)",
+                              }}
+                            >
+                              {l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}
+                            </span>
+                            <span className="selectable whitespace-pre text-[var(--color-text)]">
+                              <CodeSpans text={l.text} />
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

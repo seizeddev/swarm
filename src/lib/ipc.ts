@@ -5,6 +5,7 @@ import type {
   AgentDef,
   CommitDetail,
   CommitDiff,
+  CommitFileBlobs,
   CommitInfo,
   HunkBundle,
   PrDetail,
@@ -40,6 +41,16 @@ export const api = {
     invoke<CommitDetail>("commit_detail", { repoPath, oid }),
   commitDiff: (repoPath: string, oid: string) =>
     invoke<CommitDiff>("commit_diff", { repoPath, oid }),
+  // Old/new blob of one file in a commit — the commit view's inline image
+  // preview (includeData) and the sizes-only caption for other binaries.
+  commitFileBlobs: (
+    repoPath: string,
+    oid: string,
+    oldPath: string | null,
+    newPath: string | null,
+    includeData: boolean,
+  ) =>
+    invoke<CommitFileBlobs>("commit_file_blobs", { repoPath, oid, oldPath, newPath, includeData }),
   saveSession: (data: string) => invoke<void>("save_session", { data }),
   loadSession: () => invoke<string | null>("load_session"),
   eventsDir: () => invoke<string>("events_dir"),

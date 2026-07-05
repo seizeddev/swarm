@@ -666,6 +666,92 @@ pub fn commit_diff(repo_path: &str, oid_str: &str) -> AppResult<CommitDiff> {
     Ok(CommitDiff { patch, truncated })
 }
 
+/// Per-side blob preview cap. Base64 inflates by ~4/3 and the whole payload
+/// crosses the IPC boundary as JSON, so anything past this renders as a
+/// "too large to preview" note instead of freezing the webview.
+const BLOB_PREVIEW_CAP: usize = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobSide {
+    pub size: u64,
+    /// Base64 content; `None` when data wasn't requested or the blob exceeds
+    /// [`BLOB_PREVIEW_CAP`].
+    pub base64: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFileBlobs {
+    pub old: Option<BlobSide>,
+    pub new: Option<BlobSide>,
+}
+
+fn blob_side(
+    repo: &Repository,
+    tree: Option<&git2::Tree>,
+    path: Option<&str>,
+    include_data: bool,
+    cap: usize,
+) -> Option<BlobSide> {
+    let entry = tree?.get_path(Path::new(path?)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    let base64 = (include_data && blob.size() <= cap).then(|| {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(blob.content())
+    });
+    Some(BlobSide {
+        size: blob.size() as u64,
+        base64,
+    })
+}
+
+fn commit_file_blobs_with_cap(
+    repo_path: &str,
+    oid_str: &str,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    include_data: bool,
+    cap: usize,
+) -> AppResult<CommitFileBlobs> {
+    let repo = open_main(repo_path)?;
+    let oid = git2::Oid::from_str(oid_str)?;
+    let c = repo.find_commit(oid)?;
+    let tree = c.tree()?;
+    let parent_tree = c.parent(0).ok().and_then(|p| p.tree().ok());
+    let new = blob_side(&repo, Some(&tree), new_path.as_deref(), include_data, cap);
+    let old = blob_side(
+        &repo,
+        parent_tree.as_ref(),
+        old_path.as_deref(),
+        include_data,
+        cap,
+    );
+    Ok(CommitFileBlobs { old, new })
+}
+
+/// Old/new blob of one file in a commit (vs first parent), for the commit
+/// view's image preview and binary-size captions. A side is `None` when the
+/// file doesn't exist on that side (added/deleted). With `include_data`,
+/// content comes back base64-encoded (capped at [`BLOB_PREVIEW_CAP`]);
+/// without, only sizes — the cheap path for the generic binary-file row.
+pub fn commit_file_blobs(
+    repo_path: &str,
+    oid_str: &str,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    include_data: bool,
+) -> AppResult<CommitFileBlobs> {
+    commit_file_blobs_with_cap(
+        repo_path,
+        oid_str,
+        old_path,
+        new_path,
+        include_data,
+        BLOB_PREVIEW_CAP,
+    )
+}
+
 /// Resolve `p` (relative to `root`) and confirm it lives under the canonical
 /// `root`. Returns `None` when:
 ///   - `root` itself doesn't canonicalise (caller is bogus),
@@ -1250,6 +1336,124 @@ mod tests {
         let full = commit_diff(path, &oid.to_string()).unwrap();
         assert!(full.patch.contains("NEWLINE"));
         assert!(!full.truncated, "tiny commit should not be truncated");
+    }
+
+    /// Commit raw bytes (a NUL makes git treat the file as binary).
+    fn commit_binary_file(repo: &Repository, name: &str, body: &[u8], msg: &str) -> git2::Oid {
+        let wd = repo.workdir().unwrap();
+        fs::write(wd.join(name), body).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+        let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents)
+            .unwrap()
+    }
+
+    #[test]
+    fn commit_diff_marks_binary_files_instead_of_dumping_bytes() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let oid = commit_binary_file(&repo, "pic.png", b"\x89PNG\0\x01\x02", "add image");
+
+        // The frontend keys its image/binary rendering off this marker line —
+        // if libgit2 ever starts emitting raw bytes here, the commit view breaks.
+        let full = commit_diff(path, &oid.to_string()).unwrap();
+        assert!(full.patch.contains("Binary files"));
+        assert!(full.patch.contains("pic.png"));
+    }
+
+    #[test]
+    fn commit_file_blobs_returns_both_sides_of_a_modified_file() {
+        use base64::Engine as _;
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let v1: &[u8] = b"\x89PNG\0old";
+        let v2: &[u8] = b"\x89PNG\0new-bytes";
+        commit_binary_file(&repo, "pic.png", v1, "add image");
+        let oid = commit_binary_file(&repo, "pic.png", v2, "update image");
+
+        let blobs = commit_file_blobs(
+            path,
+            &oid.to_string(),
+            Some("pic.png".into()),
+            Some("pic.png".into()),
+            true,
+        )
+        .unwrap();
+        let old = blobs.old.unwrap();
+        let new = blobs.new.unwrap();
+        assert_eq!(old.size, v1.len() as u64);
+        assert_eq!(new.size, v2.len() as u64);
+        let std64 = base64::engine::general_purpose::STANDARD;
+        assert_eq!(old.base64.as_deref(), Some(std64.encode(v1).as_str()));
+        assert_eq!(new.base64.as_deref(), Some(std64.encode(v2).as_str()));
+    }
+
+    #[test]
+    fn commit_file_blobs_added_file_has_no_old_side() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let oid = commit_binary_file(&repo, "pic.png", b"\x89PNG\0x", "add image");
+
+        let blobs = commit_file_blobs(
+            path,
+            &oid.to_string(),
+            Some("pic.png".into()),
+            Some("pic.png".into()),
+            true,
+        )
+        .unwrap();
+        assert!(blobs.old.is_none(), "file didn't exist in the parent");
+        assert!(blobs.new.is_some());
+        // A path that exists on neither side yields nothing rather than an error.
+        let none = commit_file_blobs(
+            path,
+            &oid.to_string(),
+            Some("ghost.png".into()),
+            Some("ghost.png".into()),
+            true,
+        )
+        .unwrap();
+        assert!(none.old.is_none() && none.new.is_none());
+    }
+
+    #[test]
+    fn commit_file_blobs_sizes_only_and_cap() {
+        let dir = scratch();
+        let repo = init_repo(&dir);
+        let path = dir.to_str().unwrap();
+        let body: &[u8] = b"\x89PNG\00123456789";
+        let oid = commit_binary_file(&repo, "pic.png", body, "add image");
+
+        // include_data=false: the cheap sizes-only path for the binary-file row.
+        let meta = commit_file_blobs(path, &oid.to_string(), None, Some("pic.png".into()), false)
+            .unwrap()
+            .new
+            .unwrap();
+        assert_eq!(meta.size, body.len() as u64);
+        assert!(meta.base64.is_none());
+
+        // Over-cap blobs keep their size but drop the payload.
+        let capped = commit_file_blobs_with_cap(
+            path,
+            &oid.to_string(),
+            None,
+            Some("pic.png".into()),
+            true,
+            4,
+        )
+        .unwrap()
+        .new
+        .unwrap();
+        assert_eq!(capped.size, body.len() as u64);
+        assert!(capped.base64.is_none(), "blob over the cap must be omitted");
     }
 
     #[test]
