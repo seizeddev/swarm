@@ -10,6 +10,32 @@ use std::time::{Duration, Instant};
 /// prompt slipping through) must never wedge the off-thread pool indefinitely.
 const GH_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// The one place a `gh` `Command` is built: non-interactive env (no prompts, no
+/// update nag, no colour), stdin `/dev/null`, optional cwd — and on Windows
+/// `CREATE_NO_WINDOW`, because swarm is a GUI-subsystem app there and spawning
+/// the console-subsystem `gh.exe` without that flag pops up a visible console
+/// window for every invocation (worst during git activity, when the watcher
+/// force-refreshes the PR list).
+fn gh_command(args: &[&str], cwd: Option<&str>) -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null());
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Run `gh` non-interactively and return its stdout on success, or `None` on any
 /// failure (spawn error, non-zero exit, or timeout) so every caller degrades
 /// gracefully to an empty result — exactly the prior behaviour, now bounded.
@@ -19,18 +45,8 @@ const GH_TIMEOUT: Duration = Duration::from_secs(15);
 /// `GH_TIMEOUT`. stdout is drained on a side thread so a large `--json` payload
 /// can't deadlock against the pipe buffer while we wait.
 fn run_gh(args: &[&str], cwd: Option<&str>) -> Option<Vec<u8>> {
-    let mut cmd = Command::new("gh");
-    cmd.args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_NO_UPDATE_NOTIFIER", "1")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
+    let mut cmd = gh_command(args, cwd);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
 
     let mut child = cmd.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
@@ -250,16 +266,8 @@ pub fn gh_available() -> bool {
 /// Bounded by the same watchdog so a hung `gh` can't wedge the pool.
 pub fn pr_checkout(repo_path: &str, number: u64) -> AppResult<()> {
     let num = number.to_string();
-    let mut cmd = Command::new("gh");
-    cmd.args(["pr", "checkout", "--", &num])
-        .current_dir(repo_path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_NO_UPDATE_NOTIFIER", "1")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+    let mut cmd = gh_command(&["pr", "checkout", "--", &num], Some(repo_path));
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
