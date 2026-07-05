@@ -1313,6 +1313,36 @@ describe("persist + hydrate", () => {
     expect(pane.args).toContain("uuid-1");
   });
 
+  // Regression: on Windows the persisted repoPath is backslash-separated
+  // (C:\Users\…\repo). The missing-workspace stub derived its display name with
+  // split("/"), which finds no separator and falls back to the WHOLE path — the
+  // sidebar then shows "C:\Users\vale\repo" instead of "repo".
+  it("derives the missing-stub name from a Windows repoPath", async () => {
+    m.repoInfoForRestore.mockResolvedValue(null);
+    m.loadSession.mockResolvedValue(
+      JSON.stringify({
+        v: 1,
+        activeWorkspaceId: "ws-1",
+        workspaces: [
+          {
+            id: "ws-1",
+            repoPath: "C:\\Users\\vale\\repo",
+            panel: "scm",
+            activeTab: "tab-1",
+            tabs: [
+              { id: "tab-1", layout: { type: "leaf", paneId: "pane-1" }, activeLeaf: "pane-1" },
+            ],
+            panes: [],
+          },
+        ],
+      }),
+    );
+    await s().hydrate();
+    expect(s().workspaces).toHaveLength(1);
+    expect(s().workspaces[0].repo.missing).toBe(true);
+    expect(s().workspaces[0].repo.name).toBe("repo");
+  });
+
   // Regression: a WebContent reload (OOM → Tauri auto-reload) wipes the frontend
   // but the Rust process — and its PTYs — survive. Re-resuming the agent then
   // spawns a *second* process and orphans the live PTY, whose render thread leaks
