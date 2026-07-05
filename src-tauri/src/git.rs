@@ -1429,7 +1429,7 @@ mod tests {
         let dir = scratch();
         let repo = init_repo(&dir);
         let path = dir.to_str().unwrap();
-        let body: &[u8] = b"\x89PNG\00123456789";
+        let body: &[u8] = b"\x89PNG\x000123456789";
         let oid = commit_binary_file(&repo, "pic.png", body, "add image");
 
         // include_data=false: the cheap sizes-only path for the binary-file row.
