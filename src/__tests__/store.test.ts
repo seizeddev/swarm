@@ -1893,6 +1893,33 @@ describe("action edge cases with an active workspace", () => {
     expect(s().workspaces[0].prs).toHaveLength(1);
   });
 
+  it("forced loadPrs coalesces `.git/`-event bursts within the cooldown", async () => {
+    // Every debounced .git/ event force-refreshes PRs; without a cooldown that
+    // is one `gh pr list` per ~300ms burst during agent-driven git activity
+    // (and on Windows, one console child per spawn). Forced loads within the
+    // cooldown must serve the cache; past it they must still bypass the long
+    // TTL that a non-forced load would hit.
+    m.prList.mockResolvedValue([]);
+    const wsId = s().activeWorkspaceId!;
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
+    try {
+      await s().loadPrs(wsId, true); // cold cache: fetches
+      await s().loadPrs(wsId, true); // same burst window: coalesced
+      expect(m.prList).toHaveBeenCalledTimes(1);
+
+      // 12s later: past the 10s force cooldown, inside the 15s TTL — a forced
+      // load fetches again, a plain load still serves the cache.
+      now.mockReturnValue(t0 + 12_000);
+      await s().loadPrs(wsId);
+      expect(m.prList).toHaveBeenCalledTimes(1);
+      await s().loadPrs(wsId, true);
+      expect(m.prList).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("attention + notifications only fire for non-visible panes", () => {
     const first = s().panes[0];
     s().bindPty(first.paneId, { id: "pty-0", token: "tok-0" });
