@@ -126,6 +126,11 @@ const ghLoginOnce = () => (ghLoginCache ??= api.ghLogin());
 // Short-lived PR-list cache keyed by repo path: a `gh pr list` is slow, and the
 // list rarely changes between a workspace switch and a panel open.
 const PR_TTL_MS = 15_000;
+// Forced loads (every debounced `.git/` watcher event during git activity)
+// bypass the TTL but honor this shorter cooldown — otherwise agent-driven git
+// work spawns one `gh pr list` per ~300ms burst. Bursts coalesce into one
+// fetch; a manual ↻ inside the window serves the ≤10s-old cache.
+const PR_FORCE_COOLDOWN_MS = 10_000;
 const prCache = new Map<string, { ts: number; prs: PrSummary[] }>();
 
 /// Test-only: drop the process-lifetime gh/PR caches so each test sees its own
@@ -877,6 +882,9 @@ export const useStore = create<State>((set, get) => {
         if (originAppeared && !ws.ghLogin) {
           ghLoginOnce().then((l) => patch(ws.id, { ghLogin: l }));
         }
+        // A cached list from before the remote existed is for a different
+        // world — drop it so the force cooldown can't coalesce this fetch away.
+        if (originAppeared) prCache.delete(ws.repo.path);
         get().loadPrs(ws.id, true);
       }
     },
@@ -1152,7 +1160,7 @@ export const useStore = create<State>((set, get) => {
       const ws = wsId ? get().workspaces.find((w) => w.id === wsId) : active();
       if (!ws) return;
       const cached = prCache.get(ws.repo.path);
-      if (!force && cached && Date.now() - cached.ts < PR_TTL_MS) {
+      if (cached && Date.now() - cached.ts < (force ? PR_FORCE_COOLDOWN_MS : PR_TTL_MS)) {
         patch(ws.id, { prs: cached.prs, prsLoading: false });
         return;
       }
