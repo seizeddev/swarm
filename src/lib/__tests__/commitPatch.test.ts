@@ -80,6 +80,27 @@ describe("parseCommitPatch", () => {
     expect(gone.added).toBe(false);
   });
 
+  it("detects added/deleted text files via /dev/null", () => {
+    const added = `diff --git a/n.txt b/n.txt
+--- /dev/null
++++ b/n.txt
+@@ -0,0 +1 @@
++hi
+`;
+    const [f] = parseCommitPatch(added);
+    expect(f.added).toBe(true);
+    expect(f.deleted).toBe(false);
+    const deleted = `diff --git a/n.txt b/n.txt
+--- a/n.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-hi
+`;
+    const [g] = parseCommitPatch(deleted);
+    expect(g.deleted).toBe(true);
+    expect(g.file).toBe("n.txt");
+  });
+
   it("surfaces renames with the old path", () => {
     const [f] = parseCommitPatch(RENAME_CHUNK);
     expect(f.renamed).toBe(true);
