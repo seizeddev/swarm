@@ -23,8 +23,10 @@ export function parseCommitPatch(patch: string): FileDiff[] {
   const chunks = patch.split(/(?=^diff --git )/m).filter((c) => c.startsWith("diff --git"));
   for (const chunk of chunks) {
     const lines = chunk.split("\n");
-    const plus = chunk.match(/^\+\+\+ b\/(.+)$/m)?.[1];
-    const minus = chunk.match(/^--- a\/(.+)$/m)?.[1];
+    // No a/ b/ prefix on /dev/null — the optional group keeps added/deleted
+    // detectable (a mandatory prefix silently missed them).
+    const plus = chunk.match(/^\+\+\+ (?:b\/)?(.+)$/m)?.[1];
+    const minus = chunk.match(/^--- (?:a\/)?(.+)$/m)?.[1];
     const gitm = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
     const renameTo = chunk.match(/^rename to (.+)$/m)?.[1];
     const renameFrom = chunk.match(/^rename from (.+)$/m)?.[1];
