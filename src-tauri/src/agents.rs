@@ -67,14 +67,18 @@ pub(crate) fn default_shell() -> String {
     }
 }
 
-pub(crate) fn on_path(cmd: &str) -> bool {
+/// Resolve `cmd` to the full path it would launch from: an explicit path is
+/// returned as-is (if it exists), a bare name is searched on PATH — honouring
+/// PATHEXT on Windows, where npm installs agent CLIs as `claude.cmd` shims.
+/// The resolved path (not just a bool) matters on Windows: the PTY spawn must
+/// know whether it found a `.cmd`/`.bat`, which `CreateProcessW` cannot start
+/// directly (see `needs_cmd_trampoline`).
+pub(crate) fn resolve_on_path(cmd: &str) -> Option<std::path::PathBuf> {
     if cmd.contains('/') || cmd.contains('\\') {
-        return Path::new(cmd).exists();
+        let p = Path::new(cmd);
+        return p.exists().then(|| p.to_path_buf());
     }
-    let path = match std::env::var_os("PATH") {
-        Some(p) => p,
-        None => return false,
-    };
+    let path = std::env::var_os("PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".EXE;.CMD;.BAT".into())
@@ -84,12 +88,30 @@ pub(crate) fn on_path(cmd: &str) -> bool {
     } else {
         vec![String::new()]
     };
-    std::env::split_paths(&path).any(|dir| {
-        exts.iter().any(|ext| {
+    std::env::split_paths(&path).find_map(|dir| {
+        exts.iter().find_map(|ext| {
             let candidate = dir.join(format!("{cmd}{ext}"));
-            candidate.is_file()
+            candidate.is_file().then_some(candidate)
         })
     })
+}
+
+pub(crate) fn on_path(cmd: &str) -> bool {
+    resolve_on_path(cmd).is_some()
+}
+
+/// True when launching `path` needs the `cmd.exe /c` trampoline: Windows'
+/// `CreateProcessW` starts only PE executables — `.cmd`/`.bat` files are
+/// interpreted by cmd.exe. This is why a bare `CommandBuilder::new("claude")`
+/// fails on Windows even though PATHEXT resolution *finds* `claude.cmd` (the
+/// picker's `installed: true` and the spawn would otherwise disagree).
+// Only the #[cfg(windows)] PTY spawn calls this in production; tests exercise
+// it on every platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn needs_cmd_trampoline(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
 }
 
 pub fn list_agents() -> Vec<AgentDef> {
@@ -220,5 +242,32 @@ mod tests {
     #[test]
     fn on_path_rejects_a_bare_command_that_cannot_exist() {
         assert!(!on_path("swarm-nonexistent-binary-zzz"));
+    }
+
+    #[test]
+    fn resolve_on_path_returns_the_explicit_path_verbatim() {
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(resolve_on_path(exe.to_str().unwrap()), Some(exe.clone()));
+        let missing = exe.with_file_name("surely-not-here-xyz-123");
+        assert_eq!(resolve_on_path(missing.to_str().unwrap()), None);
+        assert_eq!(resolve_on_path("swarm-nonexistent-binary-zzz"), None);
+    }
+
+    #[test]
+    fn cmd_trampoline_only_for_batch_shims() {
+        use std::path::PathBuf;
+        // .cmd/.bat (any case) are cmd.exe-interpreted — CreateProcessW can't
+        // start them directly, so the PTY spawn must wrap them.
+        assert!(needs_cmd_trampoline(&PathBuf::from(
+            r"C:\Users\u\AppData\Roaming\npm\claude.cmd"
+        )));
+        assert!(needs_cmd_trampoline(&PathBuf::from(r"C:\x\CLAUDE.CMD")));
+        assert!(needs_cmd_trampoline(&PathBuf::from(r"C:\x\run.bat")));
+        // Real executables and extensionless Unix paths spawn directly.
+        assert!(!needs_cmd_trampoline(&PathBuf::from(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        )));
+        assert!(!needs_cmd_trampoline(&PathBuf::from("/bin/zsh")));
+        assert!(!needs_cmd_trampoline(&PathBuf::from("claude")));
     }
 }

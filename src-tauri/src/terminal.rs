@@ -527,7 +527,24 @@ fn is_login_shell_command(command: &str) -> bool {
 
 #[cfg(windows)]
 fn build_command(opts: &SpawnOpts) -> CommandBuilder {
-    let mut cmd = CommandBuilder::new(&opts.command);
+    // npm installs the agent CLIs as `claude.cmd`-style shims. PATHEXT
+    // resolution finds them (`agents::on_path` reports installed), but the
+    // ConPTY spawn bottoms out in CreateProcessW, which can only start PE
+    // executables — a `.cmd`/`.bat` must run through `cmd.exe /c`. Resolve to
+    // the full path first (also sidesteps portable-pty's extension-replacing
+    // PATH search) and add the trampoline only where needed; a real `.exe`
+    // (powershell, a native agent build) still spawns directly.
+    let resolved = crate::agents::resolve_on_path(&opts.command);
+    let mut cmd = match &resolved {
+        Some(p) if crate::agents::needs_cmd_trampoline(p) => {
+            let mut c = CommandBuilder::new("cmd.exe");
+            c.arg("/c");
+            c.arg(p);
+            c
+        }
+        Some(p) => CommandBuilder::new(p),
+        None => CommandBuilder::new(&opts.command),
+    };
     for a in &opts.args {
         cmd.arg(a);
     }

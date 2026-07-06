@@ -48,6 +48,25 @@ fn shell_single_quote(s: &str) -> String {
     out
 }
 
+/// Quote the swarm binary path for the shell the agent's hook runner actually
+/// uses. Unix: POSIX single quotes (above). Windows: the node-based agents run
+/// hook commands through `cmd.exe /c` (node's `shell: true`), where `'` is a
+/// literal character — a single-quoted path arrives as `'C:\…\swarm.exe'` and
+/// never executes. cmd honours double quotes, and `"` is not a legal filename
+/// character on Windows, so a plain wrap is exact. (`quote_for` is the pure
+/// core so both styles are unit-tested on every host.)
+fn quote_for(s: &str, windows: bool) -> String {
+    if windows {
+        format!("\"{s}\"")
+    } else {
+        shell_single_quote(s)
+    }
+}
+
+fn shell_quote(s: &str) -> String {
+    quote_for(s, cfg!(windows))
+}
+
 /// The agents we wire into a real (non-isolated) config: `(id, display name, binary)`.
 /// The binary name is what we check on PATH (cursor's CLI is `cursor-agent`).
 pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
@@ -62,7 +81,7 @@ pub const INTEGRATIONS: &[(&str, &str, &str)] = &[
 /// quotes, dollar signs, …) survives the shell these agents run hook commands
 /// through.
 fn hook_cmd(bin: &str) -> String {
-    format!("{} --notify-helper event", shell_single_quote(bin))
+    format!("{} --notify-helper event", shell_quote(bin))
 }
 
 /// `'<bin>' --notify-helper <mode>` — a Claude-specific notification hook
@@ -70,16 +89,13 @@ fn hook_cmd(bin: &str) -> String {
 /// same shell-quoting posture. Each mode writes the user-visible reason to the
 /// event file, so it's version-independent (no OSC `terminalSequence` reliance).
 fn notify_cmd(bin: &str, mode: &str) -> String {
-    format!("{} --notify-helper {mode}", shell_single_quote(bin))
+    format!("{} --notify-helper {mode}", shell_quote(bin))
 }
 
 /// `'<bin>' --notify-helper session-start <agent>` — an agent session-capture
 /// hook, same shell-quoting posture.
 fn session_capture_cmd(bin: &str, agent: &str) -> String {
-    format!(
-        "{} --notify-helper session-start {agent}",
-        shell_single_quote(bin)
-    )
+    format!("{} --notify-helper session-start {agent}", shell_quote(bin))
 }
 
 /// Install every supported agent's hook (those whose binary is on PATH). Best-effort.
@@ -132,7 +148,9 @@ fn write_pretty_in(
     if let Ok(md) = std::fs::symlink_metadata(path) {
         if md.file_type().is_symlink() {
             let target = std::fs::read_link(path)?;
-            let resolved = std::fs::canonicalize(&target).unwrap_or_else(|_| {
+            // dunce: `home` below is un-canonicalized, so a `\\?\`-prefixed
+            // resolution would never `starts_with(home)` on Windows.
+            let resolved = dunce::canonicalize(&target).unwrap_or_else(|_| {
                 if target.is_absolute() {
                     target.clone()
                 } else {
@@ -1004,6 +1022,44 @@ mod tests {
         );
         assert_eq!(shell_single_quote("/p/$HOME/swarm"), "'/p/$HOME/swarm'");
         assert_eq!(shell_single_quote(r"/p\swarm"), r"'/p\swarm'");
+    }
+
+    #[test]
+    fn quote_for_windows_is_cmd_compatible() {
+        // cmd.exe treats `'` as a literal, so the Windows style must be double
+        // quotes — a single-quoted hook command silently never runs (the
+        // "notifications and session capture dead on Windows" bug). `"` is not
+        // a legal filename char on Windows, so no inner escaping is needed.
+        assert_eq!(
+            quote_for(r"C:\Program Files\swarm\swarm.exe", true),
+            r#""C:\Program Files\swarm\swarm.exe""#
+        );
+        // Unix style is unchanged: POSIX single quotes.
+        assert_eq!(
+            quote_for("/p with space/swarm", false),
+            "'/p with space/swarm'"
+        );
+    }
+
+    #[test]
+    fn hook_cmds_carry_the_platform_quoting() {
+        // On the host running this test the expected style follows cfg!(windows),
+        // so the same assertion is valid on every CI platform.
+        let bin = if cfg!(windows) {
+            r"C:\s w\swarm.exe"
+        } else {
+            "/s w/swarm"
+        };
+        let quoted = shell_quote(bin);
+        assert_eq!(hook_cmd(bin), format!("{quoted} --notify-helper event"));
+        assert_eq!(
+            session_capture_cmd(bin, "claude"),
+            format!("{quoted} --notify-helper session-start claude")
+        );
+        assert!(
+            !hook_cmd(bin).contains(if cfg!(windows) { '\'' } else { '"' }),
+            "wrong quote style for this platform"
+        );
     }
 
     #[test]
