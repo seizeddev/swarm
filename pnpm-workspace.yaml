@@ -11,6 +11,12 @@ minimumReleaseAgeExclude:
   - vite
   - rolldown
   - "@rolldown/*"
+  - "@oxc-project/*"
 # Reject any update whose trust signals (npm provenance / signatures) have
 # *weakened* vs the previous release — a classic sign of a hijacked package.
 trustPolicy: no-downgrade
+# esbuild reaches us only as vite's peer dep (vite accepts ^0.27 || ^0.28) and
+# pnpm keeps resolving the vulnerable 0.27.x line (GHSA-g7r4-m6w7-qqqr, fixed
+# in 0.28.1). Force the patched line; drop this once vite requires >= 0.28.1.
+overrides:
+  esbuild: ^0.28.1
