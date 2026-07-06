@@ -598,7 +598,10 @@ fn policy(agent: &str) -> Option<Policy> {
             // attacker-supplied MCP server / tool-allowlist / system-prompt on
             // restart would be a persistence vector. swarm's own injected
             // `--settings` is filtered above this check so swarm-launched
-            // panes still resume cleanly.
+            // panes still resume cleanly. `--permission-mode` is deliberately
+            // NOT here: it's the same user intent as
+            // `--dangerously-skip-permissions` (which cmux's policy preserves),
+            // so both restore alike.
             security_value_deny: set(&[
                 "--mcp-config",
                 "--add-dir",
@@ -607,7 +610,6 @@ fn policy(agent: &str) -> Option<Policy> {
                 "--allowed-tools",
                 "--disallowedTools",
                 "--disallowed-tools",
-                "--permission-mode",
                 "--system-prompt",
                 "--append-system-prompt",
                 "--settings",
@@ -1105,7 +1107,6 @@ mod tests {
             "--allowed-tools",
             "--disallowedTools",
             "--disallowed-tools",
-            "--permission-mode",
             "--system-prompt",
             "--append-system-prompt",
             "--agents",
