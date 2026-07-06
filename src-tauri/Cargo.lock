@@ -4059,7 +4059,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-winrt-notification",
  "thiserror 2.0.18",
- "toml 0.8.2",
+ "toml 1.1.2+spec-1.1.0",
  "url",
  "uuid",
  "winreg 0.55.0",
