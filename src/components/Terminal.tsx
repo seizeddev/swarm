@@ -32,6 +32,7 @@ import type { PtyHandle } from "../lib/types";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import { joinPaths, registerDrop } from "../lib/drop";
+import { registerTermActions } from "../lib/termActions";
 import {
   ClipboardPaste,
   Copy,
@@ -655,6 +656,19 @@ export function Terminal({
       wrapRef.current?.focus();
     }
   };
+
+  // Menu-triggered copy/paste (the Windows/Linux Edit menu and its
+  // Ctrl+Shift+C/V chords — macOS rides the AppKit responder chain instead).
+  // App resolves the active pane and dispatches here; same one-path handlers
+  // as the context-menu items. Closures only touch stable refs, so a single
+  // registration per pane id stays current across renders.
+  useEffect(() => {
+    return registerTermActions(pane.paneId, {
+      copy: () => void copySelection(),
+      paste: () => void pasteFromClipboard(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.paneId]);
 
   // Save a pasted image to a temp file via the core, then paste its path. Sent as
   // a bracketed paste (when the program asked for it) so a TUI sees one paste

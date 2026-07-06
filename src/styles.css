@@ -71,7 +71,11 @@
   --color-danger-word: rgba(204, 110, 94, 0.32);
 
   --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
+  /* SF Mono/Menlo are macOS; Cascadia Mono/Consolas name the Windows faces
+     explicitly (ui-monospace resolves them on Win11, older stacks need the
+     names). */
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Cascadia Mono", "Consolas", monospace;
 
   /* The app owns its own typographic scale and overrides Tailwind's defaults —
      a modular ladder so every chrome label/body/heading snaps to one of these

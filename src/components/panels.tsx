@@ -28,6 +28,7 @@ import { confirmDialog } from "../lib/dialog";
 import { copyToClipboard } from "../lib/copy";
 import { openExternal } from "../lib/external";
 import type { ChangeStatus, FileChange } from "../lib/types";
+import { fileManagerName, joinRepoPath, MOD } from "../lib/platform";
 
 // Monochrome chrome: bright neutral for adds, muted for the rest, red for
 // deletes, amber for conflicts. No green outside the diff content itself.
@@ -120,8 +121,11 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
   const active =
     ws?.editor.type === "diff" && ws.editor.file === f.path && ws.editor.staged === staged;
 
-  // Absolute path for reveal/copy — repo.path is the canonical workdir.
-  const abs = ws ? `${ws.repo.path}/${f.path}` : f.path;
+  // Absolute path for reveal/copy — repo.path is the canonical workdir. Joined
+  // with the OS separator: git paths are always "/"-separated, but on Windows
+  // the workdir is backslash-separated and "Copy Path" should not hand the
+  // user a mixed-separator string.
+  const abs = ws ? joinRepoPath(ws.repo.path, f.path) : f.path;
   const items: MenuItem[] = [
     { kind: "header", label: f.path.split("/").pop() ?? f.path },
     { label: "Open Diff", icon: <FileText size={14} />, onClick: () => openDiff(f.path, staged) },
@@ -145,7 +149,11 @@ function FileRow({ f, staged }: { f: FileChange; staged: boolean }) {
       },
     },
     { kind: "separator" },
-    { label: "Reveal in Finder", icon: <FolderOpen size={14} />, onClick: () => revealPath(abs) },
+    {
+      label: `Reveal in ${fileManagerName}`,
+      icon: <FolderOpen size={14} />,
+      onClick: () => revealPath(abs),
+    },
     { label: "Copy Path", icon: <Copy size={14} />, onClick: () => copyToClipboard(abs, "path") },
     {
       label: "Copy Relative Path",
@@ -297,7 +305,7 @@ export function SourceControlPanel() {
         <textarea
           aria-label="Commit message"
           className="field h-[68px] resize-none"
-          placeholder="Message (⌘Enter to commit)"
+          placeholder={`Message (${MOD}Enter to commit)`}
           value={ws.commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={(e) => {

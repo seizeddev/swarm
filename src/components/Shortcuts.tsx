@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { Modal } from "./Modal";
-
-// macOS shows ⌘; Windows/Linux show Ctrl. `navigator.platform` is the cheapest
-// reliable signal in a WKWebView (no UA-CH needed) and matches what the README
-// table documents ("⌘ for macOS; use Ctrl on Windows and Linux").
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const MOD = isMac ? "⌘" : "Ctrl";
-const SHIFT = isMac ? "⇧" : "Shift";
+import { ALT, isMac, MOD, SHIFT } from "../lib/platform";
 
 interface Shortcut {
   keys: string[];
@@ -17,13 +11,17 @@ interface Group {
   items: Shortcut[];
 }
 
-// Mirrors the native accelerators in src-tauri/src/lib.rs and the README table.
+// Mirrors the native accelerators in src-tauri/src/lib.rs (`accel(mac, other)`)
+// and the README table. On Windows/Linux many chords carry Shift/Alt because a
+// bare Ctrl+letter would be translated before the webview and steal the
+// terminal's control bytes (Ctrl+C interrupt, Ctrl+D EOF, tmux's Ctrl+B, …) —
+// the same reason Windows Terminal and gnome-terminal use Ctrl+Shift chords.
 const GROUPS: Group[] = [
   {
     title: "Projects",
     items: [
-      { keys: [MOD, "N"], action: "New project" },
-      { keys: [MOD, SHIFT, "W"], action: "Close project" },
+      { keys: isMac ? [MOD, "N"] : [MOD, SHIFT, "N"], action: "New project" },
+      { keys: isMac ? [MOD, SHIFT, "W"] : [MOD, ALT, "W"], action: "Close project" },
       { keys: [MOD, "1–9"], action: "Jump to project 1–9" },
       { keys: [MOD, SHIFT, "]"], action: "Next project" },
       { keys: [MOD, SHIFT, "["], action: "Previous project" },
@@ -32,24 +30,34 @@ const GROUPS: Group[] = [
   {
     title: "Terminals",
     items: [
-      { keys: [MOD, "T"], action: "New terminal" },
-      { keys: [MOD, "D"], action: "Split right" },
-      { keys: [MOD, SHIFT, "D"], action: "Split down" },
-      { keys: [MOD, "W"], action: "Close terminal" },
-      { keys: [MOD, "C"], action: "Copy selection (else SIGINT)" },
+      { keys: isMac ? [MOD, "T"] : [MOD, SHIFT, "T"], action: "New terminal" },
+      { keys: isMac ? [MOD, "D"] : [MOD, SHIFT, "D"], action: "Split right" },
+      { keys: isMac ? [MOD, SHIFT, "D"] : [MOD, ALT, "D"], action: "Split down" },
+      { keys: isMac ? [MOD, "W"] : [MOD, SHIFT, "W"], action: "Close terminal" },
+      {
+        keys: [MOD, "C"],
+        action: isMac ? "Copy selection (else SIGINT)" : "Copy selection (else interrupt)",
+      },
+      ...(isMac
+        ? []
+        : [
+            { keys: [MOD, SHIFT, "C"], action: "Copy selection" },
+            { keys: [MOD, SHIFT, "V"], action: "Paste" },
+          ]),
     ],
   },
   {
     title: "View",
     items: [
       { keys: [MOD, SHIFT, "P"], action: "Command palette" },
-      { keys: [MOD, "B"], action: "Toggle sidebar" },
+      { keys: isMac ? [MOD, "B"] : [MOD, SHIFT, "B"], action: "Toggle sidebar" },
       { keys: [MOD, SHIFT, "G"], action: "Source Control" },
-      { keys: [MOD, "I"], action: "Notifications" },
+      { keys: isMac ? [MOD, "I"] : [MOD, SHIFT, "I"], action: "Notifications" },
       { keys: [MOD, ","], action: "Settings" },
       { keys: [MOD, SHIFT, "="], action: "Zoom in" },
       { keys: [MOD, "-"], action: "Zoom out" },
       { keys: [MOD, "0"], action: "Actual size" },
+      ...(isMac ? [] : [{ keys: ["F11"], action: "Full screen" }]),
     ],
   },
 ];

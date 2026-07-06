@@ -15,6 +15,7 @@ import { rovingIndex } from "../lib/roving";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
 import type { MenuItem } from "../lib/menu";
 import type { AgentDef } from "../lib/types";
+import { isMac } from "../lib/platform";
 
 const ATTN = "var(--color-text)";
 
@@ -238,8 +239,10 @@ export function TopBar() {
       data-tauri-drag-region="deep"
       className="flex h-11 flex-none items-center border-b border-[var(--color-border)]"
     >
-      {/* Rail column — the macOS traffic lights overlay this strip. */}
-      <div className="h-full w-14 flex-none" />
+      {/* Rail column — the macOS traffic lights overlay this strip. Windows/
+          Linux have a native title bar (titleBarStyle Overlay is macOS-only),
+          so there is nothing to clear on the left and the rail collapses. */}
+      {isMac && <div className="h-full w-14 flex-none" />}
 
       {/* Repo identity — sits over the inspector panel, only while it's open,
           and tracks the panel's resizable width. pl-8 clears the macOS traffic
@@ -248,7 +251,7 @@ export function TopBar() {
           the title floats with dead space on the left. */}
       {showIdentity && (
         <div
-          className={`flex h-full flex-none items-center gap-2 overflow-hidden pr-3 ${fullscreen ? "pl-3" : "pl-8"}`}
+          className={`flex h-full flex-none items-center gap-2 overflow-hidden pr-3 ${!isMac || fullscreen ? "pl-3" : "pl-8"}`}
           style={{ width: "var(--panel-w)" }}
         >
           <h1 className="min-w-0 truncate text-base font-semibold tracking-[-0.01em] text-[var(--color-text)]">
@@ -272,7 +275,7 @@ export function TopBar() {
           hides them, where pl-3 reclaims the dead space. */}
       <div
         className={`flex h-full min-w-0 flex-1 items-center gap-1 pr-3 ${
-          showIdentity || fullscreen ? "pl-3" : "pl-8"
+          showIdentity || fullscreen || !isMac ? "pl-3" : "pl-8"
         }`}
       >
         <div

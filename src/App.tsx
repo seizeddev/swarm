@@ -14,6 +14,9 @@ import { DialogHost } from "./components/DialogHost";
 import { ToastHost } from "./components/ToastHost";
 import { buildCommands, type CommandHandlers } from "./lib/commands";
 import { dispatchDrop } from "./lib/drop";
+import { dispatchTermAction } from "./lib/termActions";
+import { menuChordCommand } from "./lib/menuChords";
+import { isMac } from "./lib/platform";
 import { applyPanelWidth, currentPanelWidth } from "./lib/panel";
 
 // Zoom is a document-level CSS mutation with no React state — kept module-level so
@@ -66,6 +69,16 @@ export default function App() {
       setPaletteOpen(true);
       return;
     }
+    // Windows/Linux Edit menu (and its Ctrl+Shift+C/V fallback chords): route
+    // to the focused pane's registered copy/paste — the same handlers the
+    // pane's context menu uses.
+    if (id === "term_copy" || id === "term_paste") {
+      const st = useStore.getState();
+      const ws = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+      const tab = ws?.tabs.find((t) => t.id === ws.activeTab);
+      if (tab) dispatchTermAction(tab.activeLeaf, id === "term_copy" ? "copy" : "paste");
+      return;
+    }
     const cmd = buildCommands(handlers).find((c) => c.id === id);
     if (cmd) {
       cmd.run();
@@ -88,19 +101,44 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      if (e.code === "KeyP" && e.shiftKey) {
+      if (mod && e.code === "KeyP" && e.shiftKey) {
         // P sits in the same place on every Latin layout, so the physical code is
         // the reliable match (Shift-independent).
         e.preventDefault();
         setPaletteOpen((v) => !v);
-      } else if (e.key === "/" || e.key === "?") {
+        return;
+      }
+      if (mod && (e.key === "/" || e.key === "?")) {
         // Slash is layout-dependent — US ⌘/ vs German ⌘⇧7 are different physical
         // keys — so match the produced *character*, not `code`. `?` is accepted
         // as a friendly alias (Shift+/ on US).
         e.preventDefault();
         setShortcutsOpen((v) => !v);
+        return;
       }
+      // Windows/Linux: JS fallback for the native menu accelerators (see
+      // lib/menuChords.ts — exactly-once with the native path by construction).
+      // macOS relies on AppKit alone.
+      if (isMac) return;
+      const id = menuChordCommand(e);
+      if (!id) return;
+      // Inside an editable field, leave copy/paste to the browser (Ctrl+Shift+V
+      // is "paste without formatting" there); the app-level chords still apply.
+      const editable = (e.target as HTMLElement | null)?.closest?.(
+        'input, textarea, [contenteditable="true"]',
+      );
+      if (editable && (id === "term_copy" || id === "term_paste")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (id === "toggle_fullscreen") {
+        const win = getCurrentWindow();
+        win
+          .isFullscreen()
+          .then((v) => win.setFullscreen(!v))
+          .catch(() => {});
+        return;
+      }
+      handleMenuRef.current(id);
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });

@@ -29,6 +29,7 @@ import type { MenuItem } from "../lib/menu";
 import { useShallow } from "zustand/react/shallow";
 import { PANEL_DEFAULT, clampPanelWidth } from "../lib/panel";
 import { copyToClipboard } from "../lib/copy";
+import { fileManagerName } from "../lib/platform";
 
 const ATTN = "var(--color-text)";
 
@@ -435,7 +436,7 @@ export function Sidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
         onClick: () => refreshStatus(id),
       },
       {
-        label: "Reveal in Finder",
+        label: `Reveal in ${fileManagerName}`,
         icon: <FolderOpen size={14} />,
         onClick: () => revealPath(w.repo.path),
       },

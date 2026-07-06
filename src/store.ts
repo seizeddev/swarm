@@ -15,6 +15,7 @@ import { loadSnap, saveSnap } from "./lib/persist";
 import { confirmDialog } from "./lib/dialog";
 import { toast } from "./lib/toast";
 import { notifyOS } from "./lib/notify";
+import { isWindows, pathBasename } from "./lib/platform";
 import { updater } from "./lib/updater";
 import type {
   AgentDef,
@@ -412,7 +413,9 @@ export const useStore = create<State>((set, get) => {
       pty: null,
       title: a?.name ?? "Shell",
       agentId,
-      command: a?.command ?? "bash",
+      // Fallback only when the backend's agent list is unavailable; there is
+      // no bash on a stock Windows box.
+      command: a?.command ?? (isWindows ? "powershell" : "bash"),
       args,
       cwd: ws.repo.path,
       attention: false,
@@ -566,7 +569,9 @@ export const useStore = create<State>((set, get) => {
               const fetched = await api.repoInfoForRestore(sw.repoPath);
               repo = fetched ?? {
                 path: sw.repoPath,
-                name: sw.name ?? sw.repoPath.split("/").pop() ?? sw.repoPath,
+                // pathBasename, not split("/"): a Windows repoPath is
+                // backslash-separated and would otherwise fall back whole.
+                name: sw.name ?? pathBasename(sw.repoPath),
                 headBranch: null,
                 isRepo: false,
                 originUrl: null,

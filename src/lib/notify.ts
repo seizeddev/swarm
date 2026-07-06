@@ -10,6 +10,7 @@
 // the user isn't already looking, click jumps to the pane) — our own
 // implementation, no code shared (cmux is GPL/commercial dual-licensed).
 import { api } from "./ipc";
+import { isMac, isWindows } from "./platform";
 
 // The "plop". Per-platform because the sound field means different things on
 // each OS:
@@ -20,9 +21,8 @@ import { api } from "./ipc";
 //   - Windows: the toast uses its system default sound (the Rust side ignores
 //     this), so leave it undefined.
 function plopSound(): string | undefined {
-  const ua = navigator.userAgent;
-  if (ua.includes("Mac")) return "Pop";
-  if (ua.includes("Windows")) return undefined;
+  if (isMac) return "Pop";
+  if (isWindows) return undefined;
   return "message-new-instant";
 }
 
