@@ -1128,6 +1128,21 @@ mod tests {
     }
 
     #[test]
+    fn claude_permission_mode_restores_like_skip_permissions() {
+        // `--permission-mode <mode>` expresses the same user intent as
+        // `--dangerously-skip-permissions`, which the cmux-ported policy
+        // preserves — so both must come back after a restart, value included.
+        let out = sanitize(
+            "claude",
+            &["--permission-mode".into(), "bypassPermissions".into()],
+        )
+        .unwrap();
+        assert_eq!(out, vec!["--permission-mode", "bypassPermissions"]);
+        let out = sanitize("claude", &["--permission-mode=plan".into()]).unwrap();
+        assert_eq!(out, vec!["--permission-mode=plan"]);
+    }
+
+    #[test]
     fn m1_claude_security_value_deny_respects_swarm_settings_filter() {
         // The swarm-injected `--settings <json>` is filtered BEFORE the
         // security gate — otherwise every swarm-launched Claude would be
