@@ -72,38 +72,44 @@ swarm **auto-updates**: it checks the latest GitHub release at launch, on focus,
 
 ## Keyboard shortcuts
 
-Shown with ⌘ for macOS; use **Ctrl** on Windows and Linux.
+On Windows and Linux, chords that would collide with terminal control bytes
+(Ctrl+C interrupt, Ctrl+D EOF, tmux's Ctrl+B, …) follow the terminal-app
+convention instead — Ctrl+Shift / Ctrl+Alt, like Windows Terminal and
+gnome-terminal. The in-app overlay (⌘ / or Ctrl /) always shows your
+platform's chords.
 
 **Projects**
 
-| Shortcut | Action |
-| --- | --- |
-| ⌘ N | New project |
-| ⌘ ⇧ W | Close project |
-| ⌘ 1–9 | Jump to project 1–9 |
-| ⌘ ⇧ ] · ⌘ ⇧ [ | Next · previous project |
+| macOS | Windows / Linux | Action |
+| --- | --- | --- |
+| ⌘ N | Ctrl Shift N | New project |
+| ⌘ ⇧ W | Ctrl Alt W | Close project |
+| ⌘ 1–9 | Ctrl 1–9 | Jump to project 1–9 |
+| ⌘ ⇧ ] · ⌘ ⇧ [ | Ctrl Shift ] · Ctrl Shift [ | Next · previous project |
 
 **Terminals**
 
-| Shortcut | Action |
-| --- | --- |
-| ⌘ T | New terminal |
-| ⌘ D | Split right |
-| ⌘ ⇧ D | Split down |
-| ⌘ W | Close terminal |
-| ⌘ C | Copy selection (sends SIGINT when there's no selection) |
+| macOS | Windows / Linux | Action |
+| --- | --- | --- |
+| ⌘ T | Ctrl Shift T | New terminal |
+| ⌘ D | Ctrl Shift D | Split right |
+| ⌘ ⇧ D | Ctrl Alt D | Split down |
+| ⌘ W | Ctrl Shift W | Close terminal |
+| ⌘ C | Ctrl C | Copy selection (interrupts when there's no selection) |
+| — | Ctrl Shift C · Ctrl Shift V | Copy selection · paste |
 
 **Panels & view**
 
-| Shortcut | Action |
-| --- | --- |
-| ⌘ ⇧ P | Command palette |
-| ⌘ B | Toggle sidebar |
-| ⌘ ⇧ G | Source Control |
-| ⌘ I | Notifications |
-| ⌘ / | Keyboard shortcuts |
-| ⌘ , | Settings |
-| ⌘ ⇧ = · ⌘ - · ⌘ 0 | Zoom in · out · reset |
+| macOS | Windows / Linux | Action |
+| --- | --- | --- |
+| ⌘ ⇧ P | Ctrl Shift P | Command palette |
+| ⌘ B | Ctrl Shift B | Toggle sidebar |
+| ⌘ ⇧ G | Ctrl Shift G | Source Control |
+| ⌘ I | Ctrl Shift I | Notifications |
+| ⌘ / | Ctrl / | Keyboard shortcuts |
+| ⌘ , | Ctrl , | Settings |
+| ⌘ ⇧ = · ⌘ - · ⌘ 0 | Ctrl Shift = · Ctrl - · Ctrl 0 | Zoom in · out · reset |
+| — | F11 | Full screen |
 
 ## Architecture
 
