@@ -6,6 +6,85 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+A Windows release. swarm now behaves like a native citizen on Windows —
+agents launch, menus and shortcuts follow the platform's conventions,
+notifications render, and paths read like paths. Alongside it: inline
+image rendering in the commit view, a design/accessibility audit pass
+with toast confirmations, and a PR-refresh coalescing fix. No data
+migration required.
+
+### Added
+
+- **Images and binary files render in the commit view.** A commit touching an
+  image now shows it inline — before/after side by side for a modified image,
+  a single side for added/deleted, each with dimensions and byte size — and
+  every other binary file gets a size caption instead of an empty box. Backed
+  by a new guard-checked `commit_file_blobs` IPC (off-thread, base64, capped
+  at 8 MiB per side so a huge asset can't stall the webview).
+- **Toast confirmations.** Every "Copy X" action now confirms with a transient
+  bottom-right toast ("Copied path"), and a denied clipboard write surfaces an
+  error toast instead of being swallowed. Portaled, monochrome, capped at 4,
+  click-to-dismiss.
+
+### Changed
+
+- **Design-audit refinements across every surface.** Destructive confirm
+  buttons and error banners move to a real danger token that keeps AA
+  contrast; badge/pill sizes, type scale, and motion curves unify onto one
+  ladder; menus and modals grow from their real origin. Inspector rows
+  (SCM/PR/history/notifications) are keyboard-operable, the command palette
+  follows the combobox/listbox ARIA pattern, and PR/commit failures show a
+  real error-with-retry instead of failing silently.
+- **Per-platform keyboard shortcuts.** On Windows/Linux, menu accelerators
+  follow the terminal-app convention (Ctrl+Shift / Ctrl+Alt chords, Windows
+  Terminal / gnome-terminal style) so the menu never steals Ctrl+C interrupt,
+  Ctrl+D EOF, or tmux's Ctrl+B from the terminal; macOS keeps its ⌘ chords.
+  The Shortcuts overlay and README document the real per-platform table.
+
+### Fixed
+
+- **Windows: agents installed via npm actually launch.** npm installs agent
+  CLIs as `claude.cmd`-style batch shims, which `CreateProcessW` can't start —
+  every such agent failed to open a pane. Batch shims are now wrapped in
+  `cmd.exe /c`; real `.exe`s still spawn directly.
+- **Windows: notification/session-capture hooks fire.** Hook commands written
+  into agent configs were POSIX-single-quoted, but node-based agents run hooks
+  through `cmd.exe`, where `'` is a literal — hooks never executed. Quoting is
+  now per-platform (double quotes on Windows).
+- **Windows: no more console windows flashing.** `gh` is spawned with
+  `CREATE_NO_WINDOW`, so a packaged install no longer pops a CMD window on
+  every PR fetch.
+- **Windows: working About dialog, Explorer reveal, toasts, and plain paths.**
+  About passes real metadata (muda's Windows/GTK backends no-op on `None`);
+  reveal passes `/select,<path>` as one token; WinRT toasts register the
+  AppUserModelID fallback so portable/dev runs notify; paths canonicalize via
+  `dunce` so the UI, Explorer, and libgit2 all see plain `C:\` paths instead
+  of `\\?\`-prefixed ones.
+- **Platform-aware frontend.** One shared platform signal replaces ad-hoc
+  `navigator` sniffs: missing-workspace stubs derive their name from backslash
+  paths correctly, "Reveal in Finder" reads "File Explorer"/"File Manager" per
+  platform, Copy Path uses the native separator, the shell pane falls back to
+  `powershell`, and the traffic-light chrome insets are macOS-only.
+- **Watcher-forced PR refreshes coalesce.** Debounced `.git/` events used to
+  bypass the PR cache outright, spawning one `gh pr list` per ~300 ms burst
+  during agent-driven git activity; forced refreshes now honor a 10 s cooldown
+  while still fetching fresher than the plain 15 s TTL.
+- **Added/deleted pills show for new and removed files.** git writes
+  `--- /dev/null` / `+++ /dev/null` without the `a/`/`b/` prefix the patch
+  parser required, so added/deleted text files were never flagged.
+- **`claude --permission-mode` survives a restart.** It expresses the same
+  user intent as `--dangerously-skip-permissions`, which the resume sanitizer
+  has always preserved — the two now restore alike, value included.
+
+### Security
+
+- **Cleared the npm advisory set:** vite ≥ 8.1.3 (GHSA-fx2h-pf6j-xcff
+  `server.fs.deny` bypass, high; GHSA-v6wh-96g9-6wx3, moderate) and esbuild
+  forced to the patched ≥ 0.28.1 line via a pnpm override
+  (GHSA-g7r4-m6w7-qqqr, low). `pnpm audit` is clean again.
+
 ## [0.7.0] - 2026-06-01
 
 A reliability release for two things you feel every day: agent notifications
@@ -255,7 +334,10 @@ First public release.
 - Pre-1.0: interfaces and persisted snapshot format may change.
 - Licensed under **GPL-3.0-or-later**.
 
-[Unreleased]: https://github.com/valewnrt/swarm/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/valewnrt/swarm/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/valewnrt/swarm/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/valewnrt/swarm/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/valewnrt/swarm/compare/v0.4.0...v0.6.0
 [0.4.0]: https://github.com/valewnrt/swarm/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/valewnrt/swarm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/valewnrt/swarm/compare/v0.2.2...v0.3.0
