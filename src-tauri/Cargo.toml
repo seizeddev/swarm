@@ -53,7 +53,7 @@ dunce = "1"
 # Codex hook-trust: SHA-256 of the hook identity (matches Codex's trust scheme) and
 # safe TOML editing of its config.toml (features flag + hooks.state trust table).
 sha2 = "0.11"
-toml = "0.8"
+toml = "1.1"
 alacritty_terminal = "0.26.0"
 # Event-driven filesystem watching (FSEvents/inotify/kqueue) — replaces interval
 # polling for agent notifications and live git-status refresh.
