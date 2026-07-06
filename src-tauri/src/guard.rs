@@ -60,7 +60,13 @@ impl WorkspaceRegistry {
     /// path so the caller can use it for the immediate follow-up call (which
     /// it would otherwise have to canonicalise again).
     pub fn register(&self, path: &str) -> AppResult<PathBuf> {
-        let canon = std::fs::canonicalize(path)?;
+        // dunce, not std: on Windows std's canonicalize returns a `\\?\C:\…`
+        // extended-length path, which Explorer's `/select,` rejects, libgit2's
+        // workdir strings never equal, and the UI would display verbatim. dunce
+        // strips the prefix whenever the plain path is equivalent, and both the
+        // roots and every candidate go through the same call so containment
+        // (`starts_with`) still compares like with like.
+        let canon = dunce::canonicalize(path)?;
         {
             let mut roots = self.roots.lock();
             roots.insert(canon.clone());
@@ -122,7 +128,7 @@ impl WorkspaceRegistry {
         let original_count = envelope.roots.len();
         let mut loaded = HashSet::new();
         for p in envelope.roots {
-            if let Ok(canon) = std::fs::canonicalize(&p) {
+            if let Ok(canon) = dunce::canonicalize(&p) {
                 loaded.insert(canon);
             }
         }
@@ -143,7 +149,7 @@ impl WorkspaceRegistry {
     /// canonical path. `AppError::Invalid` otherwise — the same error kind the
     /// frontend already handles for bad input.
     pub fn ensure_within_root(&self, path: &str) -> AppResult<PathBuf> {
-        let canon = std::fs::canonicalize(path)
+        let canon = dunce::canonicalize(path)
             .map_err(|_| AppError::Invalid(format!("path does not resolve: {path}")))?;
         if self.is_allowed(&canon) {
             Ok(canon)

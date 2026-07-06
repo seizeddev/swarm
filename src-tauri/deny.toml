@@ -22,7 +22,16 @@ yanked = "deny"
 # (gtk-rs GTK3 bindings, unic-* via tauri-utils) have no upstream fix and we
 # can't act on them, so flagging them would only produce an un-actionable gate.
 unmaintained = "workspace"
-ignore = []
+ignore = [
+  # quick-xml < 0.41 DoS pair (quadratic duplicate-attribute check / unbounded
+  # xmlns allocation). Pinned transitively with no semver-compatible patched
+  # release: plist 1.x (via tauri) wants 0.39, tauri-winrt-notification 0.7
+  # wants 0.37. Both parse trusted, locally-generated XML (the app's own
+  # Info.plist / our own toast payload), never attacker-supplied input. Drop
+  # these when plist and tauri-winrt-notification move to quick-xml >= 0.41.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
 
 [licenses]
 # Allowlist covering every license currently in the tree. Anything outside this

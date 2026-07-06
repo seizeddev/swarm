@@ -16,7 +16,7 @@ mod watcher;
 
 use error::AppResult;
 use guard::WorkspaceRegistry;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use terminal::{SpawnOpts, SpawnResult, TerminalManager, UpdateChannel};
@@ -296,8 +296,16 @@ async fn reveal_path(reg: State<'_, WorkspaceRegistry>, path: String) -> AppResu
         };
         #[cfg(target_os = "windows")]
         let mut cmd = {
+            // Explorer does its own command-line parsing: `/select,<path>` must
+            // arrive as ONE token (std's per-arg quoting would hand it
+            // `/select,` and the path separately, which Explorer ignores), so
+            // bypass quoting with raw_arg. `canon` comes from
+            // dunce::canonicalize — never `\\?\`-prefixed, which Explorer also
+            // rejects. No CREATE_NO_WINDOW needed: explorer.exe is a GUI-
+            // subsystem binary (unlike gh.exe in github.rs).
+            use std::os::windows::process::CommandExt;
             let mut c = std::process::Command::new("explorer");
-            c.arg("/select,").arg(&canon);
+            c.raw_arg(format!("/select,\"{}\"", canon.display()));
             c
         };
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1003,6 +1011,23 @@ fn pty_reap(state: State<TerminalManager>, keep: Vec<String>) {
     state.reap(&keep);
 }
 
+/// Pick a menu accelerator per platform. macOS keeps the traditional ⌘-letter
+/// chords. On Windows/Linux the same chord would be Ctrl+<letter>, and native
+/// accelerators are translated *before* the webview sees the keydown
+/// (`TranslateAcceleratorW` on Windows, the GTK accel group on Linux) — so a
+/// Ctrl+letter accelerator steals the control byte from the terminal (Ctrl+C
+/// interrupt, Ctrl+D EOF, Ctrl+W delete-word, tmux's Ctrl+B prefix, …). Those
+/// chords move to the terminal-app convention (Windows Terminal,
+/// gnome-terminal): Ctrl+Shift+<letter> / Ctrl+Alt+<letter>. The frontend
+/// mirrors this map in a JS keydown fallback (App.tsx) and in Shortcuts.tsx.
+fn accel<'a>(mac: &'a str, other: &'a str) -> &'a str {
+    if cfg!(target_os = "macos") {
+        mac
+    } else {
+        other
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Agent completion hooks re-invoke us as `swarm --notify-helper <mode>`: do
@@ -1036,23 +1061,43 @@ pub fn run() {
         .manage(WatcherManager::default())
         .manage(WorkspaceRegistry::default())
         .menu(|app| {
+            // `about(None)` only works on macOS (AppKit fills the panel from the
+            // bundle). muda's Windows and GTK backends show a dialog *only* when
+            // metadata is supplied — with None the click is silently swallowed.
+            let about = AboutMetadataBuilder::new()
+                .name(Some("swarm"))
+                .version(Some(app.package_info().version.to_string()))
+                .copyright(Some("© Valentin Weinert"))
+                .license(Some("GPL-3.0-or-later"))
+                .website(Some("https://github.com/valewnrt/swarm"))
+                .build();
             let app_menu = SubmenuBuilder::new(app, "swarm")
-                .about(None)
+                .about(Some(about))
                 .separator()
                 .item(
                     &MenuItemBuilder::with_id("settings", "Settings…")
                         .accelerator("CmdOrCtrl+,")
                         .build(app)?,
-                )
+                );
+            // Services/Hide/Hide Others/Show All exist only in AppKit; on
+            // Windows/Linux muda renders them as dead items.
+            #[cfg(target_os = "macos")]
+            let app_menu = app_menu
                 .separator()
                 .services()
                 .separator()
                 .hide()
                 .hide_others()
-                .show_all()
-                .separator()
-                .quit()
-                .build()?;
+                .show_all();
+            let app_menu = app_menu.separator().quit().build()?;
+            // macOS: the predefined Edit items ride the responder chain and use
+            // ⌘-chords the terminal never sees. Windows/Linux: those same items
+            // register native Ctrl+C/X/V/A accelerators that fire before the
+            // webview — the terminal would lose Ctrl+C (interrupt). So the Edit
+            // menu is Copy/Paste on the Ctrl+Shift chords terminals use, routed
+            // through the same per-pane paths as the context menu; DOM inputs
+            // keep their native (unintercepted) Ctrl+C/V handling.
+            #[cfg(target_os = "macos")]
             let edit = SubmenuBuilder::new(app, "Edit")
                 .undo()
                 .redo()
@@ -1061,6 +1106,19 @@ pub fn run() {
                 .copy()
                 .paste()
                 .select_all()
+                .build()?;
+            #[cfg(not(target_os = "macos"))]
+            let edit = SubmenuBuilder::new(app, "Edit")
+                .item(
+                    &MenuItemBuilder::with_id("term_copy", "Copy")
+                        .accelerator("Ctrl+Shift+C")
+                        .build(app)?,
+                )
+                .item(
+                    &MenuItemBuilder::with_id("term_paste", "Paste")
+                        .accelerator("Ctrl+Shift+V")
+                        .build(app)?,
+                )
                 .build()?;
             let view = SubmenuBuilder::new(app, "View")
                 // No native accelerator: ⌘⇧P is owned by a JS keydown handler
@@ -1071,7 +1129,7 @@ pub fn run() {
                 .separator()
                 .item(
                     &MenuItemBuilder::with_id("toggle_sidebar", "Toggle Sidebar")
-                        .accelerator("CmdOrCtrl+B")
+                        .accelerator(accel("CmdOrCtrl+B", "Ctrl+Shift+B"))
                         .build(app)?,
                 )
                 .separator()
@@ -1083,7 +1141,7 @@ pub fn run() {
                 .item(&MenuItemBuilder::with_id("panel_prs", "Pull Requests").build(app)?)
                 .item(
                     &MenuItemBuilder::with_id("panel_notifications", "Notifications")
-                        .accelerator("CmdOrCtrl+I")
+                        .accelerator(accel("CmdOrCtrl+I", "Ctrl+Shift+I"))
                         .build(app)?,
                 )
                 .separator()
@@ -1109,41 +1167,53 @@ pub fn run() {
                 )
                 // ⌘/ is owned by the JS keydown handler (see command_palette note).
                 .item(&MenuItemBuilder::with_id("shortcuts", "Keyboard Shortcuts").build(app)?)
-                .separator()
-                .fullscreen()
-                .build()?;
+                .separator();
+            // The predefined fullscreen item is AppKit-only; Windows/Linux get a
+            // custom F11 item toggled natively in on_menu_event.
+            #[cfg(target_os = "macos")]
+            let view = view.fullscreen();
+            #[cfg(not(target_os = "macos"))]
+            let view = view.item(
+                &MenuItemBuilder::with_id("toggle_fullscreen", "Full Screen")
+                    .accelerator("F11")
+                    .build(app)?,
+            );
+            let view = view.build()?;
             let term = SubmenuBuilder::new(app, "Terminal")
                 .item(
                     &MenuItemBuilder::with_id("new_terminal", "New Terminal")
-                        .accelerator("CmdOrCtrl+T")
+                        .accelerator(accel("CmdOrCtrl+T", "Ctrl+Shift+T"))
                         .build(app)?,
                 )
                 .item(
                     &MenuItemBuilder::with_id("split_right", "Split Right")
-                        .accelerator("CmdOrCtrl+D")
+                        .accelerator(accel("CmdOrCtrl+D", "Ctrl+Shift+D"))
                         .build(app)?,
                 )
                 .item(
                     &MenuItemBuilder::with_id("split_down", "Split Down")
-                        .accelerator("CmdOrCtrl+Shift+D")
+                        .accelerator(accel("CmdOrCtrl+Shift+D", "Ctrl+Alt+D"))
                         .build(app)?,
                 )
                 .separator()
                 .item(
                     &MenuItemBuilder::with_id("close_pane", "Close Terminal")
-                        .accelerator("CmdOrCtrl+W")
+                        .accelerator(accel("CmdOrCtrl+W", "Ctrl+Shift+W"))
                         .build(app)?,
                 )
                 .build()?;
             let mut proj = SubmenuBuilder::new(app, "Project")
                 .item(
                     &MenuItemBuilder::with_id("new_workspace", "New Project…")
-                        .accelerator("CmdOrCtrl+N")
+                        .accelerator(accel("CmdOrCtrl+N", "Ctrl+Shift+N"))
                         .build(app)?,
                 )
                 .item(
+                    // Ctrl+Shift+W is Close Terminal on Windows/Linux (the
+                    // Windows-Terminal/gnome-terminal chord), so Close Project
+                    // moves to Ctrl+Alt+W there.
                     &MenuItemBuilder::with_id("close_workspace", "Close Project")
-                        .accelerator("CmdOrCtrl+Shift+W")
+                        .accelerator(accel("CmdOrCtrl+Shift+W", "Ctrl+Alt+W"))
                         .build(app)?,
                 )
                 .item(
@@ -1171,6 +1241,16 @@ pub fn run() {
                 .build()
         })
         .on_menu_event(|app, event| {
+            // Windows/Linux only (macOS uses the predefined AppKit item): toggle
+            // fullscreen natively — the webview can't reach the window from a
+            // bare menu id without another IPC round-trip.
+            if event.id().0 == "toggle_fullscreen" {
+                if let Some(win) = app.webview_windows().values().next() {
+                    let flip = !win.is_fullscreen().unwrap_or(false);
+                    let _ = win.set_fullscreen(flip);
+                }
+                return;
+            }
             let _ = app.emit("menu", event.id().0.clone());
         })
         .setup(|app| {
@@ -1178,6 +1258,22 @@ pub fn run() {
             // request notification authorization. No-op unless bundled.
             #[cfg(target_os = "macos")]
             macos_notify::init(app.handle().clone());
+            // Windows: a WinRT toast renders only when its AppUserModelID is
+            // registered — otherwise `notify_os` silently shows nothing. The
+            // NSIS installer stamps the bundle id onto the Start-Menu shortcut,
+            // which covers installed builds; this HKCU key is the documented
+            // fallback for unpackaged (portable/dev) runs. Idempotent,
+            // per-user, no elevation needed; failures are non-fatal (the
+            // shortcut AUMID still applies for installed builds).
+            #[cfg(target_os = "windows")]
+            {
+                use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+                let id = &app.config().identifier;
+                let path = format!("SOFTWARE\\Classes\\AppUserModelId\\{id}");
+                if let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(path) {
+                    let _ = key.set_value("DisplayName", &"swarm");
+                }
+            }
             // Trust roots are loaded from two sources at startup, both
             // additive (a path listed in either becomes trusted):
             //
