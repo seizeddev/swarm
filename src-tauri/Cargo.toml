@@ -90,7 +90,7 @@ tauri-winrt-notification = "0.7"
 # installer stamps the bundle id onto the Start-Menu shortcut, but portable/dev
 # runs have no shortcut — setup() writes the documented unpackaged-app fallback
 # (HKCU\Software\Classes\AppUserModelId\<id> with a DisplayName) via winreg.
-winreg = "0.55"
+winreg = "0.56"
 
 [profile.release]
 codegen-units = 1
